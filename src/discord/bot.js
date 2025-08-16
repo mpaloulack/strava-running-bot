@@ -44,10 +44,24 @@ class DiscordBot {
 
       // Register commands globally (takes up to 1 hour to appear)
       // For faster testing, you can register to a specific guild instead
-      const data = await rest.put(
-        Routes.applicationCommands(this.client.user.id),
-        { body: commands }
-      );
+      
+      // Try guild registration first for immediate testing
+      const guildId = process.env.DISCORD_GUILD_ID;
+      let data;
+      
+      if (guildId) {
+        console.log(`🔄 Registering commands to guild ${guildId} for immediate testing...`);
+        data = await rest.put(
+          Routes.applicationGuildCommands(this.client.user.id, guildId),
+          { body: commands }
+        );
+      } else {
+        console.log('🔄 No DISCORD_GUILD_ID set, registering globally (may take up to 1 hour)...');
+        data = await rest.put(
+          Routes.applicationCommands(this.client.user.id),
+          { body: commands }
+        );
+      }
 
       console.log(`✅ Successfully registered ${data.length} Discord slash commands`);
     } catch (error) {
@@ -203,18 +217,18 @@ class DiscordBot {
   }
 
   generateStaticMapUrl(polyline) {
+    if (!process.env.GOOGLE_MAPS_API_KEY) {
+      return null;
+    }
+
     // Google Static Maps API URL with polyline
     const baseUrl = 'https://maps.googleapis.com/maps/api/staticmap';
     const params = new URLSearchParams({
       size: '600x400',
+      maptype: 'roadmap',
       path: `enc:${polyline}`,
-      key: process.env.GOOGLE_MAPS_API_KEY || '', // Optional: add Google Maps API key
+      key: process.env.GOOGLE_MAPS_API_KEY,
     });
-
-    // If no Google Maps API key, return Strava's map image (if available)
-    if (!process.env.GOOGLE_MAPS_API_KEY) {
-      return null; // Will skip the map image
-    }
 
     return `${baseUrl}?${params.toString()}`;
   }

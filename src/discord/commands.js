@@ -63,6 +63,7 @@ class DiscordCommands {
         .setDescription('Show bot status and statistics')
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
+
       // Last activity command
       new SlashCommandBuilder()
         .setName('last')
@@ -383,6 +384,7 @@ class DiscordCommands {
     await interaction.reply({ embeds: [embed] });
   }
 
+
   // Handle bot status command
   async handleBotStatusCommand(interaction) {
     await interaction.deferReply({ ephemeral: true });
@@ -562,6 +564,14 @@ class DiscordCommands {
       }]);
     }
 
+    // Add map image if polyline is available
+    if (activity.map && activity.map.summary_polyline) {
+      const mapUrl = this.generateStaticMapUrl(activity.map.summary_polyline);
+      if (mapUrl) {
+        embed.setImage(mapUrl);
+      }
+    }
+
     // Add link to Strava activity
     embed.setURL(`https://www.strava.com/activities/${activity.id}`);
 
@@ -698,6 +708,23 @@ class DiscordCommands {
       chunks.push(array.slice(i, i + size));
     }
     return chunks;
+  }
+
+  generateStaticMapUrl(polyline) {
+    if (!process.env.GOOGLE_MAPS_API_KEY) {
+      return null;
+    }
+
+    // Google Static Maps API URL with polyline
+    const baseUrl = 'https://maps.googleapis.com/maps/api/staticmap';
+    const params = new URLSearchParams({
+      size: '600x400',
+      maptype: 'roadmap',
+      path: `enc:${polyline}`,
+      key: process.env.GOOGLE_MAPS_API_KEY,
+    });
+
+    return `${baseUrl}?${params.toString()}`;
   }
 }
 
