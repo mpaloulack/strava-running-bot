@@ -1,4 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, InteractionResponseFlags } = require('discord.js');
+const ActivityEmbedBuilder = require('../utils/EmbedBuilder');
+const DiscordUtils = require('../utils/DiscordUtils');
 
 class DiscordCommands {
   constructor(activityProcessor) {
@@ -158,7 +160,7 @@ class DiscordCommands {
         .setTimestamp();
 
       // Group members into chunks of 10 for better display
-      const memberChunks = this.chunkArray(members, 10);
+      const memberChunks = DiscordUtils.chunkArray(members, 10);
       
       memberChunks[0].forEach((member, index) => {
         const user = interaction.guild?.members.cache.get(member.discordUserId);
@@ -193,7 +195,7 @@ class DiscordCommands {
 
     try {
       const userInput = options.getString('user');
-      const userId = this.extractUserId(userInput);
+      const userId = DiscordUtils.extractUserId(userInput);
 
       if (!userId) {
         await interaction.editReply({
@@ -241,7 +243,7 @@ class DiscordCommands {
 
     try {
       const userInput = options.getString('user');
-      const userId = this.extractUserId(userInput);
+      const userId = DiscordUtils.extractUserId(userInput);
 
       if (!userId) {
         await interaction.editReply({
@@ -299,7 +301,7 @@ class DiscordCommands {
 
     try {
       const userInput = options.getString('user');
-      const userId = this.extractUserId(userInput);
+      const userId = DiscordUtils.extractUserId(userInput);
 
       if (!userId) {
         await interaction.editReply({
@@ -486,7 +488,7 @@ class DiscordCommands {
       );
 
       // Create the same embed as used for posting activities
-      const embed = this.createLastActivityEmbed(processedActivity);
+      const embed = ActivityEmbedBuilder.createActivityEmbed(processedActivity, { type: 'latest' });
 
       await interaction.editReply({ embeds: [embed] });
 
@@ -498,92 +500,13 @@ class DiscordCommands {
     }
   }
 
-  // Create embed for last activity (similar to bot's activity posting)
-  createLastActivityEmbed(activity) {
-    const embed = new EmbedBuilder()
-      .setTitle(`🏃 ${activity.name}`)
-      .setColor(this.getActivityColor(activity.type))
-      .setAuthor({
-        name: `${activity.athlete.discordUser ? activity.athlete.discordUser.displayName : `${activity.athlete.firstname} ${activity.athlete.lastname}`} - Last Activity`,
-        iconURL: activity.athlete.discordUser && activity.athlete.discordUser.avatarURL ? activity.athlete.discordUser.avatarURL : activity.athlete.profile_medium,
-      })
-      .setTimestamp(new Date(activity.start_date))
-      .setFooter({
-        text: 'Latest Strava Activity',
-        iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg',
-      });
-
-    // Add description if available
-    if (activity.description) {
-      embed.setDescription(activity.description);
-    }
-
-    // Add activity fields
-    embed.addFields([
-      {
-        name: '📏 Distance',
-        value: this.formatDistance(activity.distance),
-        inline: true,
-      },
-      {
-        name: '⏱️ Time',
-        value: this.formatTime(activity.moving_time),
-        inline: true,
-      },
-      {
-        name: '🏃 Pace',
-        value: this.formatPace(activity.distance, activity.moving_time),
-        inline: true,
-      },
-    ]);
-
-    // Add Grade Adjusted Pace if available
-    if (activity.gap_pace) {
-      embed.addFields([{
-        name: '📈 Grade Adjusted Pace',
-        value: activity.gap_pace,
-        inline: true,
-      }]);
-    }
-
-    // Add Average Heart Rate if available
-    if (activity.average_heartrate) {
-      embed.addFields([{
-        name: '❤️ Avg Heart Rate',
-        value: `${Math.round(activity.average_heartrate)} bpm`,
-        inline: true,
-      }]);
-    }
-
-    // Add elevation gain if significant
-    if (activity.total_elevation_gain > 10) {
-      embed.addFields([{
-        name: '⛰️ Elevation Gain',
-        value: `${Math.round(activity.total_elevation_gain)}m`,
-        inline: true,
-      }]);
-    }
-
-    // Add map image if polyline is available
-    if (activity.map && activity.map.summary_polyline) {
-      const mapUrl = this.generateStaticMapUrl(activity.map.summary_polyline);
-      if (mapUrl) {
-        embed.setImage(mapUrl);
-      }
-    }
-
-    // Add link to Strava activity
-    embed.setURL(`https://www.strava.com/activities/${activity.id}`);
-
-    return embed;
-  }
 
   // Find member by various input types (name, mention, etc.)
   async findMemberByInput(input) {
     const members = await this.activityProcessor.memberManager.getAllMembers();
 
     // Try to extract Discord user ID from mention
-    const userId = this.extractUserId(input);
+    const userId = DiscordUtils.extractUserId(input);
     if (userId) {
       return await this.activityProcessor.memberManager.getMemberByDiscordId(userId);
     }
@@ -642,90 +565,6 @@ class DiscordCommands {
     }
   }
 
-  // Helper methods (borrowed from DiscordBot)
-  getActivityColor(activityType) {
-    const colors = {
-      'Run': '#FC4C02',      // Strava orange
-      'Ride': '#0074D9',     // Blue
-      'Swim': '#39CCCC',     // Aqua
-      'Walk': '#2ECC40',     // Green
-      'Hike': '#8B4513',     // Brown
-      'Workout': '#B10DC9',  // Purple
-      'default': '#FC4C02'   // Default Strava orange
-    };
-    
-    return colors[activityType] || colors.default;
-  }
-
-  formatDistance(distanceInMeters) {
-    const km = distanceInMeters / 1000;
-    return `${km.toFixed(2)} km`;
-  }
-
-  formatTime(timeInSeconds) {
-    const hours = Math.floor(timeInSeconds / 3600);
-    const minutes = Math.floor((timeInSeconds % 3600) / 60);
-    const seconds = timeInSeconds % 60;
-
-    if (hours > 0) {
-      return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-    } else {
-      return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-    }
-  }
-
-  formatPace(distanceInMeters, timeInSeconds) {
-    if (distanceInMeters === 0) return 'N/A';
-    
-    const kmDistance = distanceInMeters / 1000;
-    const paceInSecondsPerKm = timeInSeconds / kmDistance;
-    
-    const minutes = Math.floor(paceInSecondsPerKm / 60);
-    const seconds = Math.round(paceInSecondsPerKm % 60);
-    
-    return `${minutes}:${seconds.toString().padStart(2, '0')}/km`;
-  }
-
-  // Utility functions
-  extractUserId(userInput) {
-    // Extract user ID from mention (<@123456>) or return as-is if it's already an ID
-    const mentionMatch = userInput.match(/^<@!?(\d+)>$/);
-    if (mentionMatch) {
-      return mentionMatch[1];
-    }
-    
-    // Check if it's a valid snowflake ID (Discord user ID)
-    if (/^\d{17,19}$/.test(userInput)) {
-      return userInput;
-    }
-    
-    return null;
-  }
-
-  chunkArray(array, size) {
-    const chunks = [];
-    for (let i = 0; i < array.length; i += size) {
-      chunks.push(array.slice(i, i + size));
-    }
-    return chunks;
-  }
-
-  generateStaticMapUrl(polyline) {
-    if (!process.env.GOOGLE_MAPS_API_KEY) {
-      return null;
-    }
-
-    // Google Static Maps API URL with polyline
-    const baseUrl = 'https://maps.googleapis.com/maps/api/staticmap';
-    const params = new URLSearchParams({
-      size: '600x400',
-      maptype: 'roadmap',
-      path: `enc:${polyline}`,
-      key: process.env.GOOGLE_MAPS_API_KEY,
-    });
-
-    return `${baseUrl}?${params.toString()}`;
-  }
 }
 
 module.exports = DiscordCommands;

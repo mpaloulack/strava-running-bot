@@ -1,6 +1,7 @@
-const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes } = require('discord.js');
 const config = require('../../config/config');
 const DiscordCommands = require('./commands');
+const ActivityEmbedBuilder = require('../utils/EmbedBuilder');
 
 class DiscordBot {
   constructor(activityProcessor) {
@@ -86,7 +87,7 @@ class DiscordBot {
         throw new Error('Discord channel not found');
       }
 
-      const embed = this.createActivityEmbed(activityData);
+      const embed = ActivityEmbedBuilder.createActivityEmbed(activityData, { type: 'posted' });
       await channel.send({ embeds: [embed] });
       
       console.log(`✅ Posted activity: ${activityData.name}`);
@@ -96,142 +97,6 @@ class DiscordBot {
     }
   }
 
-  createActivityEmbed(activity) {
-    const embed = new EmbedBuilder()
-      .setTitle(`🏃 ${activity.name}`)
-      .setColor(this.getActivityColor(activity.type))
-      .setAuthor({
-        name: activity.athlete.discordUser ? activity.athlete.discordUser.displayName : `${activity.athlete.firstname} ${activity.athlete.lastname}`,
-        iconURL: activity.athlete.discordUser && activity.athlete.discordUser.avatarURL ? activity.athlete.discordUser.avatarURL : activity.athlete.profile_medium,
-      })
-      .setTimestamp(new Date(activity.start_date))
-      .setFooter({
-        text: 'Strava Activity',
-        iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg',
-      });
-
-    // Add description if available
-    if (activity.description) {
-      embed.setDescription(activity.description);
-    }
-
-    // Add activity fields
-    embed.addFields([
-      {
-        name: '📏 Distance',
-        value: this.formatDistance(activity.distance),
-        inline: true,
-      },
-      {
-        name: '⏱️ Time',
-        value: this.formatTime(activity.moving_time),
-        inline: true,
-      },
-      {
-        name: '🏃 Pace',
-        value: this.formatPace(activity.distance, activity.moving_time),
-        inline: true,
-      },
-    ]);
-
-    // Add Grade Adjusted Pace if available
-    if (activity.gap_pace) {
-      embed.addFields([{
-        name: '📈 Grade Adjusted Pace',
-        value: activity.gap_pace,
-        inline: true,
-      }]);
-    }
-
-    // Add Average Heart Rate if available
-    if (activity.average_heartrate) {
-      embed.addFields([{
-        name: '❤️ Avg Heart Rate',
-        value: `${Math.round(activity.average_heartrate)} bpm`,
-        inline: true,
-      }]);
-    }
-
-    // Add elevation gain if significant
-    if (activity.total_elevation_gain > 10) {
-      embed.addFields([{
-        name: '⛰️ Elevation Gain',
-        value: `${Math.round(activity.total_elevation_gain)}m`,
-        inline: true,
-      }]);
-    }
-
-    // Add map image if polyline is available
-    if (activity.map && activity.map.summary_polyline) {
-      const mapUrl = this.generateStaticMapUrl(activity.map.summary_polyline);
-      embed.setImage(mapUrl);
-    }
-
-    // Add link to Strava activity
-    embed.setURL(`https://www.strava.com/activities/${activity.id}`);
-
-    return embed;
-  }
-
-  getActivityColor(activityType) {
-    const colors = {
-      'Run': '#FC4C02',      // Strava orange
-      'Ride': '#0074D9',     // Blue
-      'Swim': '#39CCCC',     // Aqua
-      'Walk': '#2ECC40',     // Green
-      'Hike': '#8B4513',     // Brown
-      'Workout': '#B10DC9',  // Purple
-      'default': '#FC4C02'   // Default Strava orange
-    };
-    
-    return colors[activityType] || colors.default;
-  }
-
-  formatDistance(distanceInMeters) {
-    const km = distanceInMeters / 1000;
-    return `${km.toFixed(2)} km`;
-  }
-
-  formatTime(timeInSeconds) {
-    const hours = Math.floor(timeInSeconds / 3600);
-    const minutes = Math.floor((timeInSeconds % 3600) / 60);
-    const seconds = timeInSeconds % 60;
-
-    if (hours > 0) {
-      return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-    } else {
-      return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-    }
-  }
-
-  formatPace(distanceInMeters, timeInSeconds) {
-    if (distanceInMeters === 0) return 'N/A';
-    
-    const kmDistance = distanceInMeters / 1000;
-    const paceInSecondsPerKm = timeInSeconds / kmDistance;
-    
-    const minutes = Math.floor(paceInSecondsPerKm / 60);
-    const seconds = Math.round(paceInSecondsPerKm % 60);
-    
-    return `${minutes}:${seconds.toString().padStart(2, '0')}/km`;
-  }
-
-  generateStaticMapUrl(polyline) {
-    if (!process.env.GOOGLE_MAPS_API_KEY) {
-      return null;
-    }
-
-    // Google Static Maps API URL with polyline
-    const baseUrl = 'https://maps.googleapis.com/maps/api/staticmap';
-    const params = new URLSearchParams({
-      size: '600x400',
-      maptype: 'roadmap',
-      path: `enc:${polyline}`,
-      key: process.env.GOOGLE_MAPS_API_KEY,
-    });
-
-    return `${baseUrl}?${params.toString()}`;
-  }
 
   async stop() {
     if (this.client) {
