@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, InteractionResponseFlags } = require('discord.js');
 
 class DiscordCommands {
   constructor(activityProcessor) {
@@ -98,7 +98,7 @@ class DiscordCommands {
         default:
           await interaction.reply({ 
             content: '❌ Unknown command', 
-            ephemeral: true 
+            flags: InteractionResponseFlags.Ephemeral 
           });
       }
     } catch (error) {
@@ -107,9 +107,9 @@ class DiscordCommands {
       const errorMessage = '❌ An error occurred while processing your command.';
       
       if (interaction.replied || interaction.deferred) {
-        await interaction.followUp({ content: errorMessage, ephemeral: true });
+        await interaction.followUp({ content: errorMessage, flags: InteractionResponseFlags.Ephemeral });
       } else {
-        await interaction.reply({ content: errorMessage, ephemeral: true });
+        await interaction.reply({ content: errorMessage, flags: InteractionResponseFlags.Ephemeral });
       }
     }
   }
@@ -136,7 +136,7 @@ class DiscordCommands {
 
   // List all members
   async listMembers(interaction) {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: InteractionResponseFlags.Ephemeral });
 
     try {
       const members = await this.activityProcessor.memberManager.getAllMembers();
@@ -145,7 +145,7 @@ class DiscordCommands {
       if (members.length === 0) {
         await interaction.editReply({
           content: '📭 No team members registered yet.',
-          ephemeral: true
+          flags: InteractionResponseFlags.Ephemeral
         });
         return;
       }
@@ -175,20 +175,20 @@ class DiscordCommands {
         embed.setFooter({ text: `Showing first 10 of ${members.length} members` });
       }
 
-      await interaction.editReply({ embeds: [embed], ephemeral: true });
+      await interaction.editReply({ embeds: [embed] });
 
     } catch (error) {
       console.error('❌ Error listing members:', error);
       await interaction.editReply({
         content: '❌ Failed to retrieve member list.',
-        ephemeral: true
+        flags: InteractionResponseFlags.Ephemeral
       });
     }
   }
 
   // Remove a member
   async removeMember(interaction, options) {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: InteractionResponseFlags.Ephemeral });
 
     try {
       const userInput = options.getString('user');
@@ -197,7 +197,7 @@ class DiscordCommands {
       if (!userId) {
         await interaction.editReply({
           content: '❌ Invalid user. Please use @mention or a valid user ID.',
-          ephemeral: true
+          flags: InteractionResponseFlags.Ephemeral
         });
         return;
       }
@@ -217,11 +217,11 @@ class DiscordCommands {
           }])
           .setTimestamp();
 
-        await interaction.editReply({ embeds: [embed], ephemeral: true });
+        await interaction.editReply({ embeds: [embed] });
       } else {
         await interaction.editReply({
           content: '❌ User not found in team members.',
-          ephemeral: true
+          flags: InteractionResponseFlags.Ephemeral
         });
       }
 
@@ -229,14 +229,14 @@ class DiscordCommands {
       console.error('❌ Error removing member:', error);
       await interaction.editReply({
         content: '❌ Failed to remove member.',
-        ephemeral: true
+        flags: InteractionResponseFlags.Ephemeral
       });
     }
   }
 
   // Deactivate a member
   async deactivateMember(interaction, options) {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: InteractionResponseFlags.Ephemeral });
 
     try {
       const userInput = options.getString('user');
@@ -245,7 +245,7 @@ class DiscordCommands {
       if (!userId) {
         await interaction.editReply({
           content: '❌ Invalid user. Please use @mention or a valid user ID.',
-          ephemeral: true
+          flags: InteractionResponseFlags.Ephemeral
         });
         return;
       }
@@ -255,7 +255,7 @@ class DiscordCommands {
       if (!member) {
         await interaction.editReply({
           content: '❌ User not found in team members.',
-          ephemeral: true
+          flags: InteractionResponseFlags.Ephemeral
         });
         return;
       }
@@ -275,11 +275,11 @@ class DiscordCommands {
           }])
           .setTimestamp();
 
-        await interaction.editReply({ embeds: [embed], ephemeral: true });
+        await interaction.editReply({ embeds: [embed] });
       } else {
         await interaction.editReply({
           content: '❌ Failed to deactivate member.',
-          ephemeral: true
+          flags: InteractionResponseFlags.Ephemeral
         });
       }
 
@@ -287,14 +287,14 @@ class DiscordCommands {
       console.error('❌ Error deactivating member:', error);
       await interaction.editReply({
         content: '❌ Failed to deactivate member.',
-        ephemeral: true
+        flags: InteractionResponseFlags.Ephemeral
       });
     }
   }
 
   // Reactivate a member
   async reactivateMember(interaction, options) {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: InteractionResponseFlags.Ephemeral });
 
     try {
       const userInput = options.getString('user');
@@ -303,7 +303,7 @@ class DiscordCommands {
       if (!userId) {
         await interaction.editReply({
           content: '❌ Invalid user. Please use @mention or a valid user ID.',
-          ephemeral: true
+          flags: InteractionResponseFlags.Ephemeral
         });
         return;
       }
@@ -315,7 +315,7 @@ class DiscordCommands {
       if (!member) {
         await interaction.editReply({
           content: '❌ User not found in team members.',
-          ephemeral: true
+          flags: InteractionResponseFlags.Ephemeral
         });
         return;
       }
@@ -335,11 +335,11 @@ class DiscordCommands {
           }])
           .setTimestamp();
 
-        await interaction.editReply({ embeds: [embed], ephemeral: true });
+        await interaction.editReply({ embeds: [embed] });
       } else {
         await interaction.editReply({
           content: '❌ Failed to reactivate member.',
-          ephemeral: true
+          flags: InteractionResponseFlags.Ephemeral
         });
       }
 
@@ -347,7 +347,7 @@ class DiscordCommands {
       console.error('❌ Error reactivating member:', error);
       await interaction.editReply({
         content: '❌ Failed to reactivate member.',
-        ephemeral: true
+        flags: InteractionResponseFlags.Ephemeral
       });
     }
   }
@@ -361,7 +361,7 @@ class DiscordCommands {
       const memberName = existingMember.discordUser ? existingMember.discordUser.displayName : `${existingMember.athlete.firstname} ${existingMember.athlete.lastname}`;
       await interaction.reply({
         content: `✅ You're already registered as **${memberName}**.`,
-        ephemeral: true
+        flags: InteractionResponseFlags.Ephemeral
       });
       return;
     }
@@ -380,12 +380,12 @@ class DiscordCommands {
       .setFooter({ text: 'This link is personalized for your Discord account' })
       .setTimestamp();
 
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await interaction.reply({ embeds: [embed] });
   }
 
   // Handle bot status command
   async handleBotStatusCommand(interaction) {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: InteractionResponseFlags.Ephemeral });
 
     try {
       const stats = this.activityProcessor.getStats();
@@ -418,13 +418,13 @@ class DiscordCommands {
         ])
         .setTimestamp();
 
-      await interaction.editReply({ embeds: [embed], ephemeral: true });
+      await interaction.editReply({ embeds: [embed] });
 
     } catch (error) {
       console.error('❌ Error getting bot status:', error);
       await interaction.editReply({
         content: '❌ Failed to retrieve bot status.',
-        ephemeral: true
+        flags: InteractionResponseFlags.Ephemeral
       });
     }
   }
