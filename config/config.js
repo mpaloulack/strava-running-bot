@@ -1,0 +1,48 @@
+require('dotenv').config();
+
+const config = {
+  discord: {
+    token: process.env.DISCORD_TOKEN,
+    channelId: process.env.DISCORD_CHANNEL_ID,
+  },
+  strava: {
+    clientId: process.env.STRAVA_CLIENT_ID,
+    clientSecret: process.env.STRAVA_CLIENT_SECRET,
+    webhookVerifyToken: process.env.STRAVA_WEBHOOK_VERIFY_TOKEN,
+    baseUrl: 'https://www.strava.com/api/v3',
+    authUrl: 'https://www.strava.com/oauth/authorize',
+    tokenUrl: 'https://www.strava.com/oauth/token',
+  },
+  server: {
+    port: process.env.PORT || 3000,
+    nodeEnv: process.env.NODE_ENV || 'development',
+  },
+  security: {
+    encryptionKey: process.env.ENCRYPTION_KEY,
+  },
+  app: {
+    name: 'HFR Running Bot',
+    version: '1.0.0',
+  }
+};
+
+// Validate required environment variables
+const requiredEnvVars = [
+  'DISCORD_TOKEN',
+  'DISCORD_CHANNEL_ID',
+  'STRAVA_CLIENT_ID',
+  'STRAVA_CLIENT_SECRET',
+  'STRAVA_WEBHOOK_VERIFY_TOKEN',
+  'ENCRYPTION_KEY'
+];
+
+const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
+
+if (missingEnvVars.length > 0) {
+  console.error('❌ Missing required environment variables:');
+  missingEnvVars.forEach(envVar => console.error(`   - ${envVar}`));
+  console.error('Please check your .env file and ensure all required variables are set.');
+  process.exit(1);
+}
+
+module.exports = config;
