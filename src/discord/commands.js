@@ -98,7 +98,7 @@ class DiscordCommands {
         default:
           await interaction.reply({ 
             content: '❌ Unknown command', 
-            flags: InteractionResponseFlags.Ephemeral 
+            ephemeral: true 
           });
       }
     } catch (error) {
@@ -107,9 +107,9 @@ class DiscordCommands {
       const errorMessage = '❌ An error occurred while processing your command.';
       
       if (interaction.replied || interaction.deferred) {
-        await interaction.followUp({ content: errorMessage, flags: InteractionResponseFlags.Ephemeral });
+        await interaction.followUp({ content: errorMessage, ephemeral: true });
       } else {
-        await interaction.reply({ content: errorMessage, flags: InteractionResponseFlags.Ephemeral });
+        await interaction.reply({ content: errorMessage, ephemeral: true });
       }
     }
   }
@@ -136,7 +136,7 @@ class DiscordCommands {
 
   // List all members
   async listMembers(interaction) {
-    await interaction.deferReply({ flags: InteractionResponseFlags.Ephemeral });
+    await interaction.deferReply({ ephemeral: true });
 
     try {
       const members = await this.activityProcessor.memberManager.getAllMembers();
@@ -145,7 +145,7 @@ class DiscordCommands {
       if (members.length === 0) {
         await interaction.editReply({
           content: '📭 No team members registered yet.',
-          flags: InteractionResponseFlags.Ephemeral
+          ephemeral: true
         });
         return;
       }
@@ -181,14 +181,14 @@ class DiscordCommands {
       console.error('❌ Error listing members:', error);
       await interaction.editReply({
         content: '❌ Failed to retrieve member list.',
-        flags: InteractionResponseFlags.Ephemeral
+        ephemeral: true
       });
     }
   }
 
   // Remove a member
   async removeMember(interaction, options) {
-    await interaction.deferReply({ flags: InteractionResponseFlags.Ephemeral });
+    await interaction.deferReply({ ephemeral: true });
 
     try {
       const userInput = options.getString('user');
@@ -197,7 +197,7 @@ class DiscordCommands {
       if (!userId) {
         await interaction.editReply({
           content: '❌ Invalid user. Please use @mention or a valid user ID.',
-          flags: InteractionResponseFlags.Ephemeral
+          ephemeral: true
         });
         return;
       }
@@ -221,7 +221,7 @@ class DiscordCommands {
       } else {
         await interaction.editReply({
           content: '❌ User not found in team members.',
-          flags: InteractionResponseFlags.Ephemeral
+          ephemeral: true
         });
       }
 
@@ -229,14 +229,14 @@ class DiscordCommands {
       console.error('❌ Error removing member:', error);
       await interaction.editReply({
         content: '❌ Failed to remove member.',
-        flags: InteractionResponseFlags.Ephemeral
+        ephemeral: true
       });
     }
   }
 
   // Deactivate a member
   async deactivateMember(interaction, options) {
-    await interaction.deferReply({ flags: InteractionResponseFlags.Ephemeral });
+    await interaction.deferReply({ ephemeral: true });
 
     try {
       const userInput = options.getString('user');
@@ -245,7 +245,7 @@ class DiscordCommands {
       if (!userId) {
         await interaction.editReply({
           content: '❌ Invalid user. Please use @mention or a valid user ID.',
-          flags: InteractionResponseFlags.Ephemeral
+          ephemeral: true
         });
         return;
       }
@@ -255,7 +255,7 @@ class DiscordCommands {
       if (!member) {
         await interaction.editReply({
           content: '❌ User not found in team members.',
-          flags: InteractionResponseFlags.Ephemeral
+          ephemeral: true
         });
         return;
       }
@@ -279,7 +279,7 @@ class DiscordCommands {
       } else {
         await interaction.editReply({
           content: '❌ Failed to deactivate member.',
-          flags: InteractionResponseFlags.Ephemeral
+          ephemeral: true
         });
       }
 
@@ -287,14 +287,14 @@ class DiscordCommands {
       console.error('❌ Error deactivating member:', error);
       await interaction.editReply({
         content: '❌ Failed to deactivate member.',
-        flags: InteractionResponseFlags.Ephemeral
+        ephemeral: true
       });
     }
   }
 
   // Reactivate a member
   async reactivateMember(interaction, options) {
-    await interaction.deferReply({ flags: InteractionResponseFlags.Ephemeral });
+    await interaction.deferReply({ ephemeral: true });
 
     try {
       const userInput = options.getString('user');
@@ -303,7 +303,7 @@ class DiscordCommands {
       if (!userId) {
         await interaction.editReply({
           content: '❌ Invalid user. Please use @mention or a valid user ID.',
-          flags: InteractionResponseFlags.Ephemeral
+          ephemeral: true
         });
         return;
       }
@@ -315,7 +315,7 @@ class DiscordCommands {
       if (!member) {
         await interaction.editReply({
           content: '❌ User not found in team members.',
-          flags: InteractionResponseFlags.Ephemeral
+          ephemeral: true
         });
         return;
       }
@@ -339,7 +339,7 @@ class DiscordCommands {
       } else {
         await interaction.editReply({
           content: '❌ Failed to reactivate member.',
-          flags: InteractionResponseFlags.Ephemeral
+          ephemeral: true
         });
       }
 
@@ -347,7 +347,7 @@ class DiscordCommands {
       console.error('❌ Error reactivating member:', error);
       await interaction.editReply({
         content: '❌ Failed to reactivate member.',
-        flags: InteractionResponseFlags.Ephemeral
+        ephemeral: true
       });
     }
   }
@@ -361,7 +361,7 @@ class DiscordCommands {
       const memberName = existingMember.discordUser ? existingMember.discordUser.displayName : `${existingMember.athlete.firstname} ${existingMember.athlete.lastname}`;
       await interaction.reply({
         content: `✅ You're already registered as **${memberName}**.`,
-        flags: InteractionResponseFlags.Ephemeral
+        ephemeral: true
       });
       return;
     }
@@ -385,7 +385,7 @@ class DiscordCommands {
 
   // Handle bot status command
   async handleBotStatusCommand(interaction) {
-    await interaction.deferReply({ flags: InteractionResponseFlags.Ephemeral });
+    await interaction.deferReply({ ephemeral: true });
 
     try {
       const stats = this.activityProcessor.getStats();
@@ -424,7 +424,7 @@ class DiscordCommands {
       console.error('❌ Error getting bot status:', error);
       await interaction.editReply({
         content: '❌ Failed to retrieve bot status.',
-        flags: InteractionResponseFlags.Ephemeral
+        ephemeral: true
       });
     }
   }
