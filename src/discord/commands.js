@@ -162,9 +162,10 @@ class DiscordCommands {
       memberChunks[0].forEach((member, index) => {
         const user = interaction.guild?.members.cache.get(member.discordUserId);
         const displayName = user ? `<@${member.discordUserId}>` : `User ID: ${member.discordUserId}`;
+        const memberName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
         
         embed.addFields([{
-          name: `${member.athlete.firstname} ${member.athlete.lastname}`,
+          name: memberName,
           value: `Discord: ${displayName}\nRegistered: ${new Date(member.registeredAt).toLocaleDateString()}\nStatus: ${member.isActive ? '🟢 Active' : '🔴 Inactive'}`,
           inline: true
         }]);
@@ -204,10 +205,11 @@ class DiscordCommands {
       const removedMember = await this.activityProcessor.memberManager.removeMemberByDiscordId(userId);
 
       if (removedMember) {
+        const memberName = removedMember.discordUser ? removedMember.discordUser.displayName : `${removedMember.athlete.firstname} ${removedMember.athlete.lastname}`;
         const embed = new EmbedBuilder()
           .setTitle('🗑️ Member Removed')
           .setColor('#FF4444')
-          .setDescription(`Successfully removed **${removedMember.athlete.firstname} ${removedMember.athlete.lastname}** from the team.`)
+          .setDescription(`Successfully removed **${memberName}** from the team.`)
           .addFields([{
             name: 'Discord User',
             value: `<@${userId}>`,
@@ -261,10 +263,11 @@ class DiscordCommands {
       const success = await this.activityProcessor.memberManager.deactivateMember(member.athlete.id);
 
       if (success) {
+        const memberName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
         const embed = new EmbedBuilder()
           .setTitle('🔴 Member Deactivated')
           .setColor('#FF8800')
-          .setDescription(`**${member.athlete.firstname} ${member.athlete.lastname}** has been deactivated. Their activities will no longer be posted.`)
+          .setDescription(`**${memberName}** has been deactivated. Their activities will no longer be posted.`)
           .addFields([{
             name: 'Discord User',
             value: `<@${userId}>`,
@@ -320,10 +323,11 @@ class DiscordCommands {
       const success = await this.activityProcessor.memberManager.reactivateMember(member.athlete.id);
 
       if (success) {
+        const memberName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
         const embed = new EmbedBuilder()
           .setTitle('🟢 Member Reactivated')
           .setColor('#44FF44')
-          .setDescription(`**${member.athlete.firstname} ${member.athlete.lastname}** has been reactivated. Their activities will now be posted again.`)
+          .setDescription(`**${memberName}** has been reactivated. Their activities will now be posted again.`)
           .addFields([{
             name: 'Discord User',
             value: `<@${userId}>`,
@@ -354,8 +358,9 @@ class DiscordCommands {
     const existingMember = await this.activityProcessor.memberManager.getMemberByDiscordId(userId);
 
     if (existingMember) {
+      const memberName = existingMember.discordUser ? existingMember.discordUser.displayName : `${existingMember.athlete.firstname} ${existingMember.athlete.lastname}`;
       await interaction.reply({
-        content: `✅ You're already registered as **${existingMember.athlete.firstname} ${existingMember.athlete.lastname}**.`,
+        content: `✅ You're already registered as **${memberName}**.`,
         ephemeral: true
       });
       return;
@@ -442,8 +447,9 @@ class DiscordCommands {
       // Get valid access token for the member
       const accessToken = await this.activityProcessor.memberManager.getValidAccessToken(member);
       if (!accessToken) {
+        const memberName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
         await interaction.editReply({
-          content: `❌ Unable to access activities for **${member.athlete.firstname} ${member.athlete.lastname}**. They may need to re-authorize.`,
+          content: `❌ Unable to access activities for **${memberName}**. They may need to re-authorize.`,
         });
         return;
       }
@@ -456,8 +462,9 @@ class DiscordCommands {
       );
 
       if (!activities || activities.length === 0) {
+        const memberName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
         await interaction.editReply({
-          content: `📭 No recent activities found for **${member.athlete.firstname} ${member.athlete.lastname}**.`,
+          content: `📭 No recent activities found for **${memberName}**.`,
         });
         return;
       }
@@ -495,8 +502,8 @@ class DiscordCommands {
       .setTitle(`🏃 ${activity.name}`)
       .setColor(this.getActivityColor(activity.type))
       .setAuthor({
-        name: `${activity.athlete.firstname} ${activity.athlete.lastname} - Last Activity`,
-        iconURL: activity.athlete.profile_medium,
+        name: `${activity.athlete.discordUser ? activity.athlete.discordUser.displayName : `${activity.athlete.firstname} ${activity.athlete.lastname}`} - Last Activity`,
+        iconURL: activity.athlete.discordUser && activity.athlete.discordUser.avatarURL ? activity.athlete.discordUser.avatarURL : activity.athlete.profile_medium,
       })
       .setTimestamp(new Date(activity.start_date))
       .setFooter({
@@ -571,15 +578,18 @@ class DiscordCommands {
       return await this.activityProcessor.memberManager.getMemberByDiscordId(userId);
     }
 
-    // Search by name (first name, last name, or full name)
+    // Search by name (Discord name, first name, last name, or full name)
     const searchTerm = input.toLowerCase().trim();
     
     return members.find(member => {
+      const discordName = member.discordUser ? member.discordUser.displayName.toLowerCase() : '';
       const firstName = member.athlete.firstname.toLowerCase();
       const lastName = member.athlete.lastname.toLowerCase();
       const fullName = `${firstName} ${lastName}`;
       
-      return firstName.includes(searchTerm) || 
+      return discordName.includes(searchTerm) || 
+             discordName === searchTerm ||
+             firstName.includes(searchTerm) || 
              lastName.includes(searchTerm) || 
              fullName.includes(searchTerm) ||
              firstName === searchTerm ||
@@ -601,15 +611,17 @@ class DiscordCommands {
         
         const choices = members
           .filter(member => {
+            const memberName = member.discordUser ? member.discordUser.displayName.toLowerCase() : `${member.athlete.firstname} ${member.athlete.lastname}`.toLowerCase();
             const fullName = `${member.athlete.firstname} ${member.athlete.lastname}`.toLowerCase();
-            return fullName.includes(searchTerm) || 
+            return memberName.includes(searchTerm) || 
+                   fullName.includes(searchTerm) || 
                    member.athlete.firstname.toLowerCase().includes(searchTerm) ||
                    member.athlete.lastname.toLowerCase().includes(searchTerm);
           })
           .slice(0, 25) // Discord limits to 25 choices
           .map(member => ({
-            name: `${member.athlete.firstname} ${member.athlete.lastname}`,
-            value: `${member.athlete.firstname} ${member.athlete.lastname}`
+            name: member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`,
+            value: member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`
           }));
 
         await interaction.respond(choices);

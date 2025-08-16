@@ -87,8 +87,8 @@ class DiscordBot {
       .setTitle(`🏃 ${activity.name}`)
       .setColor(this.getActivityColor(activity.type))
       .setAuthor({
-        name: `${activity.athlete.firstname} ${activity.athlete.lastname}`,
-        iconURL: activity.athlete.profile_medium,
+        name: activity.athlete.discordUser ? activity.athlete.discordUser.displayName : `${activity.athlete.firstname} ${activity.athlete.lastname}`,
+        iconURL: activity.athlete.discordUser && activity.athlete.discordUser.avatarURL ? activity.athlete.discordUser.avatarURL : activity.athlete.profile_medium,
       })
       .setTimestamp(new Date(activity.start_date))
       .setFooter({

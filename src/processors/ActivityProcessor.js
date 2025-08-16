@@ -46,7 +46,8 @@ class ActivityProcessor {
         return;
       }
 
-      console.log(`👤 Found member: ${member.athlete.firstname} ${member.athlete.lastname}`);
+      const memberName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
+      console.log(`👤 Found member: ${memberName}`);
 
       // Get valid access token (refresh if needed)
       const accessToken = await this.memberManager.getValidAccessToken(member);
@@ -65,8 +66,12 @@ class ActivityProcessor {
         return;
       }
 
-      // Process activity data for Discord
-      const processedActivity = this.stravaAPI.processActivityData(activity, member.athlete);
+      // Process activity data for Discord with member info including Discord user data
+      const athleteWithDiscordInfo = {
+        ...member.athlete,
+        discordUser: member.discordUser
+      };
+      const processedActivity = this.stravaAPI.processActivityData(activity, athleteWithDiscordInfo);
 
       // Post to Discord
       await this.discordBot.postActivity(processedActivity);
@@ -106,12 +111,14 @@ class ActivityProcessor {
     const after = Math.floor((Date.now() - (hoursBack * 60 * 60 * 1000)) / 1000);
 
     for (const member of members) {
+      const memberName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
+      
       try {
-        console.log(`👤 Processing recent activities for ${member.athlete.firstname} ${member.athlete.lastname}`);
+        console.log(`👤 Processing recent activities for ${memberName}`);
         
         const accessToken = await this.memberManager.getValidAccessToken(member);
         if (!accessToken) {
-          console.error(`❌ Unable to get valid access token for ${member.athlete.firstname}`);
+          console.error(`❌ Unable to get valid access token for ${memberName}`);
           continue;
         }
 
@@ -123,7 +130,7 @@ class ActivityProcessor {
           after // after
         );
 
-        console.log(`📊 Found ${activities.length} recent activities for ${member.athlete.firstname}`);
+        console.log(`📊 Found ${activities.length} recent activities for ${memberName}`);
 
         for (const activity of activities) {
           // Process each activity with a small delay to avoid rate limiting
@@ -132,7 +139,7 @@ class ActivityProcessor {
         }
 
       } catch (error) {
-        console.error(`❌ Error processing recent activities for ${member.athlete.firstname}:`, error);
+        console.error(`❌ Error processing recent activities for ${memberName}:`, error);
       }
     }
 

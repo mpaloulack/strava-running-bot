@@ -199,14 +199,26 @@ class WebhookServer {
       // Get athlete information
       const athlete = await this.activityProcessor.stravaAPI.getAthlete(tokenData.access_token);
 
+      // Get Discord user information
+      let discordUser = null;
+      try {
+        if (this.activityProcessor.discordBot && this.activityProcessor.discordBot.client) {
+          discordUser = await this.activityProcessor.discordBot.client.users.fetch(discordUserId);
+        }
+      } catch (error) {
+        console.warn(`⚠️ Could not fetch Discord user info for ${discordUserId}:`, error.message);
+      }
+
       // Register the member
       await this.activityProcessor.memberManager.registerMember(
         discordUserId,
         athlete,
-        tokenData
+        tokenData,
+        discordUser
       );
 
-      console.log(`✅ Successfully registered athlete: ${athlete.firstname} ${athlete.lastname}`);
+      const displayName = discordUser ? discordUser.displayName || discordUser.username : discordUserId;
+      console.log(`✅ Successfully registered: ${displayName} (Strava: ${athlete.firstname} ${athlete.lastname})`);
 
       res.send(`
         <html>
@@ -241,7 +253,7 @@ class WebhookServer {
       const memberList = members.map(member => ({
         athleteId: member.athlete.id,
         discordUserId: member.discordUserId,
-        name: `${member.athlete.firstname} ${member.athlete.lastname}`,
+        name: member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`,
         registeredAt: member.registeredAt,
         isActive: member.isActive,
         city: member.athlete.city,
@@ -267,10 +279,10 @@ class WebhookServer {
       if (removedMember) {
         res.json({
           success: true,
-          message: `Removed member: ${removedMember.athlete.firstname} ${removedMember.athlete.lastname}`,
+          message: `Removed member: ${removedMember.discordUser ? removedMember.discordUser.displayName : `${removedMember.athlete.firstname} ${removedMember.athlete.lastname}`}`,
           member: {
             athleteId: removedMember.athlete.id,
-            name: `${removedMember.athlete.firstname} ${removedMember.athlete.lastname}`,
+            name: removedMember.discordUser ? removedMember.discordUser.displayName : `${removedMember.athlete.firstname} ${removedMember.athlete.lastname}`,
             discordUserId: removedMember.discordUserId
           }
         });
@@ -292,10 +304,10 @@ class WebhookServer {
       if (removedMember) {
         res.json({
           success: true,
-          message: `Removed member: ${removedMember.athlete.firstname} ${removedMember.athlete.lastname}`,
+          message: `Removed member: ${removedMember.discordUser ? removedMember.discordUser.displayName : `${removedMember.athlete.firstname} ${removedMember.athlete.lastname}`}`,
           member: {
             athleteId: removedMember.athlete.id,
-            name: `${removedMember.athlete.firstname} ${removedMember.athlete.lastname}`,
+            name: removedMember.discordUser ? removedMember.discordUser.displayName : `${removedMember.athlete.firstname} ${removedMember.athlete.lastname}`,
             discordUserId: removedMember.discordUserId
           }
         });

@@ -82,11 +82,18 @@ class MemberManager {
   }
 
   // Register a new member
-  async registerMember(discordUserId, athlete, tokenData) {
+  async registerMember(discordUserId, athlete, tokenData, discordUser = null) {
     const athleteId = athlete.id.toString();
     
     const member = {
       discordUserId: discordUserId,
+      discordUser: discordUser ? {
+        username: discordUser.username,
+        displayName: discordUser.displayName || discordUser.globalName || discordUser.username,
+        discriminator: discordUser.discriminator,
+        avatar: discordUser.avatar,
+        avatarURL: discordUser.displayAvatarURL ? discordUser.displayAvatarURL() : null
+      } : null,
       athlete: {
         id: athlete.id,
         firstname: athlete.firstname,
@@ -119,7 +126,8 @@ class MemberManager {
     // Save asynchronously without blocking
     this.saveMembersAsync();
     
-    console.log(`✅ Registered member: ${athlete.firstname} ${athlete.lastname} (Discord: ${discordUserId})`);
+    const displayName = discordUser ? discordUser.displayName || discordUser.username : discordUserId;
+    console.log(`✅ Registered member: ${displayName} (Discord: ${discordUserId}, Strava: ${athlete.firstname} ${athlete.lastname})`);
     return member;
   }
 
@@ -157,7 +165,8 @@ class MemberManager {
     }
 
     // Token expired or about to expire, refresh it
-    console.log(`🔄 Token expired for ${member.athlete.firstname}, refreshing...`);
+    const displayName = member.discordUser ? member.discordUser.displayName : member.athlete.firstname;
+    console.log(`🔄 Token expired for ${displayName}, refreshing...`);
     return await this.refreshMemberToken(member);
   }
 
@@ -180,11 +189,13 @@ class MemberManager {
       this.members.set(member.athlete.id.toString(), member);
       this.saveMembersAsync();
       
-      console.log(`✅ Token refreshed for ${member.athlete.firstname} ${member.athlete.lastname}`);
+      const displayName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
+      console.log(`✅ Token refreshed for ${displayName}`);
       return tokenData.access_token;
       
     } catch (error) {
-      console.error(`❌ Failed to refresh token for ${member.athlete.firstname}:`, error);
+      const displayName = member.discordUser ? member.discordUser.displayName : member.athlete.firstname;
+      console.error(`❌ Failed to refresh token for ${displayName}:`, error);
       
       // If refresh fails, mark member as inactive
       member.isActive = false;
@@ -211,7 +222,8 @@ class MemberManager {
       this.members.delete(athleteId.toString());
       
       this.saveMembersAsync();
-      console.log(`🗑️ Removed member: ${member.athlete.firstname} ${member.athlete.lastname}`);
+      const displayName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
+      console.log(`🗑️ Removed member: ${displayName}`);
       return member;
     }
     return null;
@@ -239,7 +251,8 @@ class MemberManager {
       }
       
       this.saveMembersAsync();
-      console.log(`🔴 Deactivated member: ${member.athlete.firstname} ${member.athlete.lastname}`);
+      const displayName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
+      console.log(`🔴 Deactivated member: ${displayName}`);
       return true;
     }
     return false;
@@ -260,7 +273,8 @@ class MemberManager {
       }
       
       this.saveMembersAsync();
-      console.log(`🟢 Reactivated member: ${member.athlete.firstname} ${member.athlete.lastname}`);
+      const displayName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
+      console.log(`🟢 Reactivated member: ${displayName}`);
       return true;
     }
     return false;
