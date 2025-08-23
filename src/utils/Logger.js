@@ -59,7 +59,7 @@ class Logger {
   formatMessage(level, component, message, data = null) {
     const timestamp = chalk.gray(this.getTimestamp());
     const levelStr = this.colors[level](`[${level}]`);
-    const componentStr = component ? this.componentColors[component](`[${component}]`) : '';
+    const componentStr = component ? (this.componentColors[component] || chalk.white)(`[${component}]`) : '';
     
     let formattedMessage = `${timestamp} ${levelStr}${componentStr} ${message}`;
     
