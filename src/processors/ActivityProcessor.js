@@ -1,6 +1,7 @@
 const StravaAPI = require('../strava/api');
 const DiscordBot = require('../discord/bot');
 const MemberManager = require('../managers/MemberManager');
+const logger = require('../utils/Logger');
 
 class ActivityProcessor {
   constructor() {
@@ -11,7 +12,7 @@ class ActivityProcessor {
   }
 
   async initialize() {
-    console.log('🚀 Initializing Activity Processor...');
+    logger.activity.info('Initializing Activity Processor...');
     
     try {
       // Start Discord bot
@@ -20,9 +21,9 @@ class ActivityProcessor {
       // Load existing members
       await this.memberManager.loadMembers();
       
-      console.log('✅ Activity Processor initialized successfully');
+      logger.activity.info('Activity Processor initialized successfully');
     } catch (error) {
-      console.error('❌ Failed to initialize Activity Processor:', error);
+      logger.activity.error('Failed to initialize Activity Processor', error);
       throw error;
     }
   }
@@ -32,27 +33,38 @@ class ActivityProcessor {
     
     // Prevent duplicate processing
     if (this.processedActivities.has(activityKey)) {
-      console.log(`⏭️ Activity ${activityId} already processed, skipping`);
+      logger.activityProcessing(activityId, athleteId, 'DUPLICATE', 'SKIPPED', {
+        reason: 'Already processed'
+      });
       return;
     }
 
     try {
-      console.log(`🔄 Processing activity ${activityId} from athlete ${athleteId}`);
+      logger.activityProcessing(activityId, athleteId, 'PROCESSING', 'STARTED');
 
       // Check if athlete is a registered member
       const member = await this.memberManager.getMemberByAthleteId(athleteId);
       if (!member) {
-        console.log(`⏭️ Athlete ${athleteId} is not a registered member, skipping activity`);
+        logger.activityProcessing(activityId, athleteId, 'NOT_MEMBER', 'SKIPPED', {
+          reason: 'Athlete not registered as member'
+        });
         return;
       }
 
       const memberName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
-      console.log(`👤 Found member: ${memberName}`);
+      logger.activity.debug('Found registered member for activity', {
+        activityId,
+        athleteId,
+        memberName,
+        discordUserId: member.discordUserId
+      });
 
       // Get valid access token (refresh if needed)
       const accessToken = await this.memberManager.getValidAccessToken(member);
       if (!accessToken) {
-        console.error(`❌ Unable to get valid access token for athlete ${athleteId}`);
+        logger.activityProcessing(activityId, athleteId, memberName, 'FAILED', {
+          reason: 'Unable to get valid access token'
+        });
         return;
       }
 
@@ -61,7 +73,9 @@ class ActivityProcessor {
       
       // Check if activity should be posted
       if (!this.stravaAPI.shouldPostActivity(activity)) {
-        console.log(`⏭️ Activity ${activityId} filtered out, not posting`);
+        logger.activityProcessing(activityId, athleteId, activity.name, 'FILTERED', {
+          reason: 'Activity filtered by posting rules'
+        });
         this.processedActivities.add(activityKey);
         return;
       }
@@ -79,25 +93,44 @@ class ActivityProcessor {
       // Mark as processed
       this.processedActivities.add(activityKey);
       
-      console.log(`✅ Successfully processed and posted activity: ${activity.name}`);
+      logger.activityProcessing(activityId, athleteId, activity.name, 'COMPLETED', {
+        memberName,
+        activityType: activity.type,
+        distance: activity.distance
+      });
 
     } catch (error) {
-      console.error(`❌ Error processing activity ${activityId}:`, error);
+      logger.activityProcessing(activityId, athleteId, 'UNKNOWN', 'FAILED', {
+        error: error.message,
+        stack: error.stack,
+        responseStatus: error.response?.status
+      });
       
       // If it's an authentication error, try to refresh the token
       if (error.response && error.response.status === 401) {
-        console.log(`🔄 Attempting to refresh token for athlete ${athleteId}`);
+        logger.activity.info('Attempting token refresh for authentication error', {
+          activityId,
+          athleteId,
+          errorStatus: error.response?.status
+        });
         try {
           const member = await this.memberManager.getMemberByAthleteId(athleteId);
           if (member) {
             await this.memberManager.refreshMemberToken(member);
-            console.log(`✅ Token refreshed for athlete ${athleteId}, retrying activity processing`);
+            logger.activity.info('Token refreshed, retrying activity processing', {
+              activityId,
+              athleteId
+            });
             
             // Retry processing once with new token
             setTimeout(() => this.processNewActivity(activityId, athleteId), 1000);
           }
         } catch (refreshError) {
-          console.error(`❌ Failed to refresh token for athlete ${athleteId}:`, refreshError);
+          logger.activity.error('Failed to refresh token during activity processing', {
+            activityId,
+            athleteId,
+            error: refreshError.message
+          });
         }
       }
     }
@@ -105,7 +138,11 @@ class ActivityProcessor {
 
   // Process recent activities for all members (useful for initial sync or recovery)
   async processRecentActivities(hoursBack = 24) {
-    console.log(`🔄 Processing recent activities from last ${hoursBack} hours...`);
+    logger.activity.info('Processing recent activities', {
+      hoursBack,
+      afterTimestamp: after,
+      memberCount: members.length
+    });
     
     const members = await this.memberManager.getAllMembers();
     const after = Math.floor((Date.now() - (hoursBack * 60 * 60 * 1000)) / 1000);
@@ -114,11 +151,18 @@ class ActivityProcessor {
       const memberName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
       
       try {
-        console.log(`👤 Processing recent activities for ${memberName}`);
+        logger.activity.debug('Processing recent activities for member', {
+          memberName,
+          athleteId: member.athlete.id,
+          discordUserId: member.discordUserId
+        });
         
         const accessToken = await this.memberManager.getValidAccessToken(member);
         if (!accessToken) {
-          console.error(`❌ Unable to get valid access token for ${memberName}`);
+          logger.activity.warn('Unable to get valid access token for recent activities', {
+            memberName,
+            athleteId: member.athlete.id
+          });
           continue;
         }
 
@@ -130,7 +174,11 @@ class ActivityProcessor {
           after // after
         );
 
-        console.log(`📊 Found ${activities.length} recent activities for ${memberName}`);
+        logger.activity.info('Found recent activities', {
+          memberName,
+          activityCount: activities.length,
+          timeRange: `${hoursBack} hours`
+        });
 
         for (const activity of activities) {
           // Process each activity with a small delay to avoid rate limiting
@@ -139,11 +187,15 @@ class ActivityProcessor {
         }
 
       } catch (error) {
-        console.error(`❌ Error processing recent activities for ${memberName}:`, error);
+        logger.activity.error('Error processing recent activities for member', {
+          memberName,
+          athleteId: member.athlete.id,
+          error: error.message
+        });
       }
     }
 
-    console.log('✅ Finished processing recent activities');
+    logger.activity.info('Finished processing recent activities');
   }
 
   // Cleanup old processed activity records to prevent memory buildup
@@ -157,7 +209,11 @@ class ActivityProcessor {
       this.processedActivities.clear();
       toKeep.forEach(activity => this.processedActivities.add(activity));
       
-      console.log(`🧹 Cleaned up processed activities cache, kept ${toKeep.length} entries`);
+      logger.activity.debug('Cleaned up processed activities cache', {
+        previousSize: maxSize,
+        currentSize: toKeep.length,
+        cleanupRatio: '80%'
+      });
     }
   }
 
@@ -172,14 +228,14 @@ class ActivityProcessor {
   }
 
   async shutdown() {
-    console.log('🔄 Shutting down Activity Processor...');
+    logger.activity.info('Shutting down Activity Processor...');
     
     try {
       await this.discordBot.stop();
       await this.memberManager.saveMembers();
-      console.log('✅ Activity Processor shutdown complete');
+      logger.activity.info('Activity Processor shutdown complete');
     } catch (error) {
-      console.error('❌ Error during Activity Processor shutdown:', error);
+      logger.activity.error('Error during Activity Processor shutdown', error);
     }
   }
 }

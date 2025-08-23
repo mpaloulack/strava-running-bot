@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, InteractionResponseFlags } = require('discord.js');
 const ActivityEmbedBuilder = require('../utils/EmbedBuilder');
 const DiscordUtils = require('../utils/DiscordUtils');
+const logger = require('../utils/Logger');
 
 class DiscordCommands {
   constructor(activityProcessor) {
@@ -84,6 +85,14 @@ class DiscordCommands {
   async handleCommand(interaction) {
     const { commandName, options } = interaction;
 
+    logger.discord.info('Command received', {
+      command: commandName,
+      user: interaction.user.tag,
+      userId: interaction.user.id,
+      guild: interaction.guild?.name,
+      channel: interaction.channel?.name
+    });
+
     try {
       switch (commandName) {
         case 'members':
@@ -105,7 +114,13 @@ class DiscordCommands {
           });
       }
     } catch (error) {
-      console.error('❌ Error handling command:', error);
+      logger.discord.error('Error handling command', {
+        command: commandName,
+        user: interaction.user.tag,
+        guild: interaction.guild?.name,
+        error: error.message,
+        stack: error.stack
+      });
       
       const errorMessage = '❌ An error occurred while processing your command.';
       
@@ -181,7 +196,10 @@ class DiscordCommands {
       await interaction.editReply({ embeds: [embed] });
 
     } catch (error) {
-      console.error('❌ Error listing members:', error);
+      logger.discord.error('Error listing members', {
+        user: interaction.user.tag,
+        error: error.message
+      });
       await interaction.editReply({
         content: '❌ Failed to retrieve member list.',
         ephemeral: true
@@ -229,7 +247,11 @@ class DiscordCommands {
       }
 
     } catch (error) {
-      console.error('❌ Error removing member:', error);
+      logger.discord.error('Error removing member', {
+        user: interaction.user.tag,
+        targetUser: options.getString('user'),
+        error: error.message
+      });
       await interaction.editReply({
         content: '❌ Failed to remove member.',
         ephemeral: true
@@ -287,7 +309,11 @@ class DiscordCommands {
       }
 
     } catch (error) {
-      console.error('❌ Error deactivating member:', error);
+      logger.discord.error('Error deactivating member', {
+        user: interaction.user.tag,
+        targetUser: options.getString('user'),
+        error: error.message
+      });
       await interaction.editReply({
         content: '❌ Failed to deactivate member.',
         ephemeral: true
@@ -347,7 +373,11 @@ class DiscordCommands {
       }
 
     } catch (error) {
-      console.error('❌ Error reactivating member:', error);
+      logger.discord.error('Error reactivating member', {
+        user: interaction.user.tag,
+        targetUser: options.getString('user'),
+        error: error.message
+      });
       await interaction.editReply({
         content: '❌ Failed to reactivate member.',
         ephemeral: true
@@ -425,7 +455,10 @@ class DiscordCommands {
       await interaction.editReply({ embeds: [embed] });
 
     } catch (error) {
-      console.error('❌ Error getting bot status:', error);
+      logger.discord.error('Error getting bot status', {
+        user: interaction.user.tag,
+        error: error.message
+      });
       await interaction.editReply({
         content: '❌ Failed to retrieve bot status.',
         ephemeral: true
@@ -493,7 +526,11 @@ class DiscordCommands {
       await interaction.editReply({ embeds: [embed] });
 
     } catch (error) {
-      console.error('❌ Error fetching last activity:', error);
+      logger.discord.error('Error fetching last activity', {
+        user: interaction.user.tag,
+        memberInput: options.getString('member'),
+        error: error.message
+      });
       await interaction.editReply({
         content: '❌ Failed to fetch the last activity. Please try again later.',
       });
@@ -559,7 +596,11 @@ class DiscordCommands {
 
         await interaction.respond(choices);
       } catch (error) {
-        console.error('❌ Error in autocomplete:', error);
+        logger.discord.error('Error in autocomplete', {
+          user: interaction.user.tag,
+          focusedValue: focusedOption.value,
+          error: error.message
+        });
         await interaction.respond([]);
       }
     }

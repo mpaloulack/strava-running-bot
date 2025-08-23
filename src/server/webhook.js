@@ -1,5 +1,6 @@
 const express = require('express');
 const config = require('../../config/config');
+const logger = require('../utils/Logger');
 
 class WebhookServer {
   constructor(activityProcessor) {
@@ -16,9 +17,14 @@ class WebhookServer {
     // Parse URL-encoded bodies
     this.app.use(express.urlencoded({ extended: true }));
 
-    // Basic logging middleware
+    // Request logging middleware
     this.app.use((req, res, next) => {
-      console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+      const startTime = Date.now();
+      
+      res.on('finish', () => {
+        const responseTime = Date.now() - startTime;
+        logger.request(req.method, req.path, res.statusCode, responseTime, req.get('User-Agent'));
+      });
       next();
     });
   }
@@ -63,7 +69,13 @@ class WebhookServer {
 
     // Error handler
     this.app.use((error, req, res, next) => {
-      console.error('❌ Server error:', error);
+      logger.server.error('Server error', {
+        error: error.message,
+        stack: error.stack,
+        url: req.url,
+        method: req.method,
+        ip: req.ip
+      });
       res.status(500).json({ 
         error: 'Internal server error',
         message: config.server.nodeEnv === 'development' ? error.message : 'Something went wrong'
@@ -75,16 +87,21 @@ class WebhookServer {
   handleWebhookVerification(req, res) {
     const { 'hub.challenge': challenge, 'hub.verify_token': verifyToken } = req.query;
 
-    console.log('🔍 Webhook verification request received');
-    console.log('Verify token:', verifyToken);
-    console.log('Expected token:', config.strava.webhookVerifyToken);
+    logger.webhook.info('Webhook verification request received', {
+      verifyToken,
+      expectedToken: config.strava.webhookVerifyToken,
+      query: req.query
+    });
 
     // Verify the token matches what we set in Strava
     if (verifyToken === config.strava.webhookVerifyToken) {
-      console.log('✅ Webhook verification successful');
+      logger.webhook.info('Webhook verification successful');
       res.json({ 'hub.challenge': challenge });
     } else {
-      console.log('❌ Webhook verification failed - invalid token');
+      logger.webhook.warn('Webhook verification failed - invalid token', {
+        receivedToken: verifyToken,
+        expectedToken: config.strava.webhookVerifyToken
+      });
       res.status(403).json({ error: 'Invalid verify token' });
     }
   }
@@ -94,7 +111,7 @@ class WebhookServer {
     try {
       const event = req.body;
       
-      console.log('📨 Webhook event received:', JSON.stringify(event, null, 2));
+      logger.webhook.info('Webhook event received', event);
 
       // Acknowledge receipt immediately
       res.status(200).json({ received: true });
@@ -103,7 +120,11 @@ class WebhookServer {
       await this.processWebhookEvent(event);
 
     } catch (error) {
-      console.error('❌ Error handling webhook event:', error);
+      logger.webhook.error('Error handling webhook event', {
+        error: error.message,
+        event,
+        stack: error.stack
+      });
       res.status(500).json({ error: 'Failed to process webhook event' });
     }
   }
@@ -112,11 +133,16 @@ class WebhookServer {
   async processWebhookEvent(event) {
     const { object_type, aspect_type, object_id, owner_id, subscription_id, event_time } = event;
 
-    console.log(`🔄 Processing ${aspect_type} event for ${object_type} ${object_id} (owner: ${owner_id})`);
+    logger.webhook.info('Processing webhook event', {
+      aspectType: aspect_type,
+      objectType: object_type,
+      objectId: object_id,
+      ownerId: owner_id
+    });
 
     // Only process activity events
     if (object_type !== 'activity') {
-      console.log('⏭️ Skipping non-activity event');
+      logger.webhook.debug('Skipping non-activity event', { objectType: object_type });
       return;
     }
 
@@ -132,35 +158,55 @@ class WebhookServer {
         await this.handleActivityDelete(object_id, owner_id);
         break;
       default:
-        console.log(`⏭️ Unhandled event type: ${aspect_type}`);
+        logger.webhook.debug('Unhandled event type', { aspectType: aspect_type });
     }
   }
 
   // Handle new activity creation
   async handleActivityCreate(activityId, athleteId) {
     try {
-      console.log(`🏃 New activity created: ${activityId} by athlete ${athleteId}`);
+      logger.activity.info('New activity created', {
+        activityId,
+        athleteId,
+        eventType: 'create'
+      });
       await this.activityProcessor.processNewActivity(activityId, athleteId);
     } catch (error) {
-      console.error(`❌ Error processing new activity ${activityId}:`, error);
+      logger.activity.error('Error processing new activity', {
+        activityId,
+        athleteId,
+        error: error.message
+      });
     }
   }
 
   // Handle activity updates
   async handleActivityUpdate(activityId, athleteId) {
     try {
-      console.log(`📝 Activity updated: ${activityId} by athlete ${athleteId}`);
+      logger.activity.info('Activity updated', {
+        activityId,
+        athleteId,
+        eventType: 'update'
+      });
       // For now, we'll treat updates the same as new activities
       // In the future, you might want to update the Discord message
       await this.activityProcessor.processNewActivity(activityId, athleteId);
     } catch (error) {
-      console.error(`❌ Error processing activity update ${activityId}:`, error);
+      logger.activity.error('Error processing activity update', {
+        activityId,
+        athleteId,
+        error: error.message
+      });
     }
   }
 
   // Handle activity deletion
   async handleActivityDelete(activityId, athleteId) {
-    console.log(`🗑️ Activity deleted: ${activityId} by athlete ${athleteId}`);
+    logger.activity.info('Activity deleted', {
+      activityId,
+      athleteId,
+      eventType: 'delete'
+    });
     // For now, we'll just log it. In the future, you might want to
     // delete the corresponding Discord message
   }
@@ -183,7 +229,11 @@ class WebhookServer {
       const { code, state, error } = req.query;
 
       if (error) {
-        console.error('❌ Strava OAuth error:', error);
+        logger.strava.error('Strava OAuth error', {
+          error: error.message,
+          code: code,
+          state: state
+        });
         return res.status(400).json({ error: `Strava authorization failed: ${error}` });
       }
 
@@ -206,7 +256,10 @@ class WebhookServer {
           discordUser = await this.activityProcessor.discordBot.client.users.fetch(discordUserId);
         }
       } catch (error) {
-        console.warn(`⚠️ Could not fetch Discord user info for ${discordUserId}:`, error.message);
+        logger.discord.warn('Could not fetch Discord user info', {
+          discordUserId,
+          error: error.message
+        });
       }
 
       // Register the member
@@ -218,7 +271,12 @@ class WebhookServer {
       );
 
       const displayName = discordUser ? discordUser.displayName || discordUser.username : discordUserId;
-      console.log(`✅ Successfully registered: ${displayName} (Strava: ${athlete.firstname} ${athlete.lastname})`);
+      logger.member.info('Member successfully registered', {
+        displayName,
+        discordUserId,
+        stravaName: `${athlete.firstname} ${athlete.lastname}`,
+        athleteId: athlete.id
+      });
 
       res.send(`
         <html>
@@ -232,7 +290,12 @@ class WebhookServer {
       `);
 
     } catch (error) {
-      console.error('❌ Error in Strava callback:', error);
+      logger.strava.error('Error in Strava callback', {
+        error: error.message,
+        code: code,
+        state: state,
+        stack: error.stack
+      });
       res.status(500).send(`
         <html>
           <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
@@ -265,7 +328,7 @@ class WebhookServer {
         members: memberList
       });
     } catch (error) {
-      console.error('❌ Error listing members:', error);
+      logger.member.error('Error listing members', error);
       res.status(500).json({ error: 'Failed to list members' });
     }
   }
@@ -290,7 +353,10 @@ class WebhookServer {
         res.status(404).json({ error: 'Member not found' });
       }
     } catch (error) {
-      console.error('❌ Error removing member:', error);
+      logger.member.error('Error removing member', {
+        athleteId: req.params.athleteId,
+        error: error.message
+      });
       res.status(500).json({ error: 'Failed to remove member' });
     }
   }
@@ -315,7 +381,10 @@ class WebhookServer {
         res.status(404).json({ error: 'Member not found' });
       }
     } catch (error) {
-      console.error('❌ Error removing member by Discord ID:', error);
+      logger.member.error('Error removing member by Discord ID', {
+        discordId: req.params.discordId,
+        error: error.message
+      });
       res.status(500).json({ error: 'Failed to remove member' });
     }
   }
@@ -335,7 +404,10 @@ class WebhookServer {
         res.status(404).json({ error: 'Member not found' });
       }
     } catch (error) {
-      console.error('❌ Error deactivating member:', error);
+      logger.member.error('Error deactivating member', {
+        athleteId: req.params.athleteId,
+        error: error.message
+      });
       res.status(500).json({ error: 'Failed to deactivate member' });
     }
   }
@@ -355,7 +427,10 @@ class WebhookServer {
         res.status(404).json({ error: 'Member not found' });
       }
     } catch (error) {
-      console.error('❌ Error reactivating member:', error);
+      logger.member.error('Error reactivating member', {
+        athleteId: req.params.athleteId,
+        error: error.message
+      });
       res.status(500).json({ error: 'Failed to reactivate member' });
     }
   }
@@ -363,9 +438,11 @@ class WebhookServer {
   start() {
     return new Promise((resolve) => {
       this.server = this.app.listen(config.server.port, () => {
-        console.log(`🌐 Webhook server started on port ${config.server.port}`);
-        console.log(`📡 Webhook endpoint: http://localhost:${config.server.port}/webhook/strava`);
-        console.log(`🔗 Auth endpoint: http://localhost:${config.server.port}/auth/strava`);
+        logger.server.info('Webhook server started', {
+          port: config.server.port,
+          webhookEndpoint: `http://localhost:${config.server.port}/webhook/strava`,
+          authEndpoint: `http://localhost:${config.server.port}/auth/strava`
+        });
         resolve();
       });
     });
@@ -375,7 +452,7 @@ class WebhookServer {
     return new Promise((resolve) => {
       if (this.server) {
         this.server.close(() => {
-          console.log('🔴 Webhook server stopped');
+          logger.server.info('Webhook server stopped');
           resolve();
         });
       } else {

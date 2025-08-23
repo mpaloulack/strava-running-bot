@@ -1,5 +1,6 @@
 const axios = require('axios');
 const config = require('../../config/config');
+const logger = require('../utils/Logger');
 
 class StravaAPI {
   constructor() {
@@ -29,6 +30,8 @@ class StravaAPI {
 
   // Exchange authorization code for access token
   async exchangeCodeForToken(authCode) {
+    logger.strava.debug('Exchanging authorization code for token', { authCode });
+    
     try {
       const response = await axios.post(config.strava.tokenUrl, {
         client_id: this.clientId,
@@ -39,13 +42,19 @@ class StravaAPI {
 
       return response.data;
     } catch (error) {
-      console.error('❌ Error exchanging code for token:', error.response?.data || error.message);
+      logger.strava.error('Error exchanging code for token', {
+        error: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
       throw new Error('Failed to exchange authorization code for token');
     }
   }
 
   // Refresh access token using refresh token
   async refreshAccessToken(refreshToken) {
+    logger.strava.debug('Refreshing access token');
+    
     try {
       const response = await axios.post(config.strava.tokenUrl, {
         client_id: this.clientId,
@@ -56,13 +65,19 @@ class StravaAPI {
 
       return response.data;
     } catch (error) {
-      console.error('❌ Error refreshing token:', error.response?.data || error.message);
+      logger.strava.error('Error refreshing token', {
+        error: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
       throw new Error('Failed to refresh access token');
     }
   }
 
   // Get athlete information
   async getAthlete(accessToken) {
+    logger.strava.debug('Fetching athlete information');
+    
     try {
       const response = await axios.get(`${this.baseURL}/athlete`, {
         headers: {
@@ -72,13 +87,19 @@ class StravaAPI {
 
       return response.data;
     } catch (error) {
-      console.error('❌ Error fetching athlete:', error.response?.data || error.message);
+      logger.strava.error('Error fetching athlete', {
+        error: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
       throw new Error('Failed to fetch athlete information');
     }
   }
 
   // Get athlete activities
   async getAthleteActivities(accessToken, page = 1, perPage = 30, before = null, after = null) {
+    logger.strava.debug('Fetching athlete activities', { page, perPage, before, after });
+    
     try {
       const params = {
         page: page,
@@ -97,13 +118,20 @@ class StravaAPI {
 
       return response.data;
     } catch (error) {
-      console.error('❌ Error fetching activities:', error.response?.data || error.message);
+      logger.strava.error('Error fetching activities', {
+        error: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        params: { page, perPage, before, after }
+      });
       throw new Error('Failed to fetch athlete activities');
     }
   }
 
   // Get detailed activity by ID
   async getActivity(activityId, accessToken) {
+    logger.strava.debug('Fetching detailed activity', { activityId });
+    
     try {
       const response = await axios.get(`${this.baseURL}/activities/${activityId}`, {
         headers: {
@@ -113,7 +141,12 @@ class StravaAPI {
 
       return response.data;
     } catch (error) {
-      console.error(`❌ Error fetching activity ${activityId}:`, error.response?.data || error.message);
+      logger.strava.error('Error fetching activity', {
+        activityId,
+        error: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
       throw new Error(`Failed to fetch activity ${activityId}`);
     }
   }
@@ -185,19 +218,29 @@ class StravaAPI {
     const hoursDiff = (now - activityDate) / (1000 * 60 * 60);
     
     if (hoursDiff > 24) {
-      console.log(`⏭️ Skipping old activity: ${activity.name} (${hoursDiff.toFixed(1)}h old)`);
+      logger.strava.debug('Skipping old activity', {
+        name: activity.name,
+        hoursOld: hoursDiff.toFixed(1),
+        activityDate: activity.start_date
+      });
       return false;
     }
 
     // Skip if activity is too short (less than 1 minute)
     if (activity.moving_time < 60) {
-      console.log(`⏭️ Skipping short activity: ${activity.name} (${activity.moving_time}s)`);
+      logger.strava.debug('Skipping short activity', {
+        name: activity.name,
+        movingTime: activity.moving_time
+      });
       return false;
     }
 
     // Skip if activity has no distance (manual entries)
     if (!activity.distance || activity.distance < 100) {
-      console.log(`⏭️ Skipping activity with no distance: ${activity.name}`);
+      logger.strava.debug('Skipping activity with no distance', {
+        name: activity.name,
+        distance: activity.distance
+      });
       return false;
     }
 

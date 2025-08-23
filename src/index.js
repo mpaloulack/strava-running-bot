@@ -1,6 +1,7 @@
 const ActivityProcessor = require('./processors/ActivityProcessor');
 const WebhookServer = require('./server/webhook');
 const config = require('../config/config');
+const logger = require('./utils/Logger');
 
 class HFRRunningBot {
   constructor() {
@@ -11,9 +12,10 @@ class HFRRunningBot {
 
   async start() {
     try {
-      console.log('🚀 Starting HFR Running Bot...');
-      console.log(`📊 Environment: ${config.server.nodeEnv}`);
-      console.log(`🤖 Bot Name: ${config.app.name} v${config.app.version}`);
+      logger.system('🚀 Starting HFR Running Bot...');
+      logger.system(`📊 Environment: ${config.server.nodeEnv}`);
+      logger.system(`🤖 Bot Name: ${config.app.name} v${config.app.version}`);
+      logger.system(`🔧 Log Level: ${config.logging.level}`);
 
       // Initialize activity processor
       await this.activityProcessor.initialize();
@@ -26,21 +28,22 @@ class HFRRunningBot {
 
       this.isRunning = true;
       
-      console.log('✅ HFR Running Bot started successfully!');
-      console.log('🔗 To register team members, have them visit:');
-      console.log(`   http://localhost:${config.server.port}/auth/strava?user_id=THEIR_DISCORD_USER_ID`);
-      console.log('📡 Webhook endpoint ready for Strava events');
+      logger.system('✅ HFR Running Bot started successfully!');
+      logger.info('SYSTEM', '🔗 Member registration URL:', {
+        url: `http://localhost:${config.server.port}/auth/strava?user_id=THEIR_DISCORD_USER_ID`
+      });
+      logger.info('SYSTEM', '📡 Webhook endpoint ready for Strava events');
       
       // Optionally process recent activities on startup
       if (config.server.nodeEnv === 'production') {
-        console.log('🔄 Processing recent activities from last 6 hours...');
+        logger.info('SYSTEM', '🔄 Processing recent activities from last 6 hours...');
         setTimeout(() => {
           this.activityProcessor.processRecentActivities(6);
         }, 5000); // Wait 5 seconds after startup
       }
 
     } catch (error) {
-      console.error('❌ Failed to start HFR Running Bot:', error);
+      logger.error('SYSTEM', '❌ Failed to start HFR Running Bot', error);
       await this.stop();
       process.exit(1);
     }
@@ -49,21 +52,21 @@ class HFRRunningBot {
   async stop() {
     if (!this.isRunning) return;
 
-    console.log('🔄 Stopping HFR Running Bot...');
+    logger.info('SYSTEM', '🔄 Stopping HFR Running Bot...');
     this.isRunning = false;
 
     try {
       await this.webhookServer.stop();
       await this.activityProcessor.shutdown();
-      console.log('✅ HFR Running Bot stopped successfully');
+      logger.info('SYSTEM', '✅ HFR Running Bot stopped successfully');
     } catch (error) {
-      console.error('❌ Error during shutdown:', error);
+      logger.error('SYSTEM', '❌ Error during shutdown', error);
     }
   }
 
   setupGracefulShutdown() {
     const shutdown = async (signal) => {
-      console.log(`\n📡 Received ${signal}, initiating graceful shutdown...`);
+      logger.info('SYSTEM', `📡 Received ${signal}, initiating graceful shutdown...`);
       await this.stop();
       process.exit(0);
     };
@@ -72,12 +75,12 @@ class HFRRunningBot {
     process.on('SIGINT', () => shutdown('SIGINT'));
     
     process.on('uncaughtException', (error) => {
-      console.error('❌ Uncaught Exception:', error);
+      logger.error('SYSTEM', '❌ Uncaught Exception', error);
       this.stop().finally(() => process.exit(1));
     });
 
     process.on('unhandledRejection', (reason, promise) => {
-      console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+      logger.error('SYSTEM', '❌ Unhandled Rejection', { promise, reason });
       this.stop().finally(() => process.exit(1));
     });
   }
@@ -143,7 +146,7 @@ For more information, visit: https://github.com/your-repo/hfr-running-bot
 } else {
   // Start the bot normally
   bot.start().catch(error => {
-    console.error('❌ Fatal error:', error);
+    logger.error('SYSTEM', '❌ Fatal error', error);
     process.exit(1);
   });
 }

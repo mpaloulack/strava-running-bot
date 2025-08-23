@@ -17,6 +17,9 @@ const config = {
     port: process.env.PORT || 3000,
     nodeEnv: process.env.NODE_ENV || 'development',
   },
+  logging: {
+    level: process.env.LOG_LEVEL || 'INFO',
+  },
   security: {
     encryptionKey: process.env.ENCRYPTION_KEY,
   },

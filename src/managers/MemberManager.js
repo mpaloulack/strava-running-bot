@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const config = require('../../config/config');
 const StravaAPI = require('../strava/api');
+const logger = require('../utils/Logger');
 
 class MemberManager {
   constructor() {
@@ -28,13 +29,16 @@ class MemberManager {
         }
       }
       
-      console.log(`✅ Loaded ${this.members.size} members from storage`);
+      logger.member.info('Members loaded from storage', {
+        count: this.members.size,
+        memberIds: Array.from(this.members.keys())
+      });
     } catch (error) {
       if (error.code === 'ENOENT') {
-        console.log('📁 No existing member data found, starting fresh');
+        logger.member.info('No existing member data found, starting fresh');
         await this.ensureDataDirectory();
       } else {
-        console.error('❌ Error loading members:', error);
+        logger.member.error('Error loading members', error);
       }
     }
   }
@@ -55,9 +59,12 @@ class MemberManager {
       };
       
       await fs.writeFile(this.dataFile, JSON.stringify(dataToSave, null, 2));
-      console.log(`✅ Saved ${this.members.size} members to storage`);
+      logger.member.debug('Members saved to storage', {
+        count: this.members.size,
+        filePath: this.dataFile
+      });
     } catch (error) {
-      console.error('❌ Error saving members:', error);
+      logger.member.error('Error saving members', error);
     }
   }
 
@@ -66,7 +73,7 @@ class MemberManager {
     // Use setTimeout to make it truly async and non-blocking
     setTimeout(() => {
       this.saveMembers().catch(error => {
-        console.error('❌ Error in async save:', error);
+        logger.member.error('Error in async save', error);
       });
     }, 0);
   }
@@ -127,7 +134,10 @@ class MemberManager {
     this.saveMembersAsync();
     
     const displayName = discordUser ? discordUser.displayName || discordUser.username : discordUserId;
-    console.log(`✅ Registered member: ${displayName} (Discord: ${discordUserId}, Strava: ${athlete.firstname} ${athlete.lastname})`);
+    logger.memberAction('REGISTERED', `${athlete.firstname} ${athlete.lastname}`, discordUserId, athleteId, {
+      displayName,
+      registeredAt: member.registeredAt
+    });
     return member;
   }
 
@@ -166,7 +176,11 @@ class MemberManager {
 
     // Token expired or about to expire, refresh it
     const displayName = member.discordUser ? member.discordUser.displayName : member.athlete.firstname;
-    console.log(`🔄 Token expired for ${displayName}, refreshing...`);
+    logger.member.debug('Token expired, refreshing', {
+      memberName: displayName,
+      athleteId: member.athlete.id,
+      expiresAt: member.tokens.expires_at
+    });
     return await this.refreshMemberToken(member);
   }
 
@@ -190,12 +204,18 @@ class MemberManager {
       this.saveMembersAsync();
       
       const displayName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
-      console.log(`✅ Token refreshed for ${displayName}`);
+      logger.memberAction('TOKEN_REFRESHED', displayName, member.discordUserId, member.athlete.id, {
+        newExpiresAt: tokenData.expires_at,
+        refreshedAt: member.lastTokenRefresh
+      });
       return tokenData.access_token;
       
     } catch (error) {
       const displayName = member.discordUser ? member.discordUser.displayName : member.athlete.firstname;
-      console.error(`❌ Failed to refresh token for ${displayName}:`, error);
+      logger.memberAction('TOKEN_FAILED', displayName, member.discordUserId, member.athlete.id, {
+        error: error.message,
+        timestamp: new Date().toISOString()
+      });
       
       // If refresh fails, mark member as inactive
       member.isActive = false;
@@ -223,7 +243,9 @@ class MemberManager {
       
       this.saveMembersAsync();
       const displayName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
-      console.log(`🗑️ Removed member: ${displayName}`);
+      logger.memberAction('REMOVED', displayName, member.discordUserId, athleteId, {
+        removedAt: new Date().toISOString()
+      });
       return member;
     }
     return null;
@@ -252,7 +274,9 @@ class MemberManager {
       
       this.saveMembersAsync();
       const displayName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
-      console.log(`🔴 Deactivated member: ${displayName}`);
+      logger.memberAction('DEACTIVATED', displayName, member.discordUserId, athleteId, {
+        deactivatedAt: member.deactivatedAt
+      });
       return true;
     }
     return false;
@@ -274,7 +298,9 @@ class MemberManager {
       
       this.saveMembersAsync();
       const displayName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
-      console.log(`🟢 Reactivated member: ${displayName}`);
+      logger.memberAction('REACTIVATED', displayName, member.discordUserId, athleteId, {
+        reactivatedAt: member.reactivatedAt
+      });
       return true;
     }
     return false;
