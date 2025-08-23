@@ -1,73 +1,29 @@
 # Deployment Guide
 
-This comprehensive guide covers all deployment scenarios for the HFR Running Bot, from development to production environments.
+This guide covers deployment scenarios beyond basic development setup. For initial setup and configuration, see the [main README](../README.md).
 
 ## Table of Contents
 
-- [Development Deployment](#development-deployment)
 - [Docker Deployment](#docker-deployment)
 - [Production Deployment](#production-deployment)
 - [Cloud Deployment](#cloud-deployment)
 - [NAS Deployment](#nas-deployment)
-- [Environment Configuration](#environment-configuration)
 - [Security Setup](#security-setup)
 - [Monitoring & Maintenance](#monitoring--maintenance)
 
+## Prerequisites
+
+Before deploying, ensure you have completed the basic setup from the [main README](../README.md):
+- ✅ Discord bot configured
+- ✅ Strava API credentials obtained  
+- ✅ Environment variables configured
+- ✅ Local development working
+
 ## Development Deployment
 
-### Local Development Setup
+For local development setup, follow the [Quick Start guide](../README.md#-quick-start) in the main README.
 
-#### Prerequisites
-
-- Node.js 18.0 or higher
-- npm or yarn package manager
-- Git for version control
-
-#### Quick Start
-
-```bash
-# Clone the repository
-git clone <your-repo-url>
-cd hfrrunningbot
-
-# Install dependencies
-npm install
-
-# Copy and configure environment file
-cp .env.example .env
-# Edit .env with your development credentials
-
-# Generate encryption key
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-
-# Start development server
-npm run dev
-```
-
-#### Development Environment Variables
-
-```env
-# Development Configuration
-NODE_ENV=development
-PORT=3000
-
-# Discord Bot (Create at https://discord.com/developers/applications)
-DISCORD_TOKEN=your_development_bot_token
-DISCORD_CHANNEL_ID=your_test_channel_id
-
-# Strava API (Create at https://www.strava.com/settings/api)
-STRAVA_CLIENT_ID=your_strava_client_id
-STRAVA_CLIENT_SECRET=your_strava_client_secret
-STRAVA_WEBHOOK_VERIFY_TOKEN=any_random_string_for_dev
-
-# Security
-ENCRYPTION_KEY=generate_with_crypto_randomBytes_32_toString_hex
-
-# Optional
-GOOGLE_MAPS_API_KEY=your_google_maps_api_key
-```
-
-#### Development Tools
+### Development Tools
 
 ```bash
 # Validate configuration
@@ -157,16 +113,16 @@ deploy:
 
 ```bash
 # Backup member data
-docker run --rm -v hfrrunningbot_bot_data:/data -v $(pwd):/backup alpine tar czf /backup/bot_data_backup.tar.gz -C /data .
+docker run --rm -v hfr-bot_bot_data:/data -v $(pwd):/backup alpine tar czf /backup/bot_data_backup.tar.gz -C /data .
 
 # Restore member data
-docker run --rm -v hfrrunningbot_bot_data:/data -v $(pwd):/backup alpine tar xzf /backup/bot_data_backup.tar.gz -C /data
+docker run --rm -v hfr-bot_bot_data:/data -v $(pwd):/backup alpine tar xzf /backup/bot_data_backup.tar.gz -C /data
 
 # List volumes
 docker volume ls
 
 # Inspect volume
-docker volume inspect hfrrunningbot_bot_data
+docker volume inspect hfr-bot_bot_data
 ```
 
 ## Production Deployment

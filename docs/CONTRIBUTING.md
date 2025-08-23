@@ -41,11 +41,12 @@ Examples of unacceptable behavior include:
 
 ### Prerequisites
 
-- Node.js 18.0 or higher
-- npm or yarn package manager
-- Git for version control
-- Discord account for testing
-- Strava account for testing
+Before contributing, ensure you have completed the basic setup from the [main README](../README.md):
+- ✅ Node.js 22+ installed
+- ✅ Development environment working
+- ✅ Discord and Strava accounts for testing
+
+For detailed setup instructions, follow the [Quick Start guide](../README.md#-quick-start).
 
 ### Development Environment
 
