@@ -2,9 +2,9 @@ name: SonarCloud Code Analysis
 
 on:
   push:
-    branches: [ hfrrunningbot, main ]
+    branches: [ main ]
   pull_request:
-    branches: [ hfrrunningbot, main ]
+    branches: [ main ]
     types: [opened, synchronize, reopened]
 
 jobs:
