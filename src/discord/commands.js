@@ -2,6 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, InteractionRespo
 const ActivityEmbedBuilder = require('../utils/EmbedBuilder');
 const DiscordUtils = require('../utils/DiscordUtils');
 const logger = require('../utils/Logger');
+const config = require('../../config/config');
 
 class DiscordCommands {
   constructor(activityProcessor) {
@@ -399,7 +400,7 @@ class DiscordCommands {
       return;
     }
 
-    const registerUrl = `http://localhost:3000/auth/strava?user_id=${userId}`;
+    const registerUrl = `${config.server.baseUrl}/auth/strava?user_id=${userId}`;
 
     const embed = new EmbedBuilder()
       .setTitle('🔗 Register with Strava')

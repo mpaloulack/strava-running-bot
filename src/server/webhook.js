@@ -447,8 +447,9 @@ class WebhookServer {
       this.server = this.app.listen(config.server.port, () => {
         logger.server.info('Webhook server started', {
           port: config.server.port,
-          webhookEndpoint: `http://localhost:${config.server.port}/webhook/strava`,
-          authEndpoint: `http://localhost:${config.server.port}/auth/strava`
+          baseUrl: config.server.baseUrl,
+          webhookEndpoint: `${config.server.baseUrl}/webhook/strava`,
+          authEndpoint: `${config.server.baseUrl}/auth/strava`
         });
         resolve();
       });

@@ -16,6 +16,7 @@ const config = {
   server: {
     port: process.env.PORT || 3000,
     nodeEnv: process.env.NODE_ENV || 'development',
+    baseUrl: process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`,
   },
   logging: {
     level: process.env.LOG_LEVEL || 'INFO',
@@ -41,6 +42,13 @@ const requiredEnvVars = [
   'STRAVA_WEBHOOK_VERIFY_TOKEN',
   'ENCRYPTION_KEY'
 ];
+
+// BASE_URL is not strictly required since it has a localhost fallback,
+// but we'll warn if it's not set in production
+if (process.env.NODE_ENV === 'production' && !process.env.BASE_URL) {
+  console.warn('⚠️  BASE_URL not set in production environment. Using localhost fallback.');
+  console.warn('   Set BASE_URL=https://yourdomain.com for production deployment.');
+}
 
 const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
 

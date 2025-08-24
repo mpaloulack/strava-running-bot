@@ -25,7 +25,7 @@ class StravaAPI {
 
   getRedirectUri() {
     // This should match your webhook endpoint domain
-    return `http://localhost:${config.server.port}/auth/strava/callback`;
+    return `${config.server.baseUrl}/auth/strava/callback`;
   }
 
   // Exchange authorization code for access token

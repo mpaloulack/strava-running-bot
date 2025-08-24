@@ -30,7 +30,7 @@ class HFRRunningBot {
       
       logger.system('✅ HFR Running Bot started successfully!');
       logger.info('SYSTEM', '🔗 Member registration URL:', {
-        url: `http://localhost:${config.server.port}/auth/strava?user_id=THEIR_DISCORD_USER_ID`
+        url: `${config.server.baseUrl}/auth/strava?user_id=THEIR_DISCORD_USER_ID`
       });
       logger.info('SYSTEM', '📡 Webhook endpoint ready for Strava events');
       
