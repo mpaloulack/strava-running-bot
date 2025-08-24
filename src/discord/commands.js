@@ -428,6 +428,7 @@ class DiscordCommands {
     try {
       const stats = this.activityProcessor.getStats();
       const memberStats = this.activityProcessor.memberManager.getStats();
+      const rateLimitStats = this.activityProcessor.stravaAPI.getRateLimiterStats();
 
       const embed = new EmbedBuilder()
         .setTitle('🤖 Bot Status')
@@ -456,6 +457,11 @@ class DiscordCommands {
           {
             name: '📬 Activity Queue',
             value: `Queued: ${stats.activityQueue?.totalQueued || 0}\nDelay: ${stats.activityQueue?.delayMinutes || 0}min`,
+            inline: true
+          },
+          {
+            name: '🚦 API Rate Limits',
+            value: `15min: ${rateLimitStats.shortTerm.used}/${rateLimitStats.shortTerm.limit}\nDaily: ${rateLimitStats.daily.used}/${rateLimitStats.daily.limit}\nQueue: ${rateLimitStats.queueLength}`,
             inline: true
           }
         ])

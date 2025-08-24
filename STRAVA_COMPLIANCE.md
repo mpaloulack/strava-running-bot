@@ -53,15 +53,26 @@ The bot automatically filters out:
 
 ## 📊 Rate Limiting
 
-### Current Implementation
-- **Rate limiting**: Not yet implemented (recommended for production)
-- **Request patterns**: Webhooks + on-demand /last commands
-- **Scaling considerations**: Designed for team of ~40 members
+### ✅ Implementation Complete
+- **Rate limiting**: ✅ Implemented with conservative limits
+- **15-minute window**: 80 requests (Strava allows ~100)
+- **Daily window**: 900 requests (Strava allows ~1000)  
+- **Request queuing**: Automatic queuing when limits approached
+- **Intelligent delays**: Calculates optimal wait times
+- **Monitoring**: Rate limit stats in `/botstatus` command
 
-### Strava Limits
-- ~100 requests per 15 minutes
-- ~1000 requests per day  
-- Bot stays within limits for typical team usage
+### Strava API Limits
+- **Official limits**: ~100 requests/15min, ~1000 requests/day
+- **Our limits**: 80 requests/15min, 900 requests/day (conservative)
+- **Queue management**: Requests queued when limits reached
+- **Automatic retry**: Delayed execution with optimal timing
+
+### Rate Limiter Features
+- Real-time request tracking with sliding windows
+- Automatic cleanup of expired request timestamps  
+- Request queuing with FIFO processing
+- Context-aware logging for debugging
+- Stats available via Discord command and API
 
 ## 🎯 Usage Scope
 
@@ -85,9 +96,9 @@ The bot automatically filters out:
 - [x] Encrypted token storage
 - [x] Webhook verification
 - [x] Configurable BASE_URL for production
+- [x] **Rate limiting implementation** (NEW!)
 
 ### ⚠️ Recommended for Production
-- [ ] Implement rate limiting
 - [ ] Submit app for Strava review (if required)
 - [ ] Add data retention policies
 - [ ] Terms of service for end users

@@ -1,12 +1,14 @@
 const axios = require('axios');
 const config = require('../../config/config');
 const logger = require('../utils/Logger');
+const RateLimiter = require('../utils/RateLimiter');
 
 class StravaAPI {
   constructor() {
     this.baseURL = config.strava.baseUrl;
     this.clientId = config.strava.clientId;
     this.clientSecret = config.strava.clientSecret;
+    this.rateLimiter = new RateLimiter();
   }
 
   // Generate OAuth authorization URL
@@ -32,123 +34,133 @@ class StravaAPI {
   async exchangeCodeForToken(authCode) {
     logger.strava.debug('Exchanging authorization code for token', { authCode });
     
-    try {
-      const response = await axios.post(config.strava.tokenUrl, {
-        client_id: this.clientId,
-        client_secret: this.clientSecret,
-        code: authCode,
-        grant_type: 'authorization_code',
-      });
+    return this.rateLimiter.executeRequest(async () => {
+      try {
+        const response = await axios.post(config.strava.tokenUrl, {
+          client_id: this.clientId,
+          client_secret: this.clientSecret,
+          code: authCode,
+          grant_type: 'authorization_code',
+        });
 
-      return response.data;
-    } catch (error) {
-      logger.strava.error('Error exchanging code for token', {
-        error: error.message,
-        response: error.response?.data,
-        status: error.response?.status
-      });
-      throw new Error('Failed to exchange authorization code for token');
-    }
+        return response.data;
+      } catch (error) {
+        logger.strava.error('Error exchanging code for token', {
+          error: error.message,
+          response: error.response?.data,
+          status: error.response?.status
+        });
+        throw new Error('Failed to exchange authorization code for token');
+      }
+    }, { operation: 'exchangeCodeForToken', authCode });
   }
 
   // Refresh access token using refresh token
   async refreshAccessToken(refreshToken) {
     logger.strava.debug('Refreshing access token');
     
-    try {
-      const response = await axios.post(config.strava.tokenUrl, {
-        client_id: this.clientId,
-        client_secret: this.clientSecret,
-        refresh_token: refreshToken,
-        grant_type: 'refresh_token',
-      });
+    return this.rateLimiter.executeRequest(async () => {
+      try {
+        const response = await axios.post(config.strava.tokenUrl, {
+          client_id: this.clientId,
+          client_secret: this.clientSecret,
+          refresh_token: refreshToken,
+          grant_type: 'refresh_token',
+        });
 
-      return response.data;
-    } catch (error) {
-      logger.strava.error('Error refreshing token', {
-        error: error.message,
-        response: error.response?.data,
-        status: error.response?.status
-      });
-      throw new Error('Failed to refresh access token');
-    }
+        return response.data;
+      } catch (error) {
+        logger.strava.error('Error refreshing token', {
+          error: error.message,
+          response: error.response?.data,
+          status: error.response?.status
+        });
+        throw new Error('Failed to refresh access token');
+      }
+    }, { operation: 'refreshAccessToken' });
   }
 
   // Get athlete information
   async getAthlete(accessToken) {
     logger.strava.debug('Fetching athlete information');
     
-    try {
-      const response = await axios.get(`${this.baseURL}/athlete`, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      });
+    return this.rateLimiter.executeRequest(async () => {
+      try {
+        const response = await axios.get(`${this.baseURL}/athlete`, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        });
 
-      return response.data;
-    } catch (error) {
-      logger.strava.error('Error fetching athlete', {
-        error: error.message,
-        response: error.response?.data,
-        status: error.response?.status
-      });
-      throw new Error('Failed to fetch athlete information');
-    }
+        return response.data;
+      } catch (error) {
+        logger.strava.error('Error fetching athlete', {
+          error: error.message,
+          response: error.response?.data,
+          status: error.response?.status
+        });
+        throw new Error('Failed to fetch athlete information');
+      }
+    }, { operation: 'getAthlete' });
   }
 
   // Get athlete activities
   async getAthleteActivities(accessToken, page = 1, perPage = 30, before = null, after = null) {
     logger.strava.debug('Fetching athlete activities', { page, perPage, before, after });
     
-    try {
-      const params = {
-        page: page,
-        per_page: perPage,
-      };
+    return this.rateLimiter.executeRequest(async () => {
+      try {
+        const params = {
+          page: page,
+          per_page: perPage,
+        };
 
-      if (before) params.before = before;
-      if (after) params.after = after;
+        if (before) params.before = before;
+        if (after) params.after = after;
 
-      const response = await axios.get(`${this.baseURL}/athlete/activities`, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-        params: params,
-      });
+        const response = await axios.get(`${this.baseURL}/athlete/activities`, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+          params: params,
+        });
 
-      return response.data;
-    } catch (error) {
-      logger.strava.error('Error fetching activities', {
-        error: error.message,
-        response: error.response?.data,
-        status: error.response?.status,
-        params: { page, perPage, before, after }
-      });
-      throw new Error('Failed to fetch athlete activities');
-    }
+        return response.data;
+      } catch (error) {
+        logger.strava.error('Error fetching activities', {
+          error: error.message,
+          response: error.response?.data,
+          status: error.response?.status,
+          params: { page, perPage, before, after }
+        });
+        throw new Error('Failed to fetch athlete activities');
+      }
+    }, { operation: 'getAthleteActivities', page, perPage });
   }
 
   // Get detailed activity by ID
   async getActivity(activityId, accessToken) {
     logger.strava.debug('Fetching detailed activity', { activityId });
     
-    try {
-      const response = await axios.get(`${this.baseURL}/activities/${activityId}`, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      });
+    return this.rateLimiter.executeRequest(async () => {
+      try {
+        const response = await axios.get(`${this.baseURL}/activities/${activityId}`, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        });
 
-      return response.data;
-    } catch (error) {
-      logger.strava.error('Error fetching activity', {
-        activityId,
-        error: error.message,
-        response: error.response?.data,
-        status: error.response?.status
-      });
-      throw new Error(`Failed to fetch activity ${activityId}`);
-    }
+        return response.data;
+      } catch (error) {
+        logger.strava.error('Error fetching activity', {
+          activityId,
+          error: error.message,
+          response: error.response?.data,
+          status: error.response?.status
+        });
+        throw new Error(`Failed to fetch activity ${activityId}`);
+      }
+    }, { operation: 'getActivity', activityId });
   }
 
   // Calculate Grade Adjusted Pace (GAP) - simplified estimation
@@ -293,6 +305,16 @@ class StravaAPI {
     }
 
     return true;
+  }
+
+  // Get rate limiter statistics
+  getRateLimiterStats() {
+    return this.rateLimiter.getStats();
+  }
+
+  // Reset rate limiter (for testing or manual reset)
+  resetRateLimiter() {
+    return this.rateLimiter.reset();
   }
 }
 
