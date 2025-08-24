@@ -211,19 +211,67 @@ class StravaAPI {
   }
 
   // Check if activity should be posted (filters)
-  shouldPostActivity(activity) {
-    // Skip if activity is too old (more than 24 hours)
-    const activityDate = new Date(activity.start_date);
-    const now = new Date();
-    const hoursDiff = (now - activityDate) / (1000 * 60 * 60);
-    
-    if (hoursDiff > 24) {
-      logger.strava.debug('Skipping old activity', {
+  // skipAgeFilter: if true, don't filter activities older than 24 hours (for /last command)
+  shouldPostActivity(activity, options = {}) {
+    const { skipAgeFilter = false } = options;
+    // Skip if activity is not public (private or followers-only)
+    if (activity.private === true) {
+      logger.strava.debug('Skipping private activity', {
         name: activity.name,
-        hoursOld: hoursDiff.toFixed(1),
-        activityDate: activity.start_date
+        private: activity.private,
+        activityId: activity.id
       });
       return false;
+    }
+
+    // Skip if activity is visible to followers only (not fully public)
+    // In Strava API, activities have visibility levels:
+    // - null/undefined or 'everyone' = public
+    // - 'followers_only' = visible to followers only  
+    // - private: true = private
+    if (activity.visibility === 'followers_only') {
+      logger.strava.debug('Skipping followers-only activity', {
+        name: activity.name,
+        visibility: activity.visibility,
+        activityId: activity.id
+      });
+      return false;
+    }
+
+    // Skip if activity is hidden from home feed
+    if (activity.hide_from_home === true) {
+      logger.strava.debug('Skipping activity hidden from home feed', {
+        name: activity.name,
+        hideFromHome: activity.hide_from_home,
+        activityId: activity.id
+      });
+      return false;
+    }
+
+    // Skip if activity is flagged
+    if (activity.flagged === true) {
+      logger.strava.debug('Skipping flagged activity', {
+        name: activity.name,
+        flagged: activity.flagged,
+        activityId: activity.id
+      });
+      return false;
+    }
+
+    // Skip if activity is too old (more than 24 hours) - but only for webhook posting, not /last command
+    if (!skipAgeFilter) {
+      const activityDate = new Date(activity.start_date);
+      const now = new Date();
+      const hoursDiff = (now - activityDate) / (1000 * 60 * 60);
+      
+      if (hoursDiff > 24) {
+        logger.strava.debug('Skipping old activity', {
+          name: activity.name,
+          hoursOld: hoursDiff.toFixed(1),
+          activityDate: activity.start_date
+        });
+        return false;
+      }
     }
 
     // Skip if activity is too short (less than 1 minute)

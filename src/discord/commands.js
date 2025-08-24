@@ -496,11 +496,11 @@ class DiscordCommands {
         return;
       }
 
-      // Fetch their latest activities
+      // Fetch their latest activities (get more to find latest public one)
       const activities = await this.activityProcessor.stravaAPI.getAthleteActivities(
         accessToken,
         1, // page
-        1  // just get the latest one
+        10  // get up to 10 to find latest public activity
       );
 
       if (!activities || activities.length === 0) {
@@ -511,17 +511,33 @@ class DiscordCommands {
         return;
       }
 
-      const latestActivity = activities[0];
+      // Find the latest public activity
+      let publicActivity = null;
+      for (const activity of activities) {
+        // Get detailed activity data to check privacy settings
+        const detailedActivity = await this.activityProcessor.stravaAPI.getActivity(
+          activity.id,
+          accessToken
+        );
 
-      // Get detailed activity data
-      const detailedActivity = await this.activityProcessor.stravaAPI.getActivity(
-        latestActivity.id,
-        accessToken
-      );
+        // Check if this activity can be displayed (respects privacy settings, skip age filter for /last command)
+        if (this.activityProcessor.stravaAPI.shouldPostActivity(detailedActivity, { skipAgeFilter: true })) {
+          publicActivity = detailedActivity;
+          break; // Found the latest public activity
+        }
+      }
+
+      if (!publicActivity) {
+        const memberName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
+        await interaction.editReply({
+          content: `🔒 **${memberName}** has no recent public activities to display.`,
+        });
+        return;
+      }
 
       // Process the activity data for display
       const processedActivity = this.activityProcessor.stravaAPI.processActivityData(
-        detailedActivity,
+        publicActivity,
         member.athlete
       );
 
