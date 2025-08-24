@@ -1,6 +1,8 @@
 const StravaAPI = require('../strava/api');
 const DiscordBot = require('../discord/bot');
 const MemberManager = require('../managers/MemberManager');
+const ActivityQueue = require('../managers/ActivityQueue');
+const config = require('../../config/config');
 const logger = require('../utils/Logger');
 
 class ActivityProcessor {
@@ -8,6 +10,7 @@ class ActivityProcessor {
     this.stravaAPI = new StravaAPI();
     this.memberManager = new MemberManager();
     this.discordBot = new DiscordBot(this); // Pass this instance to Discord bot
+    this.activityQueue = new ActivityQueue(this); // Activity queue for delayed posting
     this.processedActivities = new Set(); // Prevent duplicate processing
   }
 
@@ -136,6 +139,65 @@ class ActivityProcessor {
     }
   }
 
+  // Queue activity for delayed posting (used by webhook handler)
+  async queueActivity(activityId, athleteId, webhookData = {}) {
+    logger.activity.info('Queueing activity for delayed posting', {
+      activityId,
+      athleteId,
+      delayMinutes: config.posting.delayMinutes
+    });
+    
+    return this.activityQueue.queueActivity(activityId, athleteId, webhookData);
+  }
+
+  // Handle activity updates during delay period
+  async updateQueuedActivity(activityId, athleteId, webhookData = {}) {
+    const wasUpdated = this.activityQueue.updateQueuedActivity(activityId, athleteId, webhookData);
+    
+    if (wasUpdated) {
+      logger.activity.info('Updated queued activity with new data', {
+        activityId,
+        athleteId
+      });
+    } else {
+      // Activity not in queue, might need to process immediately or queue it
+      logger.activity.debug('Activity update received for non-queued activity', {
+        activityId,
+        athleteId
+      });
+      
+      // Check if already processed
+      const activityKey = `${athleteId}-${activityId}`;
+      if (this.processedActivities.has(activityKey)) {
+        logger.activity.debug('Activity already processed, ignoring update', {
+          activityId,
+          athleteId
+        });
+        return;
+      }
+      
+      // Queue the updated activity
+      return this.queueActivity(activityId, athleteId, webhookData);
+    }
+  }
+
+  // Handle activity deletions during delay period
+  async removeQueuedActivity(activityId, athleteId) {
+    const wasRemoved = this.activityQueue.removeFromQueue(activityId);
+    
+    if (wasRemoved) {
+      logger.activity.info('Removed deleted activity from queue', {
+        activityId,
+        athleteId
+      });
+    } else {
+      logger.activity.debug('Activity deletion received for non-queued activity', {
+        activityId,
+        athleteId
+      });
+    }
+  }
+
   // Process recent activities for all members (useful for initial sync or recovery)
   async processRecentActivities(hoursBack = 24) {
     logger.activity.info('Processing recent activities', {
@@ -219,11 +281,14 @@ class ActivityProcessor {
 
   // Get activity statistics
   getStats() {
+    const queueStats = this.activityQueue.getStats();
+    
     return {
       processedActivities: this.processedActivities.size,
       registeredMembers: this.memberManager.getMemberCount(),
       uptime: process.uptime(),
       memoryUsage: process.memoryUsage(),
+      activityQueue: queueStats
     };
   }
 
@@ -231,6 +296,9 @@ class ActivityProcessor {
     logger.activity.info('Shutting down Activity Processor...');
     
     try {
+      // Shutdown activity queue first to stop any pending timers
+      this.activityQueue.shutdown();
+      
       await this.discordBot.stop();
       await this.memberManager.saveMembers();
       logger.activity.info('Activity Processor shutdown complete');

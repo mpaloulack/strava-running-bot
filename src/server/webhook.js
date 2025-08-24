@@ -170,9 +170,13 @@ class WebhookServer {
         athleteId,
         eventType: 'create'
       });
-      await this.activityProcessor.processNewActivity(activityId, athleteId);
+      // Queue activity for delayed posting instead of processing immediately
+      await this.activityProcessor.queueActivity(activityId, athleteId, {
+        eventType: 'create',
+        receivedAt: new Date().toISOString()
+      });
     } catch (error) {
-      logger.activity.error('Error processing new activity', {
+      logger.activity.error('Error queueing new activity', {
         activityId,
         athleteId,
         error: error.message
@@ -188,11 +192,13 @@ class WebhookServer {
         athleteId,
         eventType: 'update'
       });
-      // For now, we'll treat updates the same as new activities
-      // In the future, you might want to update the Discord message
-      await this.activityProcessor.processNewActivity(activityId, athleteId);
+      // Update queued activity or queue it if not already queued
+      await this.activityProcessor.updateQueuedActivity(activityId, athleteId, {
+        eventType: 'update',
+        receivedAt: new Date().toISOString()
+      });
     } catch (error) {
-      logger.activity.error('Error processing activity update', {
+      logger.activity.error('Error handling activity update', {
         activityId,
         athleteId,
         error: error.message
@@ -207,8 +213,9 @@ class WebhookServer {
       athleteId,
       eventType: 'delete'
     });
-    // For now, we'll just log it. In the future, you might want to
-    // delete the corresponding Discord message
+    // Remove from queue if it was scheduled for posting
+    await this.activityProcessor.removeQueuedActivity(activityId, athleteId);
+    // Note: In the future, you might want to delete the corresponding Discord message
   }
 
   // Handle Strava OAuth authorization

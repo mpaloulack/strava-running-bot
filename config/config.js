@@ -20,6 +20,9 @@ const config = {
   logging: {
     level: process.env.LOG_LEVEL || 'INFO',
   },
+  posting: {
+    delayMinutes: parseInt(process.env.POST_DELAY_MINUTES) || 15,
+  },
   security: {
     encryptionKey: process.env.ENCRYPTION_KEY,
   },

@@ -448,6 +448,11 @@ class DiscordCommands {
             name: '💾 Memory Usage',
             value: `${Math.round(stats.memoryUsage.heapUsed / 1024 / 1024)}MB`,
             inline: true
+          },
+          {
+            name: '📬 Activity Queue',
+            value: `Queued: ${stats.activityQueue?.totalQueued || 0}\nDelay: ${stats.activityQueue?.delayMinutes || 0}min`,
+            inline: true
           }
         ])
         .setTimestamp();
