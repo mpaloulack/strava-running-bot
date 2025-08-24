@@ -7,11 +7,11 @@ A comprehensive Discord bot that automatically posts Strava activities from your
 ![Node.js](https://img.shields.io/badge/Node.js-22+-339933?style=for-the-badge&logo=node.js&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 
-[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=mpaloulack_hfr-bot&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=mpaloulack_hfr-bot)
-[![Maintainability Rating](https://sonarcloud.io/api/project_badges/measure?project=mpaloulack_hfr-bot&metric=sqale_rating)](https://sonarcloud.io/summary/new_code?id=mpaloulack_hfr-bot)
-[![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=mpaloulack_hfr-bot&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=mpaloulack_hfr-bot)
-[![Bugs](https://sonarcloud.io/api/project_badges/measure?project=mpaloulack_hfr-bot&metric=bugs)](https://sonarcloud.io/summary/new_code?id=mpaloulack_hfr-bot)
-[![Code Smells](https://sonarcloud.io/api/project_badges/measure?project=mpaloulack_hfr-bot&metric=code_smells)](https://sonarcloud.io/summary/new_code?id=mpaloulack_hfr-bot)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=mmarquet_strava-running-bot&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=mmarquet_strava-running-bot)
+[![Maintainability Rating](https://sonarcloud.io/api/project_badges/measure?project=mmarquet_strava-running-bot&metric=sqale_rating)](https://sonarcloud.io/summary/new_code?id=mmarquet_strava-running-bot)
+[![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=mmarquet_strava-running-bot&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=mmarquet_strava-running-bot)
+[![Bugs](https://sonarcloud.io/api/project_badges/measure?project=mmarquet_strava-running-bot&metric=bugs)](https://sonarcloud.io/summary/new_code?id=mmarquet_strava-running-bot)
+[![Code Smells](https://sonarcloud.io/api/project_badges/measure?project=mmarquet_strava-running-bot&metric=code_smells)](https://sonarcloud.io/summary/new_code?id=mmarquet_strava-running-bot)
 
 ## �🎯 Features
 

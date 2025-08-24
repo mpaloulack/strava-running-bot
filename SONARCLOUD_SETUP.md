@@ -1,6 +1,6 @@
 # SonarCloud Setup Guide
 
-This guide walks you through setting up SonarCloud code quality analysis for the HFR Running Bot.
+This guide walks you through setting up SonarCloud code quality analysis for the Strava Running Bot.
 
 ## 🎯 What's Included
 
@@ -24,11 +24,11 @@ This guide walks you through setting up SonarCloud code quality analysis for the
 ### Step 1: Create SonarCloud Account
 1. Go to [SonarCloud.io](https://sonarcloud.io)
 2. Sign up with your GitHub account
-3. Import your `hfr-bot` repository
+3. Import your `strava-running-bot` repository
 
 ### Step 2: Configure Organization
-1. In SonarCloud, create or select organization: `mpaloulack`
-2. The project key should be: `mpaloulack_hfr-bot`
+1. In SonarCloud, create or select organization: `mmarquet`
+2. The project key should be: `mmarquet_strava-running-bot`
 3. Make sure the project is set to **public** (for free analysis)
 
 ### Step 3: Get SONAR_TOKEN
@@ -37,7 +37,7 @@ This guide walks you through setting up SonarCloud code quality analysis for the
 3. Copy the token (you'll need it in the next step)
 
 ### Step 4: Add GitHub Secret
-1. Go to your GitHub repository: `https://github.com/mpaloulack/hfr-bot`
+1. Go to your GitHub repository: `https://github.com/mmarquet/strava-running-bot`
 2. Go to **Settings > Secrets and Variables > Actions**
 3. Click **New repository secret**
 4. Name: `SONAR_TOKEN`
@@ -106,8 +106,8 @@ The following badges are now displayed in README.md:
 ## 🔧 Configuration Details
 
 ### SonarCloud Project Settings
-- **Project Key**: `mpaloulack_hfr-bot`
-- **Organization**: `mpaloulack`
+- **Project Key**: `mmarquet_strava-running-bot`
+- **Organization**: `mmarquet`
 - **Source Directory**: `src/`
 - **Test Directory**: `tests/`
 - **Exclusions**: `node_modules`, `coverage`, `docs`
