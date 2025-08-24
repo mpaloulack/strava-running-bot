@@ -29,7 +29,7 @@ class ActivityEmbedBuilder {
         iconURL: activity.athlete.discordUser && activity.athlete.discordUser.avatarURL ? activity.athlete.discordUser.avatarURL : activity.athlete.profile_medium,
       });
       embed.setFooter({
-        text: 'Latest Strava Activity',
+        text: 'Latest Activity • Powered by Strava',
         iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg',
       });
     } else {
@@ -38,7 +38,7 @@ class ActivityEmbedBuilder {
         iconURL: activity.athlete.discordUser && activity.athlete.discordUser.avatarURL ? activity.athlete.discordUser.avatarURL : activity.athlete.profile_medium,
       });
       embed.setFooter({
-        text: 'Strava Activity',
+        text: 'Powered by Strava',
         iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg',
       });
     }

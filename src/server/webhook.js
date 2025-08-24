@@ -287,11 +287,46 @@ class WebhookServer {
 
       res.send(`
         <html>
-          <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
-            <h1>✅ Authorization Successful!</h1>
-            <p>Welcome <strong>${athlete.firstname} ${athlete.lastname}</strong>!</p>
-            <p>Your Strava account has been successfully linked to the HFR Running Bot.</p>
-            <p>You can now close this window and return to Discord.</p>
+          <head>
+            <title>Strava Authorization Complete</title>
+            <style>
+              body { 
+                font-family: Arial, sans-serif; 
+                text-align: center; 
+                padding: 50px; 
+                background-color: #f8f9fa;
+                margin: 0;
+              }
+              .container {
+                background: white;
+                padding: 40px;
+                border-radius: 10px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                max-width: 500px;
+                margin: 0 auto;
+              }
+              .strava-logo {
+                color: #FC4C02;
+                font-weight: bold;
+              }
+              .footer {
+                margin-top: 30px;
+                font-size: 12px;
+                color: #666;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <h1>✅ Authorization Successful!</h1>
+              <p>Welcome <strong>${athlete.firstname} ${athlete.lastname}</strong>!</p>
+              <p>Your Strava account has been successfully linked to the HFR Running Bot.</p>
+              <p>You can now close this window and return to Discord.</p>
+              <div class="footer">
+                <p class="strava-logo">Powered by Strava</p>
+                <p>This application uses the Strava API to access your public activities.</p>
+              </div>
+            </div>
           </body>
         </html>
       `);
@@ -305,11 +340,53 @@ class WebhookServer {
       });
       res.status(500).send(`
         <html>
-          <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
-            <h1>❌ Authorization Failed</h1>
-            <p>There was an error linking your Strava account.</p>
-            <p>Please try again or contact support.</p>
-            <p>Error: ${error.message}</p>
+          <head>
+            <title>Strava Authorization Failed</title>
+            <style>
+              body { 
+                font-family: Arial, sans-serif; 
+                text-align: center; 
+                padding: 50px; 
+                background-color: #f8f9fa;
+                margin: 0;
+              }
+              .container {
+                background: white;
+                padding: 40px;
+                border-radius: 10px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                max-width: 500px;
+                margin: 0 auto;
+              }
+              .strava-logo {
+                color: #FC4C02;
+                font-weight: bold;
+              }
+              .footer {
+                margin-top: 30px;
+                font-size: 12px;
+                color: #666;
+              }
+              .error {
+                background-color: #f8d7da;
+                color: #721c24;
+                padding: 10px;
+                border-radius: 5px;
+                margin: 10px 0;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <h1>❌ Authorization Failed</h1>
+              <p>There was an error linking your Strava account.</p>
+              <p>Please try again or contact support.</p>
+              <div class="error">Error: ${error.message}</div>
+              <div class="footer">
+                <p class="strava-logo">Powered by Strava</p>
+                <p>This application uses the Strava API to access your public activities.</p>
+              </div>
+            </div>
           </body>
         </html>
       `);

@@ -405,13 +405,16 @@ class DiscordCommands {
     const embed = new EmbedBuilder()
       .setTitle('🔗 Register with Strava')
       .setColor('#FC4C02')
-      .setDescription('Click the link below to connect your Strava account and join the team!')
+      .setDescription('Click the link below to connect your Strava account and join the team!\n\n**Data Usage:** This app will access your public Strava activities to post them to this Discord channel. We only process public activities and respect your privacy settings.\n\n**By registering, you authorize this app to access your public Strava activities.**')
       .addFields([{
-        name: 'Registration Link',
-        value: `[Click here to register](${registerUrl})`,
+        name: '📝 Registration Steps',
+        value: `1. [Click here to register](${registerUrl})\n2. Authorize the app on Strava\n3. Return to Discord when complete`,
         inline: false
       }])
-      .setFooter({ text: 'This link is personalized for your Discord account' })
+      .setFooter({ 
+        text: 'Powered by Strava • This link is personalized for your Discord account',
+        iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg'
+      })
       .setTimestamp();
 
     await interaction.reply({ embeds: [embed] });

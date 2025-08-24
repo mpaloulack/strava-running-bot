@@ -33,6 +33,8 @@ class HFRRunningBot {
         url: `${config.server.baseUrl}/auth/strava?user_id=THEIR_DISCORD_USER_ID`
       });
       logger.info('SYSTEM', '📡 Webhook endpoint ready for Strava events');
+      logger.info('SYSTEM', '🔒 Privacy: Only public Strava activities are processed and posted');
+      logger.info('SYSTEM', '⚡ Powered by Strava API - https://www.strava.com/settings/api');
       
       // Optionally process recent activities on startup
       if (config.server.nodeEnv === 'production') {
