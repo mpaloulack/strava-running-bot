@@ -215,7 +215,6 @@ class ActivityQueue {
    */
   getStats() {
     const items = Array.from(this.queuedActivities.values());
-    // const now = new Date(); // Reserved for future use
     
     return {
       totalQueued: items.length,

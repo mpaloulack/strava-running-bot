@@ -42,9 +42,7 @@ class ActivityEmbedBuilder {
       ? activity.athlete.discordUser.displayName 
       : `${activity.athlete.firstname} ${activity.athlete.lastname}`;
     
-    const iconURL = (activity.athlete.discordUser && activity.athlete.discordUser.avatarURL) 
-      ? activity.athlete.discordUser.avatarURL 
-      : activity.athlete.profile_medium;
+    const iconURL = activity.athlete.discordUser?.avatarURL ?? activity.athlete.profile_medium;
 
     if (type === 'latest') {
       embed.setAuthor({
