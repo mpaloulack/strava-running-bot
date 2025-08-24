@@ -17,7 +17,7 @@ class ActivityEmbedBuilder {
     const { type = 'posted' } = options;
     
     const embed = new EmbedBuilder()
-      .setTitle(`🏃 ${activity.name}`)
+      .setTitle(`🏃 ${ActivityFormatter.escapeDiscordMarkdown(activity.name)}`)
       .setColor(ActivityFormatter.getActivityColor(activity.type))
       .setTimestamp(new Date(activity.start_date))
       .setURL(`https://www.strava.com/activities/${activity.id}`);
@@ -45,7 +45,7 @@ class ActivityEmbedBuilder {
 
     // Add description if available
     if (activity.description) {
-      embed.setDescription(activity.description);
+      embed.setDescription(ActivityFormatter.escapeDiscordMarkdown(activity.description));
     }
 
     // Add core activity fields

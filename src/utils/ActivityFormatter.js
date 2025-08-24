@@ -68,6 +68,25 @@ class ActivityFormatter {
   }
 
   /**
+   * Escape Discord markdown characters to prevent formatting issues
+   * @param {string} text - Text that may contain Discord markdown characters
+   * @returns {string} Text with escaped markdown characters
+   */
+  static escapeDiscordMarkdown(text) {
+    if (!text || typeof text !== 'string') return text;
+    
+    // Escape Discord markdown characters
+    return text
+      .replace(/\*/g, '\\*')    // Escape asterisks (italic/bold)
+      .replace(/_/g, '\\_')     // Escape underscores (italic)
+      .replace(/~/g, '\\~')     // Escape tildes (strikethrough)
+      .replace(/`/g, '\\`')     // Escape backticks (code)
+      .replace(/\|/g, '\\|')    // Escape pipes (spoiler)
+      .replace(/>/g, '\\>')     // Escape greater than (quote)
+      .replace(/@/g, '\\@');    // Escape @ symbols (mentions)
+  }
+
+  /**
    * Generate Google Maps static map URL from polyline
    * @param {string} polyline - Encoded polyline from Strava
    * @returns {string|null} Map URL or null if no API key
