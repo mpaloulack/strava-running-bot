@@ -91,17 +91,17 @@ class Logger {
     
     // Use appropriate console method based on level
     switch (level) {
-      case 'ERROR':
-        console.error(formattedMessage);
-        break;
-      case 'WARN':
-        console.warn(formattedMessage);
-        break;
-      case 'DEBUG':
-        console.debug(formattedMessage);
-        break;
-      default:
-        console.log(formattedMessage);
+    case 'ERROR':
+      console.error(formattedMessage);
+      break;
+    case 'WARN':
+      console.warn(formattedMessage);
+      break;
+    case 'DEBUG':
+      console.debug(formattedMessage);
+      break;
+    default:
+      console.log(formattedMessage);
     }
   }
 

@@ -68,7 +68,7 @@ class WebhookServer {
     });
 
     // Error handler
-    this.app.use((error, req, res, next) => {
+    this.app.use((error, req, res, _next) => {
       logger.server.error('Server error', {
         error: error.message,
         stack: error.stack,
@@ -122,7 +122,7 @@ class WebhookServer {
     } catch (error) {
       logger.webhook.error('Error handling webhook event', {
         error: error.message,
-        event,
+        event: req.body,
         stack: error.stack
       });
       res.status(500).json({ error: 'Failed to process webhook event' });
@@ -131,7 +131,7 @@ class WebhookServer {
 
   // Process different types of webhook events
   async processWebhookEvent(event) {
-    const { object_type, aspect_type, object_id, owner_id, subscription_id, event_time } = event;
+    const { object_type, aspect_type, object_id, owner_id, subscription_id: _subscription_id, event_time: _event_time } = event;
 
     logger.webhook.info('Processing webhook event', {
       aspectType: aspect_type,
@@ -148,17 +148,17 @@ class WebhookServer {
 
     // Handle different event types
     switch (aspect_type) {
-      case 'create':
-        await this.handleActivityCreate(object_id, owner_id);
-        break;
-      case 'update':
-        await this.handleActivityUpdate(object_id, owner_id);
-        break;
-      case 'delete':
-        await this.handleActivityDelete(object_id, owner_id);
-        break;
-      default:
-        logger.webhook.debug('Unhandled event type', { aspectType: aspect_type });
+    case 'create':
+      await this.handleActivityCreate(object_id, owner_id);
+      break;
+    case 'update':
+      await this.handleActivityUpdate(object_id, owner_id);
+      break;
+    case 'delete':
+      await this.handleActivityDelete(object_id, owner_id);
+      break;
+    default:
+      logger.webhook.debug('Unhandled event type', { aspectType: aspect_type });
     }
   }
 
@@ -334,8 +334,8 @@ class WebhookServer {
     } catch (error) {
       logger.strava.error('Error in Strava callback', {
         error: error.message,
-        code: code,
-        state: state,
+        code: req.query.code,
+        state: req.query.state,
         stack: error.stack
       });
       res.status(500).send(`

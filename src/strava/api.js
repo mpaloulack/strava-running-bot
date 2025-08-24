@@ -216,7 +216,7 @@ class StravaAPI {
   }
 
   // Validate webhook signature
-  validateWebhookSignature(signature, body) {
+  validateWebhookSignature(_signature, _body) {
     // Strava doesn't send HMAC signatures for webhooks, but we can verify the token
     // This is a placeholder for additional security measures if needed
     return true;

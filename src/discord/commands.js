@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, InteractionResponseFlags } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const ActivityEmbedBuilder = require('../utils/EmbedBuilder');
 const DiscordUtils = require('../utils/DiscordUtils');
 const logger = require('../utils/Logger');
@@ -96,23 +96,23 @@ class DiscordCommands {
 
     try {
       switch (commandName) {
-        case 'members':
-          await this.handleMembersCommand(interaction, options);
-          break;
-        case 'register':
-          await this.handleRegisterCommand(interaction);
-          break;
-        case 'botstatus':
-          await this.handleBotStatusCommand(interaction);
-          break;
-        case 'last':
-          await this.handleLastActivityCommand(interaction, options);
-          break;
-        default:
-          await interaction.reply({ 
-            content: '❌ Unknown command', 
-            ephemeral: true 
-          });
+      case 'members':
+        await this.handleMembersCommand(interaction, options);
+        break;
+      case 'register':
+        await this.handleRegisterCommand(interaction);
+        break;
+      case 'botstatus':
+        await this.handleBotStatusCommand(interaction);
+        break;
+      case 'last':
+        await this.handleLastActivityCommand(interaction, options);
+        break;
+      default:
+        await interaction.reply({ 
+          content: '❌ Unknown command', 
+          ephemeral: true 
+        });
       }
     } catch (error) {
       logger.discord.error('Error handling command', {
@@ -138,18 +138,18 @@ class DiscordCommands {
     const subcommand = options.getSubcommand();
 
     switch (subcommand) {
-      case 'list':
-        await this.listMembers(interaction);
-        break;
-      case 'remove':
-        await this.removeMember(interaction, options);
-        break;
-      case 'deactivate':
-        await this.deactivateMember(interaction, options);
-        break;
-      case 'reactivate':
-        await this.reactivateMember(interaction, options);
-        break;
+    case 'list':
+      await this.listMembers(interaction);
+      break;
+    case 'remove':
+      await this.removeMember(interaction, options);
+      break;
+    case 'deactivate':
+      await this.deactivateMember(interaction, options);
+      break;
+    case 'reactivate':
+      await this.reactivateMember(interaction, options);
+      break;
     }
   }
 
@@ -178,7 +178,7 @@ class DiscordCommands {
       // Group members into chunks of 10 for better display
       const memberChunks = DiscordUtils.chunkArray(members, 10);
       
-      memberChunks[0].forEach((member, index) => {
+      memberChunks[0].forEach((member, _index) => {
         const user = interaction.guild?.members.cache.get(member.discordUserId);
         const displayName = user ? `<@${member.discordUserId}>` : `User ID: ${member.discordUserId}`;
         const memberName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
