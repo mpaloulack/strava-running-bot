@@ -131,7 +131,7 @@ class WebhookServer {
 
   // Process different types of webhook events
   async processWebhookEvent(event) {
-    const { object_type, aspect_type, object_id, owner_id, subscription_id: _subscription_id, event_time: _event_time } = event;
+    const { object_type, aspect_type, object_id, owner_id } = event;
 
     logger.webhook.info('Processing webhook event', {
       aspectType: aspect_type,
