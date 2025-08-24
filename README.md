@@ -4,10 +4,10 @@ A comprehensive Discord bot that automatically posts Strava activities from your
 
 ![Discord Bot](https://img.shields.io/badge/Discord-Bot-5865F2?style=for-the-badge&logo=discord&logoColor=white)
 ![Strava](https://img.shields.io/badge/Strava-API-FC4C02?style=for-the-badge&logo=strava&logoColor=white)
-![Node.js](https://img.shields.io/badge/Node.js-18+-339933?style=for-the-badge&logo=node.js&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-22+-339933?style=for-the-badge&logo=node.js&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 
-## 🎯 Features
+## �🎯 Features
 
 ### 🏃 **Real-time Activity Posting**
 - Automatically posts new activities from team members via Strava webhooks
@@ -49,24 +49,24 @@ A comprehensive Discord bot that automatically posts Strava activities from your
 
 ### Prerequisites
 
-- Node.js 18.0 or higher
+- Node.js 22.0 or higher
 - Discord bot token and server permissions
 - Strava API application credentials
-- Public domain/server for webhooks (for production)
+- Public domain/server for webhooks (production only)
 
 ### Installation
 
 1. **Clone and Setup**
    ```bash
    git clone <your-repo-url>
-   cd hfrrunningbot
+   cd hfr-bot
    npm install
    ```
 
 2. **Configure Environment**
    ```bash
    cp .env.example .env
-   # Edit .env with your API credentials
+   # Edit .env with your API credentials (see detailed setup guide below)
    ```
 
 3. **Start Development**
@@ -74,76 +74,173 @@ A comprehensive Discord bot that automatically posts Strava activities from your
    npm run dev
    ```
 
-4. **Deploy with Docker**
+4. **Deploy with Docker** (Optional)
    ```bash
    docker-compose up -d
    ```
 
+> **💡 Need help getting credentials?** Follow the [Complete Setup Guide](#-complete-setup-guide) below for detailed instructions.
+
 ## 📋 Complete Setup Guide
+
+**Need detailed instructions?** Follow these step-by-step guides to get all required credentials and configure your bot.
 
 ### 1. Discord Bot Setup
 
+#### Step 1: Create a Discord Application
 1. Visit [Discord Developer Portal](https://discord.com/developers/applications)
-2. Create a new application and bot
-3. Copy the bot token to your `.env` file
-4. Generate invite link with these permissions:
-   - Send Messages
-   - Use Slash Commands
-   - Embed Links
-   - Attach Files
-   - Read Message History
-5. Add bot to your server and note the channel ID
+2. Click **"New Application"** button (top right)
+3. Enter a name for your bot (e.g., "HFR Running Bot")
+4. Click **"Create"**
+
+#### Step 2: Create and Configure the Bot
+1. In the left sidebar, click **"Bot"**
+2. Click **"Add Bot"** (if not already created)
+3. Under **"Token"** section:
+   - Click **"Copy"** to get your bot token
+   - **⚠️ IMPORTANT**: Keep this token secret! It gives full access to your bot
+   - Paste this token in your `.env` file as `DISCORD_TOKEN`
+
+#### Step 3: Configure Bot Permissions
+1. Still in the Bot section, scroll down to **"Privileged Gateway Intents"**
+2. Enable **"Message Content Intent"** (required for some features)
+
+#### Step 4: Generate Bot Invite Link
+1. In the left sidebar, click **"OAuth2"** → **"URL Generator"**
+2. Under **"Scopes"**, select:
+   - ✅ `bot`
+   - ✅ `applications.commands`
+3. Under **"Bot Permissions"**, select:
+   - ✅ `Send Messages`
+   - ✅ `Use Slash Commands`
+   - ✅ `Embed Links`
+   - ✅ `Attach Files`
+   - ✅ `Read Message History`
+   - ✅ `Use External Emojis`
+4. Copy the generated URL at the bottom
+
+#### Step 5: Add Bot to Your Server
+1. Open the invite link in your browser
+2. Select your Discord server from the dropdown
+3. Click **"Authorize"**
+4. Complete the CAPTCHA if prompted
+
+#### Step 6: Get Channel ID
+1. In Discord, go to **User Settings** (gear icon ⚙️)
+2. Go to **"Advanced"** and enable **"Developer Mode"**
+3. Navigate to the channel where you want the bot to post activities
+4. Right-click on the channel name
+5. Select **"Copy Channel ID"**
+6. Paste this ID in your `.env` file as `DISCORD_CHANNEL_ID`
 
 ### 2. Strava API Setup
 
+#### Step 1: Create Strava API Application
 1. Go to [Strava API Settings](https://www.strava.com/settings/api)
-2. Create a new API application
-3. Set Authorization Callback Domain to your server domain
-4. Copy Client ID and Client Secret to your `.env` file
-5. Generate a webhook verification token
+2. Log in with your Strava account (create one if you don't have it)
+3. Click **"Create App"** button
+
+#### Step 2: Fill Application Details
+1. **Application Name**: Enter your bot name (e.g., "HFR Running Bot")
+2. **Category**: Select **"Other"**
+3. **Club**: Leave blank (unless you have a specific Strava club)
+4. **Website**: Enter your website URL or GitHub repository URL
+5. **Application Description**: Brief description of your bot
+6. **Authorization Callback Domain**: 
+   - For **development**: `localhost` or `127.0.0.1`
+   - For **production**: Your actual domain (e.g., `yourdomain.com`)
+   - ⚠️ **Important**: Don't include `http://` or `https://`, just the domain
+
+#### Step 3: Get API Credentials
+1. After creating the app, you'll see your application details
+2. Copy the **"Client ID"** and paste it in your `.env` file as `STRAVA_CLIENT_ID`
+3. Copy the **"Client Secret"** and paste it in your `.env` file as `STRAVA_CLIENT_SECRET`
+4. **⚠️ IMPORTANT**: Keep the Client Secret confidential!
+
+#### Step 4: Generate Webhook Verification Token
+1. Generate a secure random token for webhook verification:
+   ```bash
+   node -e "console.log(require('crypto').randomBytes(16).toString('hex'))"
+   ```
+2. Copy the generated token to your `.env` file as `STRAVA_WEBHOOK_VERIFY_TOKEN`
+3. This token ensures that webhook requests are actually coming from Strava
+
+#### Step 5: Note Your Rate Limits
+- Strava API has rate limits: **100 requests per 15 minutes**, **1000 requests per day**
+- The bot automatically handles these limits with proper throttling
 
 ### 3. Environment Configuration
 
-```env
-# Discord Bot Configuration
-DISCORD_TOKEN=your_discord_bot_token_here
-DISCORD_CHANNEL_ID=your_discord_channel_id_here
-
-# Strava API Configuration
-STRAVA_CLIENT_ID=your_strava_client_id_here
-STRAVA_CLIENT_SECRET=your_strava_client_secret_here
-STRAVA_WEBHOOK_VERIFY_TOKEN=your_webhook_verify_token_here
-
-# Server Configuration
-PORT=3000
-NODE_ENV=development
-
-# Security
-ENCRYPTION_KEY=your_32_character_encryption_key_here
-
-# Optional: Google Maps API (for route maps)
-GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
+#### Setup Your Environment File
+```bash
+cp .env.example .env
 ```
 
-Generate an encryption key:
+Edit your `.env` file with the credentials obtained from the previous steps. The `.env.example` file contains detailed comments for each variable.
+
+#### Generate Required Keys
 ```bash
+# Generate encryption key (required)
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+
+# Generate webhook verification token (if not done already)
+node -e "console.log(require('crypto').randomBytes(16).toString('hex'))"
 ```
 
-### 4. Webhook Setup (Production)
+> **⚠️ Security**: Never commit your `.env` file to version control. Keep all tokens and keys secure.
 
-For production deployment, set up Strava webhooks:
+### 4. Webhook Setup (Production Only)
 
+**⚠️ Note**: Webhooks are only needed for production deployment. For development, you can test the bot without webhooks.
+
+#### Prerequisites for Webhook Setup:
+- A **public domain** or server accessible from the internet
+- **HTTPS enabled** (Strava requires HTTPS for webhooks)
+- Your bot running on that server
+
+#### Step 1: Verify Your Server is Accessible
+1. Deploy your bot to your production server
+2. Ensure it's running on a public domain with HTTPS
+3. Test that `https://yourdomain.com/health` returns a health check response
+
+#### Step 2: Create Webhook Subscription
 ```bash
-# Create webhook subscription
-node utils/setup.js create-webhook https://your-domain.com/webhook/strava
+# Create webhook subscription (replace with your actual domain)
+node utils/setup.js create-webhook https://yourdomain.com/webhook/strava
 
-# List existing webhooks
+# This will register your server to receive activity updates from Strava
+```
+
+#### Step 3: Verify Webhook Setup
+```bash
+# List existing webhooks to confirm creation
 node utils/setup.js list-webhooks
 
-# Delete webhook
-node utils/setup.js delete-webhook SUBSCRIPTION_ID
+# You should see your webhook listed with the callback URL
 ```
+
+#### Step 4: Test Webhook (Optional)
+1. Post a new activity on Strava (or use an existing member's activity)
+2. Check your bot's logs to see if the webhook is received
+3. Verify the activity appears in your Discord channel
+
+#### Webhook Management Commands:
+```bash
+# List all webhook subscriptions
+node utils/setup.js list-webhooks
+
+# Delete a specific webhook (get ID from list command)
+node utils/setup.js delete-webhook SUBSCRIPTION_ID
+
+# Validate webhook configuration
+node utils/setup.js validate-webhook
+```
+
+#### Troubleshooting Webhooks:
+- **403 Forbidden**: Check that your `STRAVA_WEBHOOK_VERIFY_TOKEN` matches
+- **404 Not Found**: Verify your server is running and accessible
+- **SSL Certificate Error**: Ensure your domain has valid HTTPS
+- **No webhook events**: Check Strava API rate limits and webhook subscription status
 
 ## 🎮 Discord Commands
 
@@ -211,6 +308,11 @@ hfrrunningbot/
 │   │   └── ActivityProcessor.js # Main activity processing logic
 │   ├── managers/
 │   │   └── MemberManager.js    # Team member management
+│   ├── utils/
+│   │   ├── ActivityFormatter.js # Activity data formatting
+│   │   ├── DiscordUtils.js     # Discord utility functions
+│   │   ├── EmbedBuilder.js     # Discord embed creation
+│   │   └── Logger.js           # Logging utilities
 │   └── index.js                # Application entry point
 ├── config/
 │   └── config.js               # Configuration management
@@ -344,26 +446,6 @@ docker-compose logs --since="1h"
 
 ## 🛠 Development
 
-### Prerequisites
-
-- Node.js 18+
-- npm or yarn
-- Git
-
-### Development Setup
-
-```bash
-# Install dependencies
-npm install
-
-# Run in development mode
-npm run dev
-
-# Run setup utilities
-node utils/setup.js validate
-node utils/setup.js generate-key
-```
-
 ### Project Scripts
 
 ```bash
@@ -371,6 +453,30 @@ npm start          # Start production server
 npm run dev        # Start development server with nodemon
 npm test           # Run tests (when implemented)
 ```
+
+### Setup Utilities
+
+```bash
+# Validate configuration
+node utils/setup.js validate
+
+# Generate encryption key
+node utils/setup.js generate-key
+
+# Manage webhooks (production)
+node utils/setup.js list-webhooks
+```
+
+### Key Dependencies
+
+- **Node.js 22** - Latest LTS with improved performance and security
+- **Discord.js 14** - Modern Discord API wrapper with slash commands
+- **Express 4** - Web framework for webhook server and API endpoints
+- **chalk 5** - Enhanced terminal colors with ESM support
+- **dotenv 17** - Improved environment variable management
+- **node-cron 4** - Advanced task scheduling capabilities
+- **axios** - HTTP client for API requests
+- **nodemon** - Development auto-restart utility
 
 ### Contributing
 
