@@ -22,11 +22,34 @@ class ActivityEmbedBuilder {
       .setTimestamp(new Date(activity.start_date))
       .setURL(`https://www.strava.com/activities/${activity.id}`);
 
-    // Set author based on embed type
+    this._setEmbedAuthorAndFooter(embed, activity, type);
+    this._addActivityDescription(embed, activity);
+    this._addCoreActivityFields(embed, activity);
+    this._addOptionalActivityFields(embed, activity);
+    this._addMapImage(embed, activity);
+
+    return embed;
+  }
+
+  /**
+   * Set embed author and footer based on type
+   * @param {EmbedBuilder} embed - Discord embed builder
+   * @param {Object} activity - Activity data
+   * @param {string} type - Embed type
+   */
+  static _setEmbedAuthorAndFooter(embed, activity, type) {
+    const authorName = activity.athlete.discordUser 
+      ? activity.athlete.discordUser.displayName 
+      : `${activity.athlete.firstname} ${activity.athlete.lastname}`;
+    
+    const iconURL = (activity.athlete.discordUser && activity.athlete.discordUser.avatarURL) 
+      ? activity.athlete.discordUser.avatarURL 
+      : activity.athlete.profile_medium;
+
     if (type === 'latest') {
       embed.setAuthor({
-        name: `${activity.athlete.discordUser ? activity.athlete.discordUser.displayName : `${activity.athlete.firstname} ${activity.athlete.lastname}`} - Last Activity`,
-        iconURL: activity.athlete.discordUser && activity.athlete.discordUser.avatarURL ? activity.athlete.discordUser.avatarURL : activity.athlete.profile_medium,
+        name: `${authorName} - Last Activity`,
+        iconURL: iconURL,
       });
       embed.setFooter({
         text: 'Latest Activity • Powered by Strava',
@@ -34,21 +57,33 @@ class ActivityEmbedBuilder {
       });
     } else {
       embed.setAuthor({
-        name: activity.athlete.discordUser ? activity.athlete.discordUser.displayName : `${activity.athlete.firstname} ${activity.athlete.lastname}`,
-        iconURL: activity.athlete.discordUser && activity.athlete.discordUser.avatarURL ? activity.athlete.discordUser.avatarURL : activity.athlete.profile_medium,
+        name: authorName,
+        iconURL: iconURL,
       });
       embed.setFooter({
         text: 'Powered by Strava',
         iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg',
       });
     }
+  }
 
-    // Add description if available
+  /**
+   * Add activity description if available
+   * @param {EmbedBuilder} embed - Discord embed builder
+   * @param {Object} activity - Activity data
+   */
+  static _addActivityDescription(embed, activity) {
     if (activity.description) {
       embed.setDescription(ActivityFormatter.escapeDiscordMarkdown(activity.description));
     }
+  }
 
-    // Add core activity fields
+  /**
+   * Add core activity fields (distance, time, pace)
+   * @param {EmbedBuilder} embed - Discord embed builder
+   * @param {Object} activity - Activity data
+   */
+  static _addCoreActivityFields(embed, activity) {
     embed.addFields([
       {
         name: '📏 Distance',
@@ -66,8 +101,14 @@ class ActivityEmbedBuilder {
         inline: true,
       },
     ]);
+  }
 
-    // Add Grade Adjusted Pace if available
+  /**
+   * Add optional activity fields (GAP, heart rate, elevation)
+   * @param {EmbedBuilder} embed - Discord embed builder
+   * @param {Object} activity - Activity data
+   */
+  static _addOptionalActivityFields(embed, activity) {
     if (activity.gap_pace) {
       embed.addFields([{
         name: '📈 Grade Adjusted Pace',
@@ -76,7 +117,6 @@ class ActivityEmbedBuilder {
       }]);
     }
 
-    // Add Average Heart Rate if available
     if (activity.average_heartrate) {
       embed.addFields([{
         name: '❤️ Avg Heart Rate',
@@ -85,7 +125,6 @@ class ActivityEmbedBuilder {
       }]);
     }
 
-    // Add elevation gain if significant
     if (activity.total_elevation_gain > 10) {
       embed.addFields([{
         name: '⛰️ Elevation Gain',
@@ -93,16 +132,20 @@ class ActivityEmbedBuilder {
         inline: true,
       }]);
     }
+  }
 
-    // Add map image if polyline is available
+  /**
+   * Add map image if polyline is available
+   * @param {EmbedBuilder} embed - Discord embed builder
+   * @param {Object} activity - Activity data
+   */
+  static _addMapImage(embed, activity) {
     if (activity.map && activity.map.summary_polyline) {
       const mapUrl = ActivityFormatter.generateStaticMapUrl(activity.map.summary_polyline);
       if (mapUrl) {
         embed.setImage(mapUrl);
       }
     }
-
-    return embed;
   }
 }
 

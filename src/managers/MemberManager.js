@@ -312,7 +312,7 @@ class MemberManager {
       return member; // Return unencrypted if no key
     }
 
-    const algorithm = 'aes-256-cbc';
+    const algorithm = 'aes-256-gcm';
     const key = Buffer.from(config.security.encryptionKey, 'hex');
     const iv = crypto.randomBytes(16);
     
@@ -322,11 +322,14 @@ class MemberManager {
     let encrypted = cipher.update(sensitiveData, 'utf8', 'hex');
     encrypted += cipher.final('hex');
     
+    const authTag = cipher.getAuthTag();
+    
     return {
       ...member,
       tokens: {
         encrypted: encrypted,
-        iv: iv.toString('hex')
+        iv: iv.toString('hex'),
+        authTag: authTag.toString('hex')
       }
     };
   }
@@ -337,11 +340,13 @@ class MemberManager {
       return encryptedMember; // Return as-is if not encrypted
     }
 
-    const algorithm = 'aes-256-cbc';
+    const algorithm = 'aes-256-gcm';
     const key = Buffer.from(config.security.encryptionKey, 'hex');
     const iv = Buffer.from(encryptedMember.tokens.iv, 'hex');
+    const authTag = Buffer.from(encryptedMember.tokens.authTag, 'hex');
     
     const decipher = crypto.createDecipheriv(algorithm, key, iv);
+    decipher.setAuthTag(authTag);
     
     let decrypted = decipher.update(encryptedMember.tokens.encrypted, 'hex', 'utf8');
     decrypted += decipher.final('utf8');
