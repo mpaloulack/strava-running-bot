@@ -9,8 +9,13 @@ class DiscordUtils {
    * @returns {string|null} User ID or null if invalid
    */
   static extractUserId(userInput) {
+    // Return null for non-string inputs
+    if (typeof userInput !== 'string') {
+      return null;
+    }
+    
     // Extract user ID from mention (<@123456>) or return as-is if it's already an ID
-    const mentionMatch = userInput.match(/^<@!?(\d+)>$/);
+    const mentionMatch = userInput.match(/^<@!?(\d{17,19})>$/);
     if (mentionMatch) {
       return mentionMatch[1];
     }

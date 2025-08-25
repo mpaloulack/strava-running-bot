@@ -65,7 +65,12 @@ class Logger {
     
     if (data) {
       if (typeof data === 'object') {
-        formattedMessage += '\n' + chalk.gray(JSON.stringify(data, null, 2));
+        try {
+          formattedMessage += '\n' + chalk.gray(JSON.stringify(data, null, 2));
+        } catch (error) {
+          // Handle circular references or other JSON.stringify errors
+          formattedMessage += '\n' + chalk.gray('[Object with circular reference]');
+        }
       } else {
         formattedMessage += ` ${data}`;
       }
@@ -143,7 +148,12 @@ class Logger {
     
     if (data) {
       if (typeof data === 'object') {
-        formattedMessage += '\n' + chalk.gray(JSON.stringify(data, null, 2));
+        try {
+          formattedMessage += '\n' + chalk.gray(JSON.stringify(data, null, 2));
+        } catch (error) {
+          // Handle circular references or other JSON.stringify errors
+          formattedMessage += '\n' + chalk.gray('[Object with circular reference]');
+        }
       } else {
         formattedMessage += ` ${data}`;
       }
