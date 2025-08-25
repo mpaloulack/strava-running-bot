@@ -114,7 +114,7 @@ The following badges are now displayed in README.md:
 
 ### GitHub Actions Workflow
 - **Triggers**: Push to `hfrrunningbot` and `main` branches, pull requests
-- **Node.js Version**: 18
+- **Node.js Version**: 22
 - **Quality Gate**: Enforced but non-blocking initially
 - **Coverage**: Generated if tests exist
 
