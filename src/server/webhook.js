@@ -345,7 +345,7 @@ class WebhookServer {
             <div class="container">
               <h1>✅ Authorization Successful!</h1>
               <p>Welcome <strong>${athlete.firstname} ${athlete.lastname}</strong>!</p>
-              <p>Your Strava account has been successfully linked to the HFR Running Bot.</p>
+              <p>Your Strava account has been successfully linked to the Strava Running Bot.</p>
               <p>You can now close this window and return to Discord.</p>
               <div class="footer">
                 <p class="strava-logo">Powered by Strava</p>

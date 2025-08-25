@@ -692,7 +692,7 @@ crontab -e
 ```ini
 # /etc/systemd/system/hfrrunningbot.service
 [Unit]
-Description=HFR Running Bot
+Description=Strava Running Bot
 After=network.target
 
 [Service]

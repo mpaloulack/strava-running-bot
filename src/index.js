@@ -3,7 +3,7 @@ const WebhookServer = require('./server/webhook');
 const config = require('../config/config');
 const logger = require('./utils/Logger');
 
-class HFRRunningBot {
+class StravaRunningBot {
   constructor() {
     this.activityProcessor = new ActivityProcessor();
     this.webhookServer = new WebhookServer(this.activityProcessor);
@@ -12,7 +12,7 @@ class HFRRunningBot {
 
   async start() {
     try {
-      logger.system('🚀 Starting HFR Running Bot...');
+      logger.system('🚀 Starting Strava Running Bot...');
       logger.system(`📊 Environment: ${config.server.nodeEnv}`);
       logger.system(`🤖 Bot Name: ${config.app.name} v${config.app.version}`);
       logger.system(`🔧 Log Level: ${config.logging.level}`);
@@ -28,7 +28,7 @@ class HFRRunningBot {
 
       this.isRunning = true;
       
-      logger.system('✅ HFR Running Bot started successfully!');
+      logger.system('✅ Strava Running Bot started successfully!');
       logger.info('SYSTEM', '🔗 Member registration URL:', {
         url: `${config.server.baseUrl}/auth/strava?user_id=THEIR_DISCORD_USER_ID`
       });
@@ -45,7 +45,7 @@ class HFRRunningBot {
       }
 
     } catch (error) {
-      logger.error('SYSTEM', '❌ Failed to start HFR Running Bot', error);
+      logger.error('SYSTEM', '❌ Failed to start Strava Running Bot', error);
       await this.stop();
       process.exit(1);
     }
@@ -54,13 +54,13 @@ class HFRRunningBot {
   async stop() {
     if (!this.isRunning) return;
 
-    logger.info('SYSTEM', '🔄 Stopping HFR Running Bot...');
+    logger.info('SYSTEM', '🔄 Stopping Strava Running Bot...');
     this.isRunning = false;
 
     try {
       await this.webhookServer.stop();
       await this.activityProcessor.shutdown();
-      logger.info('SYSTEM', '✅ HFR Running Bot stopped successfully');
+      logger.info('SYSTEM', '✅ Strava Running Bot stopped successfully');
     } catch (error) {
       logger.error('SYSTEM', '❌ Error during shutdown', error);
     }
@@ -106,7 +106,7 @@ class HFRRunningBot {
 }
 
 // Create and start the bot
-const bot = new HFRRunningBot();
+const bot = new StravaRunningBot();
 
 // Handle command line arguments
 const args = process.argv.slice(2);
@@ -153,4 +153,4 @@ For more information, visit: https://github.com/your-repo/hfr-running-bot
   });
 }
 
-module.exports = HFRRunningBot;
+module.exports = StravaRunningBot;

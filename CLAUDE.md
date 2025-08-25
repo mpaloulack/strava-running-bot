@@ -1,6 +1,6 @@
 # Claude Code Session Summary
 
-## Project: HFR Running Bot - Discord/Strava Integration
+## Project: Strava Running Bot - Discord/Strava Integration
 
 **Initial Session Date**: August 16, 2025  
 **Latest Session Date**: August 16, 2025 (Continued)  
@@ -396,7 +396,7 @@ During this session, multiple todo lists were managed to track progress:
 
 ## 🏁 Updated Project Status
 
-**✅ ENHANCED**: The HFR Running Bot is now optimized, refactored, and includes working route map visualization. The codebase follows industry best practices with shared utilities and proper separation of concerns.
+**✅ ENHANCED**: The Strava Running Bot is now optimized, refactored, and includes working route map visualization. The codebase follows industry best practices with shared utilities and proper separation of concerns.
 
 ### **Current Capabilities:**
 - ✅ **Real-time activity posting** with route maps

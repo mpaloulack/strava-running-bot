@@ -1,6 +1,6 @@
-# Contributing to HFR Running Bot
+# Contributing to Strava Running Bot
 
-Thank you for your interest in contributing to the HFR Running Bot! This document provides guidelines and information for contributors.
+Thank you for your interest in contributing to the Strava Running Bot! This document provides guidelines and information for contributors.
 
 ## Table of Contents
 
@@ -445,4 +445,4 @@ If you have questions about contributing, please:
 3. Create a new issue with the "question" label
 4. Reach out through GitHub Discussions
 
-Thank you for contributing to HFR Running Bot! Your efforts help make this project better for the entire running community. 🏃‍♂️💪
+Thank you for contributing to Strava Running Bot! Your efforts help make this project better for the entire running community. 🏃‍♂️💪

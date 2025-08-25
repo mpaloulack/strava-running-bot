@@ -1,6 +1,6 @@
 # API Documentation
 
-This document provides comprehensive documentation for the HFR Running Bot REST API endpoints.
+This document provides comprehensive documentation for the Strava Running Bot REST API endpoints.
 
 ## Base URL
 
@@ -47,7 +47,7 @@ Returns the health status of the bot.
 {
   "status": "healthy",
   "timestamp": "2024-08-16T15:30:00.000Z",
-  "service": "HFR Running Bot",
+  "service": "Strava Running Bot",
   "version": "1.0.0"
 }
 ```

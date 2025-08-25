@@ -1,4 +1,4 @@
-# HFR Running Bot - Security & Code Review
+# Strava Running Bot - Security & Code Review
 
 **Review Date**: August 16, 2025  
 **Reviewer**: Claude (Security Audit)  
@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-This comprehensive security audit reviewed the HFR Running Bot codebase for security vulnerabilities, best practices compliance, and potential sensitive information exposure. The project demonstrates **excellent security practices** with robust encryption, proper authentication flows, and secure configuration management.
+This comprehensive security audit reviewed the Strava Running Bot codebase for security vulnerabilities, best practices compliance, and potential sensitive information exposure. The project demonstrates **excellent security practices** with robust encryption, proper authentication flows, and secure configuration management.
 
 ### Overall Security Rating: ⭐⭐⭐⭐⭐ (5/5)
 

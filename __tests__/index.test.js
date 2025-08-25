@@ -1,4 +1,4 @@
-const HFRRunningBot = require('../src/index');
+const StravaRunningBot = require('../src/index');
 const ActivityProcessor = require('../src/processors/ActivityProcessor');
 const WebhookServer = require('../src/server/webhook');
 const config = require('../config/config');
@@ -13,7 +13,7 @@ jest.mock('../config/config', () => ({
     baseUrl: 'https://test.example.com'
   },
   app: {
-    name: 'HFR Running Bot Test',
+    name: 'Strava Running Bot Test',
     version: '1.0.0'
   }
 }));
@@ -27,7 +27,7 @@ jest.mock('../src/utils/Logger', () => ({
 const mockExit = jest.spyOn(process, 'exit').mockImplementation(() => {});
 const mockOn = jest.spyOn(process, 'on').mockImplementation(() => {});
 
-describe('HFRRunningBot', () => {
+describe('StravaRunningBot', () => {
   let bot;
   let mockActivityProcessor;
   let mockWebhookServer;
@@ -55,7 +55,7 @@ describe('HFRRunningBot', () => {
     };
     WebhookServer.mockImplementation(() => mockWebhookServer);
 
-    bot = new HFRRunningBot();
+    bot = new StravaRunningBot();
   });
 
   afterEach(() => {
@@ -82,7 +82,7 @@ describe('HFRRunningBot', () => {
     it('should start bot successfully', async () => {
       await bot.start();
 
-      expect(logger.system).toHaveBeenCalledWith('🚀 Starting HFR Running Bot...');
+      expect(logger.system).toHaveBeenCalledWith('🚀 Starting Strava Running Bot...');
       expect(logger.system).toHaveBeenCalledWith(`📊 Environment: ${config.server.nodeEnv}`);
       expect(logger.system).toHaveBeenCalledWith(`🤖 Bot Name: ${config.app.name} v${config.app.version}`);
       
@@ -91,7 +91,7 @@ describe('HFRRunningBot', () => {
       expect(bot.setupGracefulShutdown).toHaveBeenCalled();
       expect(bot.isRunning).toBe(true);
 
-      expect(logger.system).toHaveBeenCalledWith('✅ HFR Running Bot started successfully!');
+      expect(logger.system).toHaveBeenCalledWith('✅ Strava Running Bot started successfully!');
       expect(logger.info).toHaveBeenCalledWith('SYSTEM', '🔗 Member registration URL:', {
         url: `${config.server.baseUrl}/auth/strava?user_id=THEIR_DISCORD_USER_ID`
       });
@@ -127,7 +127,7 @@ describe('HFRRunningBot', () => {
 
       await expect(bot.start()).rejects.toThrow(error);
 
-      expect(logger.error).toHaveBeenCalledWith('SYSTEM', '❌ Failed to start HFR Running Bot', error);
+      expect(logger.error).toHaveBeenCalledWith('SYSTEM', '❌ Failed to start Strava Running Bot', error);
       expect(bot.stop).toHaveBeenCalled();
       expect(mockExit).toHaveBeenCalledWith(1);
     });
@@ -139,7 +139,7 @@ describe('HFRRunningBot', () => {
 
       await expect(bot.start()).rejects.toThrow(error);
 
-      expect(logger.error).toHaveBeenCalledWith('SYSTEM', '❌ Failed to start HFR Running Bot', error);
+      expect(logger.error).toHaveBeenCalledWith('SYSTEM', '❌ Failed to start Strava Running Bot', error);
       expect(bot.stop).toHaveBeenCalled();
       expect(mockExit).toHaveBeenCalledWith(1);
     });
@@ -171,10 +171,10 @@ describe('HFRRunningBot', () => {
     it('should stop bot gracefully', async () => {
       await bot.stop();
 
-      expect(logger.info).toHaveBeenCalledWith('SYSTEM', '🔄 Stopping HFR Running Bot...');
+      expect(logger.info).toHaveBeenCalledWith('SYSTEM', '🔄 Stopping Strava Running Bot...');
       expect(mockWebhookServer.stop).toHaveBeenCalled();
       expect(mockActivityProcessor.shutdown).toHaveBeenCalled();
-      expect(logger.info).toHaveBeenCalledWith('SYSTEM', '✅ HFR Running Bot stopped successfully');
+      expect(logger.info).toHaveBeenCalledWith('SYSTEM', '✅ Strava Running Bot stopped successfully');
       expect(bot.isRunning).toBe(false);
     });
 

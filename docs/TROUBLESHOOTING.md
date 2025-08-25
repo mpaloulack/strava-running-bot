@@ -1,6 +1,6 @@
 # Troubleshooting Guide
 
-This comprehensive troubleshooting guide helps you diagnose and resolve common issues with the HFR Running Bot.
+This comprehensive troubleshooting guide helps you diagnose and resolve common issues with the Strava Running Bot.
 
 ## Table of Contents
 

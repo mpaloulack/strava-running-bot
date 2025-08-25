@@ -1,4 +1,4 @@
-# HFR Running Bot 🏃‍♂️
+# Strava Running Bot 🏃‍♂️
 
 A comprehensive Discord bot that automatically posts Strava activities from your running team members to a dedicated Discord channel. Built with real-time webhooks, rich activity displays, and complete team management functionality. This bot has been built from the ground up with Claude Code. Work in progress.
 
@@ -96,7 +96,7 @@ A comprehensive Discord bot that automatically posts Strava activities from your
 #### Step 1: Create a Discord Application
 1. Visit [Discord Developer Portal](https://discord.com/developers/applications)
 2. Click **"New Application"** button (top right)
-3. Enter a name for your bot (e.g., "HFR Running Bot")
+3. Enter a name for your bot (e.g., "Strava Running Bot")
 4. Click **"Create"**
 
 #### Step 2: Create and Configure the Bot
@@ -147,7 +147,7 @@ A comprehensive Discord bot that automatically posts Strava activities from your
 3. Click **"Create App"** button
 
 #### Step 2: Fill Application Details
-1. **Application Name**: Enter your bot name (e.g., "HFR Running Bot")
+1. **Application Name**: Enter your bot name (e.g., "Strava Running Bot")
 2. **Category**: Select **"Other"**
 3. **Club**: Leave blank (unless you have a specific Strava club)
 4. **Website**: Enter your website URL or GitHub repository URL

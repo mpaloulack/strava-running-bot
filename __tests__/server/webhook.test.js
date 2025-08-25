@@ -6,7 +6,7 @@ const logger = require('../../src/utils/Logger');
 // Mock dependencies
 jest.mock('../../config/config', () => ({
   app: {
-    name: 'HFR Running Bot',
+    name: 'Strava Running Bot',
     version: '1.0.0'
   },
   server: {

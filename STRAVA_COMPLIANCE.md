@@ -1,6 +1,6 @@
 # Strava API Compliance & Data Usage
 
-This document outlines how the HFR Running Bot complies with Strava's API terms and handles user data.
+This document outlines how the Strava Running Bot complies with Strava's API terms and handles user data.
 
 ## ✅ Strava Branding Compliance
 

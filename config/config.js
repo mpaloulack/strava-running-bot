@@ -28,7 +28,7 @@ const config = {
     encryptionKey: process.env.ENCRYPTION_KEY,
   },
   app: {
-    name: 'HFR Running Bot',
+    name: 'Strava Running Bot',
     version: '1.0.0',
   }
 };

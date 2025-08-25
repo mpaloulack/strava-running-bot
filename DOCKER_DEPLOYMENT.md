@@ -1,6 +1,6 @@
-# Docker Deployment for HFR Running Bot
+# Docker Deployment for Strava Running Bot
 
-This directory contains all the necessary files to deploy the HFR Running Bot on your NAS using Docker.
+This directory contains all the necessary files to deploy the Strava Running Bot on your NAS using Docker.
 
 ## 📁 Files Overview
 
