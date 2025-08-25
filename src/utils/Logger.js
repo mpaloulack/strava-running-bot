@@ -69,7 +69,7 @@ class Logger {
           formattedMessage += '\n' + chalk.gray(JSON.stringify(data, null, 2));
         } catch (error) {
           // Handle circular references or other JSON.stringify errors
-          formattedMessage += '\n' + chalk.gray('[Object with circular reference]');
+          formattedMessage += '\n' + chalk.gray(`[Object serialization failed: ${error.message}]`);
         }
       } else {
         formattedMessage += ` ${data}`;
@@ -152,7 +152,7 @@ class Logger {
           formattedMessage += '\n' + chalk.gray(JSON.stringify(data, null, 2));
         } catch (error) {
           // Handle circular references or other JSON.stringify errors
-          formattedMessage += '\n' + chalk.gray('[Object with circular reference]');
+          formattedMessage += '\n' + chalk.gray(`[Object serialization failed: ${error.message}]`);
         }
       } else {
         formattedMessage += ` ${data}`;

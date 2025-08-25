@@ -15,7 +15,8 @@ class DiscordUtils {
     }
     
     // Extract user ID from mention (<@123456>) or return as-is if it's already an ID
-    const mentionMatch = userInput.match(/^<@!?(\d{17,19})>$/);
+    const mentionRegex = /^<@!?(\d{17,19})>$/;
+    const mentionMatch = mentionRegex.exec(userInput);
     if (mentionMatch) {
       return mentionMatch[1];
     }
