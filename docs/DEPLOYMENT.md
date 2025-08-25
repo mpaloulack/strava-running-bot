@@ -413,7 +413,7 @@ sudo docker-compose ps
 
 1. Open **Docker package**
 2. Go to **Registry** and search for "node"
-3. Download **node:18-alpine**
+3. Download **node:22-alpine**
 4. Create **Container** with project volume mounted
 5. Configure **environment variables**
 6. Start **container**
