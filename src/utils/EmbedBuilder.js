@@ -38,11 +38,17 @@ class ActivityEmbedBuilder {
    * @param {string} type - Embed type
    */
   static _setEmbedAuthorAndFooter(embed, activity, type) {
-    const authorName = activity.athlete.discordUser 
-      ? activity.athlete.discordUser.displayName 
-      : `${activity.athlete.firstname} ${activity.athlete.lastname}`;
-    
-    const iconURL = activity.athlete.discordUser?.avatarURL ?? activity.athlete.profile_medium;
+    let authorName = 'Unknown Athlete';
+    let iconURL = undefined;
+
+    if (activity.athlete) {
+      if (activity.athlete.discordUser?.displayName) {
+        authorName = activity.athlete.discordUser.displayName;
+      } else if (activity.athlete.firstname && activity.athlete.lastname) {
+        authorName = `${activity.athlete.firstname} ${activity.athlete.lastname}`;
+      }
+      iconURL = activity.athlete.discordUser?.avatarURL ?? activity.athlete.profile_medium;
+    }
 
     if (type === 'latest') {
       embed.setAuthor({

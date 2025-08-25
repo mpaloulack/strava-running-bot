@@ -26,14 +26,25 @@ class DiscordBot {
         guilds: this.client.guilds.cache.size,
         users: this.client.users.cache.size
       });
-      await this.registerCommands();
+
+      try {
+        await this.registerCommands();
+      } catch (err) {
+        logger.discord.error('Failed to register commands on ready event', err);
+        // swallow here so ready event always resolves
+      }
     });
 
     this.client.on('interactionCreate', async (interaction) => {
-      if (interaction.isChatInputCommand()) {
-        await this.commands.handleCommand(interaction);
-      } else if (interaction.isAutocomplete()) {
-        await this.commands.handleAutocomplete(interaction);
+      try {
+        if (interaction.isChatInputCommand()) {
+          await this.commands.handleCommand(interaction);
+        } else if (interaction.isAutocomplete()) {
+          await this.commands.handleAutocomplete(interaction);
+        }
+      } catch (err) {
+        logger.discord.error('Error handling interaction', err);
+        // swallow so interaction handler never rejects
       }
     });
 
@@ -43,16 +54,18 @@ class DiscordBot {
   }
 
   async registerCommands() {
+    if (!config.discord.token) {
+      const error = new Error('Missing Discord bot token');
+      logger.discord.error('Failed to register Discord commands', error);
+      throw error;
+    }
+
     try {
       logger.discord.info('Registering Discord slash commands...');
       
       const rest = new REST({ version: '10' }).setToken(config.discord.token);
       const commands = this.commands.getCommands().map(command => command.toJSON());
 
-      // Register commands globally (takes up to 1 hour to appear)
-      // For faster testing, you can register to a specific guild instead
-      
-      // Try guild registration first for immediate testing
       const guildId = process.env.DISCORD_GUILD_ID;
       let data;
       
@@ -76,10 +89,17 @@ class DiscordBot {
       });
     } catch (error) {
       logger.discord.error('Error registering Discord commands', error);
+      throw error;
     }
   }
 
   async start() {
+    if (!config.discord.token) {
+      const error = new Error('Missing Discord bot token');
+      logger.discord.error('Failed to start Discord bot', error);
+      throw error;
+    }
+
     try {
       await this.client.login(config.discord.token);
     } catch (error) {
@@ -89,6 +109,18 @@ class DiscordBot {
   }
 
   async postActivity(activityData) {
+    if (!config.discord.channelId) {
+      const error = new Error('Missing Discord channel ID');
+      logger.discord.error('Failed to post activity to Discord', { error: error.message });
+      throw error;
+    }
+
+    if (!activityData.athlete) {
+      const error = new Error('Missing athlete data');
+      logger.discord.error('Failed to post activity to Discord', { error: error.message, activityId: activityData.id });
+      throw error;
+    }
+
     try {
       const channel = await this.client.channels.fetch(config.discord.channelId);
       
@@ -103,7 +135,7 @@ class DiscordBot {
         activityName: activityData.name,
         activityType: activityData.type,
         distance: activityData.distance,
-        athleteName: `${activityData.athlete.firstname} ${activityData.athlete.lastname}`,
+        athleteName: `${activityData.athlete?.firstname} ${activityData.athlete?.lastname}`,
         channelId: config.discord.channelId
       });
     } catch (error) {
@@ -111,7 +143,7 @@ class DiscordBot {
         activityData: {
           id: activityData.id,
           name: activityData.name,
-          athlete: `${activityData.athlete.firstname} ${activityData.athlete.lastname}`
+          athlete: `${activityData.athlete?.firstname} ${activityData.athlete?.lastname}`
         },
         error: error.message
       });
@@ -119,12 +151,15 @@ class DiscordBot {
     }
   }
 
-
   async stop() {
     if (this.client) {
-      await this.client.destroy();
-      logger.discord.info('Discord bot stopped');
+      try {
+        await this.client.destroy();
+      } catch (err) {
+        // ignore destroy errors
+      }
     }
+    logger.discord.info('Discord bot stopped');
   }
 }
 
