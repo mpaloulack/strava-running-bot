@@ -1,0 +1,89 @@
+# Dependabot configuration for automated dependency updates
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+updates:
+  # npm package updates
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "daily"
+      time: "04:00"
+      timezone: "UTC"
+    # Limit the number of open pull requests for version updates
+    open-pull-requests-limit: 5
+    # Semantic versioning strategy
+    versioning-strategy: "increase"
+    # Rebase strategy for cleaner history
+    rebase-strategy: "auto"
+    # Commit message configuration
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+      include: "scope"
+    # Group patch updates together
+    groups:
+      patch-updates:
+        applies-to: version-updates
+        update-types:
+          - "patch"
+      minor-updates:
+        applies-to: version-updates  
+        update-types:
+          - "minor"
+    # Security updates get immediate priority
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    # Enable auto-merge for patch updates that pass tests
+    # Note: This requires branch protection rules with required status checks
+    assignees:
+      - "mmarquet"
+    reviewers:
+      - "mmarquet"
+    # Labels for better organization
+    labels:
+      - "dependencies"
+      - "automated"
+
+  # Docker base image updates
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "sunday"
+      time: "04:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "docker"
+      include: "scope"
+    assignees:
+      - "mmarquet"
+    reviewers:
+      - "mmarquet"
+    labels:
+      - "docker"
+      - "dependencies" 
+      - "automated"
+
+  # GitHub Actions updates
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+      time: "04:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    assignees:
+      - "mmarquet"
+    reviewers:
+      - "mmarquet"
+    labels:
+      - "github-actions"
+      - "ci"
+      - "dependencies"
+      - "automated"
