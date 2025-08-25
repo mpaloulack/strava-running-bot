@@ -516,10 +516,11 @@ describe('Logger', () => {
         logger.info('TEST', 'Message with circular object', circularObj);
       }).not.toThrow();
       
-      // Verify that the circular reference message was logged
+      // Verify that the serialization error message was logged
       expect(mockConsoleFunctions.log).toHaveBeenCalled();
       const logCall = mockConsoleFunctions.log.mock.calls[0][0];
-      expect(logCall).toContain('[Object with circular reference]');
+      expect(logCall).toContain('[Object serialization failed:');
+      expect(logCall).toContain('Converting circular structure to JSON');
     });
     
     test('should handle very long messages', () => {
