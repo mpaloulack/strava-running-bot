@@ -59,16 +59,22 @@ class WebhookServer {
     this.app.post('/members/:athleteId/deactivate', this.deactivateMember.bind(this));
     this.app.post('/members/:athleteId/reactivate', this.reactivateMember.bind(this));
 
-    // 404 handler
-    this.app.use('*', (req, res) => {
-      res.status(404).json({ 
-        error: 'Not found',
-        path: req.originalUrl 
+    // Test error routes - only used in tests
+    if (process.env.NODE_ENV === 'test') {
+      // Regular test error route
+      this.app.get('/test-error', () => {
+        throw new Error('Test error');
       });
-    });
 
-    // Error handler
+      // Development mode test error route
+      this.app.get('/dev-test-error', (req, res, next) => {
+        next(new Error('Development Test Error'));
+      });
+    }
+
+    // Error handler must be registered before the 404 handler
     this.app.use((error, req, res, _next) => {
+      // Log all errors
       logger.server.error('Server error', {
         error: error.message,
         stack: error.stack,
@@ -76,9 +82,27 @@ class WebhookServer {
         method: req.method,
         ip: req.ip
       });
+
+      // Handle JSON parsing errors (SyntaxError from body-parser)
+      if (error instanceof SyntaxError && error.status === 400) {
+        return res.status(400).json({ 
+          error: 'Invalid JSON',
+          message: config.server.nodeEnv === 'development' ? error.message : 'Malformed request body'
+        });
+      }
+
+      // Handle all other errors as 500 Internal Server Error
       res.status(500).json({ 
         error: 'Internal server error',
         message: config.server.nodeEnv === 'development' ? error.message : 'Something went wrong'
+      });
+    });
+
+    // 404 handler must come last
+    this.app.use('*', (req, res) => {
+      res.status(404).json({ 
+        error: 'Not found',
+        path: req.originalUrl 
       });
     });
   }
@@ -113,12 +137,11 @@ class WebhookServer {
       
       logger.webhook.info('Webhook event received', event);
 
-      // Acknowledge receipt immediately
-      res.status(200).json({ received: true });
-
-      // Process the event asynchronously
+      // Process the event synchronously before responding
       await this.processWebhookEvent(event);
 
+      // Acknowledge receipt after successful processing
+      res.status(200).json({ received: true });
     } catch (error) {
       logger.webhook.error('Error handling webhook event', {
         error: error.message,
@@ -181,6 +204,7 @@ class WebhookServer {
         athleteId,
         error: error.message
       });
+      throw error;
     }
   }
 
@@ -203,6 +227,7 @@ class WebhookServer {
         athleteId,
         error: error.message
       });
+      throw error;
     }
   }
 

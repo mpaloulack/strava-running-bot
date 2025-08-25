@@ -37,6 +37,12 @@ class DiscordUtils {
    */
   static chunkArray(array, size) {
     const chunks = [];
+    
+    // Handle edge cases
+    if (size <= 0 || array.length === 0) {
+      return chunks;
+    }
+    
     for (let i = 0; i < array.length; i += size) {
       chunks.push(array.slice(i, i + size));
     }
