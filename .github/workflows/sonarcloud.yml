@@ -28,17 +28,33 @@ jobs:
       - name: Install dependencies
         run: npm ci
         
-      - name: Run tests with coverage (if tests exist)
+      - name: Run tests with coverage
+        run: npm test
+        
+      - name: Verify coverage report
         run: |
-          if [ -f "package.json" ] && npm run test --if-present; then
-            echo "Tests completed with coverage"
-          else
-            echo "No tests found or test script not configured"
-            # Create empty coverage file so SonarCloud doesn't fail
-            mkdir -p coverage
-            echo "# No tests configured yet" > coverage/lcov.info
+          echo "Checking coverage report generation..."
+          if [ ! -f "coverage/lcov.info" ]; then
+            echo "❌ Error: coverage/lcov.info not found"
+            exit 1
           fi
-        continue-on-error: true
+          
+          # Check if coverage file has actual data (not empty)
+          if [ ! -s "coverage/lcov.info" ]; then
+            echo "❌ Error: coverage/lcov.info is empty"
+            exit 1
+          fi
+          
+          # Show coverage summary for debugging
+          echo "✅ Coverage report generated successfully"
+          echo "Coverage file size: $(wc -c < coverage/lcov.info) bytes"
+          echo "Number of source files: $(grep -c '^SF:' coverage/lcov.info || echo 0)"
+          
+          # Show Jest coverage summary if available
+          if npm test -- --coverage --silent 2>/dev/null | grep -E "Statements|Branches|Functions|Lines"; then
+            echo "Coverage summary from Jest:"
+            npm test -- --coverage --silent 2>&1 | grep -E "Statements|Branches|Functions|Lines" || echo "Could not extract coverage summary"
+          fi
         
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master

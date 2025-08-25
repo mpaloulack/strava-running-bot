@@ -14,7 +14,7 @@ module.exports = {
   testPathIgnorePatterns: [
     '__tests__/index.test.js'
   ],
-  coverageReporters: ['text', 'text-summary', 'html'],
+  coverageReporters: ['text', 'text-summary', 'html', 'lcov'],
   verbose: true,
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js']
 };
