@@ -20,7 +20,7 @@ This directory contains all the necessary files to deploy the Strava Running Bot
 
 ```bash
 # Navigate to your bot directory
-cd /path/to/hfrrunningbot
+cd /path/to/strava-running-bot
 
 # Ensure your .env file is properly configured
 cp .env.example .env
@@ -96,7 +96,7 @@ The container includes built-in health checks:
 docker-compose ps
 
 # View health check logs
-docker inspect hfr-running-bot | grep -A 10 Health
+docker inspect strava-running-bot | grep -A 10 Health
 ```
 
 ### Logs
@@ -151,10 +151,10 @@ docker-compose up -d
 
 ```bash
 # Backup member data volume
-docker run --rm -v hfr-running-bot_bot_data:/data -v $(pwd):/backup alpine tar czf /backup/bot_data_backup.tar.gz -C /data .
+docker run --rm -v strava-running-bot_bot_data:/data -v $(pwd):/backup alpine tar czf /backup/bot_data_backup.tar.gz -C /data .
 
 # Restore from backup
-docker run --rm -v hfr-running-bot_bot_data:/data -v $(pwd):/backup alpine tar xzf /backup/bot_data_backup.tar.gz -C /data
+docker run --rm -v strava-running-bot_bot_data:/data -v $(pwd):/backup alpine tar xzf /backup/bot_data_backup.tar.gz -C /data
 ```
 
 ## 🛠 Troubleshooting
@@ -190,7 +190,7 @@ docker run --rm -v hfr-running-bot_bot_data:/data -v $(pwd):/backup alpine tar x
 4. **Memory issues**
    ```bash
    # Check container resources
-   docker stats hfr-running-bot
+   docker stats strava-running-bot
    
    # Adjust limits in docker-compose.yml
    ```
@@ -199,10 +199,10 @@ docker run --rm -v hfr-running-bot_bot_data:/data -v $(pwd):/backup alpine tar x
 
 ```bash
 # Access container shell for debugging
-docker-compose exec hfr-running-bot sh
+docker-compose exec strava-running-bot sh
 
 # Run commands inside container
-docker-compose exec hfr-running-bot npm run --help
+docker-compose exec strava-running-bot npm run --help
 ```
 
 ## 🔐 Security Considerations
@@ -242,7 +242,7 @@ nginx:
     - ./nginx.conf:/etc/nginx/nginx.conf
     - ./ssl:/etc/nginx/ssl
   depends_on:
-    - hfr-running-bot
+    - strava-running-bot
 ```
 
 ### Webhook Configuration

@@ -28,7 +28,7 @@ When something goes wrong, follow these steps in order:
 curl http://localhost:3000/health
 
 # 2. Check recent logs
-docker-compose logs --tail=50 hfr-running-bot
+docker-compose logs --tail=50 strava-running-bot
 
 # 3. Check bot status in Discord
 # Look for bot online status in member list
@@ -37,7 +37,7 @@ docker-compose logs --tail=50 hfr-running-bot
 node utils/setup.js validate
 
 # 5. Check system resources
-docker stats hfr-running-bot
+docker stats strava-running-bot
 ```
 
 ### 2. Health Check Status Codes
@@ -52,10 +52,10 @@ docker stats hfr-running-bot
 
 ```bash
 # Restart the bot
-docker-compose restart hfr-running-bot
+docker-compose restart strava-running-bot
 
 # View real-time logs
-docker-compose logs -f hfr-running-bot
+docker-compose logs -f strava-running-bot
 
 # Check Docker status
 docker-compose ps
@@ -78,7 +78,7 @@ docker-compose down && docker-compose up -d --build
 
 ```bash
 # Check Discord connection in logs
-docker-compose logs hfr-running-bot | grep -i discord
+docker-compose logs strava-running-bot | grep -i discord
 
 # Verify bot token
 echo $DISCORD_TOKEN | wc -c  # Should be around 70 characters
@@ -135,10 +135,10 @@ echo $DISCORD_TOKEN | wc -c  # Should be around 70 characters
 # 1. Wait for propagation (can take up to 1 hour)
 
 # 2. Force command refresh by restarting bot
-docker-compose restart hfr-running-bot
+docker-compose restart strava-running-bot
 
 # 3. Check command registration in logs
-docker-compose logs hfr-running-bot | grep -i "command"
+docker-compose logs strava-running-bot | grep -i "command"
 
 # 4. For immediate testing, register to specific guild
 # Edit src/discord/bot.js and add guild ID for faster registration
@@ -163,7 +163,7 @@ curl http://localhost:3000/auth/strava?user_id=123456789
 node utils/setup.js validate
 
 # Monitor registration process
-docker-compose logs -f hfr-running-bot | grep -i "register\|oauth"
+docker-compose logs -f strava-running-bot | grep -i "register\|oauth"
 ```
 
 #### Common Issues
@@ -210,7 +210,7 @@ echo $ENCRYPTION_KEY | wc -c  # Should be 64 characters
 curl http://localhost:3000/members | jq '.members[] | select(.isActive == false)'
 
 # Check token refresh logs
-docker-compose logs hfr-running-bot | grep -i "token\|refresh"
+docker-compose logs strava-running-bot | grep -i "token\|refresh"
 
 # Force member re-registration
 curl -X POST http://localhost:3000/members/discord/USER_ID/delete
@@ -230,10 +230,10 @@ curl -X POST http://localhost:3000/members/discord/USER_ID/delete
 
 ```bash
 # Check webhook events
-docker-compose logs hfr-running-bot | grep -i webhook
+docker-compose logs strava-running-bot | grep -i webhook
 
 # Check activity processing
-docker-compose logs hfr-running-bot | grep -i "activity\|processing"
+docker-compose logs strava-running-bot | grep -i "activity\|processing"
 
 # Test webhook endpoint manually
 curl -X POST http://localhost:3000/webhook/strava \
@@ -265,7 +265,7 @@ curl -f https://your-domain.com/webhook/strava
 # - Manual entries without GPS data
 
 # Check filter logs
-docker-compose logs hfr-running-bot | grep -i "skip\|filter"
+docker-compose logs strava-running-bot | grep -i "skip\|filter"
 ```
 
 **3. Member Authorization Issues**
@@ -275,7 +275,7 @@ curl http://localhost:3000/members | jq '.members[] | select(.isActive == false)
 
 # Check token expiry
 # Tokens refresh automatically, check logs for refresh errors
-docker-compose logs hfr-running-bot | grep -i "token.*error"
+docker-compose logs strava-running-bot | grep -i "token.*error"
 ```
 
 ### Incorrect Activity Data
@@ -305,7 +305,7 @@ docker-compose logs hfr-running-bot | grep -i "token.*error"
 **3. Formatting Problems**
 ```bash
 # Check activity processing logs
-docker-compose logs hfr-running-bot | grep -i "format\|embed"
+docker-compose logs strava-running-bot | grep -i "format\|embed"
 
 # Test embed generation manually by triggering /last command
 ```
@@ -323,7 +323,7 @@ docker-compose logs hfr-running-bot | grep -i "format\|embed"
 
 ```bash
 # Check command handler logs
-docker-compose logs hfr-running-bot | grep -i "command\|interaction"
+docker-compose logs strava-running-bot | grep -i "command\|interaction"
 
 # Test specific command
 # Use /botstatus to test basic functionality
@@ -382,7 +382,7 @@ ls -la data/members.json
 cat data/members.json | jq '.'
 
 # Reload member data by restarting bot
-docker-compose restart hfr-running-bot
+docker-compose restart strava-running-bot
 ```
 
 ## Webhook Issues
@@ -445,7 +445,7 @@ echo "$STRAVA_WEBHOOK_VERIFY_TOKEN" | hexdump -C
 
 ```bash
 # Check webhook processing logs
-docker-compose logs hfr-running-bot | grep -i "webhook.*error"
+docker-compose logs strava-running-bot | grep -i "webhook.*error"
 
 # Check member lookup for webhook events
 # Ensure webhook owner_id matches registered member athlete_id
@@ -469,13 +469,13 @@ curl -X POST http://localhost:3000/webhook/strava \
 
 ```bash
 # Check resource usage
-docker stats hfr-running-bot
+docker stats strava-running-bot
 
 # Check memory usage
-docker-compose exec hfr-running-bot free -h
+docker-compose exec strava-running-bot free -h
 
 # Check CPU usage
-docker-compose exec hfr-running-bot top
+docker-compose exec strava-running-bot top
 
 # Check disk I/O
 iostat -x 1 5
@@ -490,7 +490,7 @@ iostat -x 1 5
 # Monitor resource usage patterns
 
 # Check for memory leaks
-docker-compose logs hfr-running-bot | grep -i "memory\|oom"
+docker-compose logs strava-running-bot | grep -i "memory\|oom"
 ```
 
 **2. API Rate Limiting**
@@ -523,14 +523,14 @@ ls -lh data/members.json
 
 ```bash
 # Check for memory leaks
-docker-compose exec hfr-running-bot node --expose-gc -e "
+docker-compose exec strava-running-bot node --expose-gc -e "
   console.log('Memory before GC:', process.memoryUsage());
   global.gc();
   console.log('Memory after GC:', process.memoryUsage());
 "
 
 # Restart bot periodically as workaround
-# Add to crontab: 0 4 * * * docker-compose restart hfr-running-bot
+# Add to crontab: 0 4 * * * docker-compose restart strava-running-bot
 
 # Monitor memory usage trends
 # Set up alerts for high memory usage
@@ -567,7 +567,7 @@ ls -la backups/
 
 # Restore latest backup
 cp backups/members_backup_LATEST.json data/members.json
-docker-compose restart hfr-running-bot
+docker-compose restart strava-running-bot
 ```
 
 **2. Encryption Key Issues**
@@ -578,7 +578,7 @@ echo $ENCRYPTION_KEY | wc -c  # Should be 64 characters
 # If key lost, members need to re-register
 # Clear data and start fresh
 rm data/members.json
-docker-compose restart hfr-running-bot
+docker-compose restart strava-running-bot
 ```
 
 **3. File Corruption**
@@ -607,8 +607,8 @@ df -h
 docker system prune -f
 
 # Clean up logs
-docker-compose logs --tail=1000 hfr-running-bot > /tmp/recent.log
-echo "" > /var/lib/docker/containers/*/hfr-running-bot*-json.log
+docker-compose logs --tail=1000 strava-running-bot > /tmp/recent.log
+echo "" > /var/lib/docker/containers/*/strava-running-bot*-json.log
 
 # Set up log rotation
 # Add to docker-compose.yml:
@@ -635,10 +635,10 @@ logging:
 docker-compose ps
 
 # Check container logs
-docker-compose logs hfr-running-bot
+docker-compose logs strava-running-bot
 
 # Check build logs
-docker-compose build hfr-running-bot
+docker-compose build strava-running-bot
 
 # Check port conflicts
 netstat -tulpn | grep 3000
@@ -652,7 +652,7 @@ netstat -tulpn | grep 3000
 docker system prune -a
 
 # Rebuild without cache
-docker-compose build --no-cache hfr-running-bot
+docker-compose build --no-cache strava-running-bot
 
 # Check Dockerfile syntax
 docker build -t test .
@@ -695,7 +695,7 @@ docker-compose config
 cat .env | grep -v "^#" | grep -v "^$"
 
 # Check volume mounting
-docker-compose exec hfr-running-bot ls -la /app/data
+docker-compose exec strava-running-bot ls -la /app/data
 
 # Recreate containers
 docker-compose down -v
@@ -843,7 +843,7 @@ echo $STRAVA_WEBHOOK_VERIFY_TOKEN
 echo $ENCRYPTION_KEY | wc -c  # Should be exactly 64 characters
 
 # Check for unauthorized access in logs
-docker-compose logs hfr-running-bot | grep -i "401\|403\|unauthorized"
+docker-compose logs strava-running-bot | grep -i "401\|403\|unauthorized"
 
 # Rotate keys if compromised
 # Generate new encryption key
@@ -905,7 +905,7 @@ while true; do
     echo "$(date): Bot healthy"
   else
     echo "$(date): Bot unhealthy - restarting"
-    docker-compose restart hfr-running-bot
+    docker-compose restart strava-running-bot
   fi
   sleep 300  # Check every 5 minutes
 done
@@ -952,7 +952,7 @@ docker-compose --version
 node utils/setup.js validate
 
 # Recent logs
-docker-compose logs --tail=100 hfr-running-bot
+docker-compose logs --tail=100 strava-running-bot
 
 # Member statistics
 curl http://localhost:3000/members
@@ -961,7 +961,7 @@ curl http://localhost:3000/members
 curl http://localhost:3000/health
 
 # Resource usage
-docker stats hfr-running-bot --no-stream
+docker stats strava-running-bot --no-stream
 ```
 
 ### Support Channels

@@ -48,7 +48,7 @@ Built a comprehensive Discord bot that automatically posts Strava activities fro
 
 #### **Project Structure**
 ```
-hfrrunningbot/
+strava-running-bot/
 ├── src/
 │   ├── discord/           # Discord bot and commands
 │   ├── strava/           # Strava API integration  
@@ -187,9 +187,9 @@ hfrrunningbot/
 ## 🔄 Git Repository Setup
 
 ### **Repository Configuration**
-- **Initialized git repository** in `/home/mat/hfrrunningbot/`
-- **Created `hfrrunningbot` branch** for development
-- **Pushed to GitHub**: https://github.com/mpaloulack/hfr-bot/tree/hfrrunningbot
+- **Initialized git repository** in `/home/mat/strava-running-bot/`
+- **Created `strava-running-bot` branch** for development
+- **Pushed to GitHub**: https://github.com/mpaloulack/strava-bot/tree/strava-running-bot
 - **22 files committed** with comprehensive commit message
 - **Ready for collaboration** with proper branching strategy
 

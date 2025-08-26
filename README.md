@@ -65,7 +65,7 @@ A comprehensive Discord bot that automatically posts Strava activities from your
 1. **Clone and Setup**
    ```bash
    git clone <your-repo-url>
-   cd hfr-bot
+   cd strava-running-bot
    npm install
    ```
 
@@ -301,7 +301,7 @@ curl http://localhost:3000/health
 ## 🏗️ Project Architecture
 
 ```
-hfrrunningbot/
+strava-running-bot/
 ├── src/
 │   ├── discord/
 │   │   ├── bot.js              # Discord bot implementation
@@ -594,4 +594,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **Built with ❤️ for the running community**
 
-For questions, issues, or contributions, please visit our [GitHub repository](https://github.com/your-repo/hfr-running-bot).
+For questions, issues, or contributions, please visit our [GitHub repository](https://github.com/your-repo/strava-running-bot).
