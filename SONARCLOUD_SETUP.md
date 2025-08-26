@@ -33,7 +33,7 @@ This guide walks you through setting up SonarCloud code quality analysis for the
 
 ### Step 3: Get SONAR_TOKEN
 1. In SonarCloud, go to **My Account > Security**
-2. Generate a new token named "hfr-bot-github-actions"
+2. Generate a new token named "strava-bot-github-actions"
 3. Copy the token (you'll need it in the next step)
 
 ### Step 4: Add GitHub Secret
@@ -113,7 +113,7 @@ The following badges are now displayed in README.md:
 - **Exclusions**: `node_modules`, `coverage`, `docs`
 
 ### GitHub Actions Workflow
-- **Triggers**: Push to `hfrrunningbot` and `main` branches, pull requests
+- **Triggers**: Push to `strava-running-bot` and `main` branches, pull requests
 - **Node.js Version**: 22
 - **Quality Gate**: Enforced but non-blocking initially
 - **Coverage**: Generated if tests exist

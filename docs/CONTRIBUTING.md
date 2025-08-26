@@ -53,12 +53,12 @@ For detailed setup instructions, follow the [Quick Start guide](../README.md#-qu
 1. **Fork the repository** on GitHub
 2. **Clone your fork** locally:
    ```bash
-   git clone https://github.com/yourusername/hfr-running-bot.git
-   cd hfr-running-bot
+   git clone https://github.com/yourusername/strava-running-bot.git
+   cd strava-running-bot
    ```
 3. **Add upstream remote**:
    ```bash
-   git remote add upstream https://github.com/original/hfr-running-bot.git
+   git remote add upstream https://github.com/original/strava-running-bot.git
    ```
 
 ## Development Setup

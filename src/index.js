@@ -142,7 +142,7 @@ Setup Instructions:
 4. Set up Strava webhook pointing to your server
 5. Run the bot and register team members
 
-For more information, visit: https://github.com/your-repo/hfr-running-bot
+For more information, visit: https://github.com/your-repo/strava-running-bot
   `);
   process.exit(0);
 } else {

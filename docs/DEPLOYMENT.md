@@ -73,13 +73,13 @@ docker-compose build --no-cache
 docker-compose up -d
 
 # Access container shell
-docker-compose exec hfr-running-bot sh
+docker-compose exec strava-running-bot sh
 
 # View real-time logs
-docker-compose logs -f hfr-running-bot
+docker-compose logs -f strava-running-bot
 
 # Restart single service
-docker-compose restart hfr-running-bot
+docker-compose restart strava-running-bot
 ```
 
 ### Docker Configuration
@@ -113,16 +113,16 @@ deploy:
 
 ```bash
 # Backup member data
-docker run --rm -v hfr-bot_bot_data:/data -v $(pwd):/backup alpine tar czf /backup/bot_data_backup.tar.gz -C /data .
+docker run --rm -v strava-running-bot_bot_data:/data -v $(pwd):/backup alpine tar czf /backup/bot_data_backup.tar.gz -C /data .
 
 # Restore member data
-docker run --rm -v hfr-bot_bot_data:/data -v $(pwd):/backup alpine tar xzf /backup/bot_data_backup.tar.gz -C /data
+docker run --rm -v strava-running-bot_bot_data:/data -v $(pwd):/backup alpine tar xzf /backup/bot_data_backup.tar.gz -C /data
 
 # List volumes
 docker volume ls
 
 # Inspect volume
-docker volume inspect hfr-bot_bot_data
+docker volume inspect strava-running-bot_bot_data
 ```
 
 ## Production Deployment
@@ -152,9 +152,9 @@ sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-
 sudo chmod +x /usr/local/bin/docker-compose
 
 # Create deployment directory
-sudo mkdir -p /opt/hfrrunningbot
-sudo chown $USER:$USER /opt/hfrrunningbot
-cd /opt/hfrrunningbot
+sudo mkdir -p /opt/strava-running-bot
+sudo chown $USER:$USER /opt/strava-running-bot
+cd /opt/strava-running-bot
 ```
 
 #### 2. Application Deployment
@@ -183,7 +183,7 @@ docker-compose logs -f
 **Nginx Example:**
 
 ```nginx
-# /etc/nginx/sites-available/hfrrunningbot
+# /etc/nginx/sites-available/strava-running-bot
 server {
     listen 80;
     server_name your-domain.com;
@@ -214,7 +214,7 @@ server {
 **Enable the site:**
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/hfrrunningbot /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/strava-running-bot /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl reload nginx
 ```
@@ -307,7 +307,7 @@ railway deploy
 ```bash
 # Install Heroku CLI
 # Create Heroku app
-heroku create hfr-running-bot
+heroku create strava-running-bot
 
 # Configure environment variables
 heroku config:set NODE_ENV=production
@@ -337,12 +337,12 @@ web: npm start
 Create `app.yaml`:
 
 ```yaml
-name: hfr-running-bot
+name: strava-running-bot
 services:
 - name: web
   source_dir: /
   github:
-    repo: your-username/hfr-running-bot
+    repo: your-username/strava-running-bot
     branch: main
   run_command: npm start
   environment_slug: node-js
@@ -370,13 +370,13 @@ services:
 
 ```bash
 # Build for AWS
-docker build -t hfr-running-bot .
+docker build -t strava-running-bot .
 
 # Tag for ECR
-docker tag hfr-running-bot:latest <account-id>.dkr.ecr.<region>.amazonaws.com/hfr-running-bot:latest
+docker tag strava-running-bot:latest <account-id>.dkr.ecr.<region>.amazonaws.com/strava-running-bot:latest
 
 # Push to ECR
-docker push <account-id>.dkr.ecr.<region>.amazonaws.com/hfr-running-bot:latest
+docker push <account-id>.dkr.ecr.<region>.amazonaws.com/strava-running-bot:latest
 ```
 
 ## NAS Deployment
@@ -400,7 +400,7 @@ docker push <account-id>.dkr.ecr.<region>.amazonaws.com/hfr-running-bot:latest
 ssh admin@your-nas-ip
 
 # Navigate to project
-cd /volume1/docker/hfrrunningbot
+cd /volume1/docker/strava-running-bot
 
 # Start services
 sudo docker-compose up -d
@@ -457,17 +457,17 @@ sudo docker-compose ps
 ```bash
 # Automated backup script for NAS
 #!/bin/bash
-BACKUP_DIR="/volume1/backups/hfrrunningbot"
+BACKUP_DIR="/volume1/backups/strava-running-bot"
 DATE=$(date +%Y%m%d_%H%M%S)
 
 # Create backup directory
 mkdir -p $BACKUP_DIR
 
 # Backup Docker volumes
-docker run --rm -v hfrrunningbot_bot_data:/data -v $BACKUP_DIR:/backup alpine tar czf /backup/bot_data_$DATE.tar.gz -C /data .
+docker run --rm -v strava-running-bot_bot_data:/data -v $BACKUP_DIR:/backup alpine tar czf /backup/bot_data_$DATE.tar.gz -C /data .
 
 # Backup configuration
-cp /volume1/docker/hfrrunningbot/.env $BACKUP_DIR/env_$DATE.backup
+cp /volume1/docker/strava-running-bot/.env $BACKUP_DIR/env_$DATE.backup
 
 # Clean old backups (keep 30 days)
 find $BACKUP_DIR -name "*.tar.gz" -mtime +30 -delete
@@ -529,7 +529,7 @@ grep "401\|403" /var/log/nginx/access.log
 docker-compose logs | grep "ERROR\|WARN"
 
 # Monitor resource usage
-docker stats hfr-running-bot
+docker stats strava-running-bot
 ```
 
 ## Monitoring & Maintenance
@@ -579,8 +579,8 @@ grafana:
 
 ```bash
 # Configure logrotate
-sudo tee /etc/logrotate.d/hfrrunningbot <<EOF
-/opt/hfrrunningbot/logs/*.log {
+sudo tee /etc/logrotate.d/strava-running-bot <<EOF
+/opt/strava-running-bot/logs/*.log {
     daily
     missingok
     rotate 30
@@ -589,7 +589,7 @@ sudo tee /etc/logrotate.d/hfrrunningbot <<EOF
     notifempty
     sharedscripts
     postrotate
-        docker-compose -f /opt/hfrrunningbot/docker-compose.yml restart hfr-running-bot
+        docker-compose -f /opt/strava-running-bot/docker-compose.yml restart strava-running-bot
     endscript
 }
 EOF
@@ -678,10 +678,10 @@ tail -n 1000 /var/log/nginx/access.log | grep -v "200\|301\|302"
 crontab -e
 
 # Daily health check at 6 AM
-0 6 * * * /opt/hfrrunningbot/daily-maintenance.sh
+0 6 * * * /opt/strava-running-bot/daily-maintenance.sh
 
 # Weekly maintenance on Sunday at 2 AM
-0 2 * * 0 /opt/hfrrunningbot/weekly-maintenance.sh
+0 2 * * 0 /opt/strava-running-bot/weekly-maintenance.sh
 
 # Monthly backup cleanup on 1st of month at 3 AM
 0 3 1 * * find /opt/backups -name "*.tar.gz" -mtime +90 -delete
@@ -690,15 +690,15 @@ crontab -e
 #### Systemd Service (Alternative to Docker)
 
 ```ini
-# /etc/systemd/system/hfrrunningbot.service
+# /etc/systemd/system/strava-running-bot.service
 [Unit]
 Description=Strava Running Bot
 After=network.target
 
 [Service]
 Type=simple
-User=hfrbot
-WorkingDirectory=/opt/hfrrunningbot
+User=stravabot
+WorkingDirectory=/opt/strava-running-bot
 ExecStart=/usr/bin/node src/index.js
 Restart=always
 RestartSec=10
@@ -722,7 +722,7 @@ docker system prune -a
 docker-compose build --no-cache
 
 # Check for dependency issues
-docker-compose logs hfr-running-bot
+docker-compose logs strava-running-bot
 ```
 
 #### Environment Variable Issues
@@ -732,17 +732,17 @@ docker-compose logs hfr-running-bot
 docker-compose config
 
 # Check variable substitution
-docker-compose exec hfr-running-bot env | grep -E "(DISCORD|STRAVA)"
+docker-compose exec strava-running-bot env | grep -E "(DISCORD|STRAVA)"
 
 # Test configuration validation
-docker-compose exec hfr-running-bot node utils/setup.js validate
+docker-compose exec strava-running-bot node utils/setup.js validate
 ```
 
 #### Network Connectivity Issues
 
 ```bash
 # Test internal connectivity
-docker-compose exec hfr-running-bot curl -f http://localhost:3000/health
+docker-compose exec strava-running-bot curl -f http://localhost:3000/health
 
 # Test external connectivity
 curl -f https://your-domain.com/health

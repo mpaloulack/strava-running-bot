@@ -1,5 +1,5 @@
 {
-  "name": "hfr-running-bot",
+  "name": "strava-running-bot",
   "version": "1.0.0",
   "description": "Discord bot that displays Strava activities from running team members",
   "main": "src/index.js",
