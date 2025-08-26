@@ -4,7 +4,7 @@ This document provides comprehensive documentation for the Strava Running Bot RE
 
 ## Base URL
 
-```
+```text
 http://localhost:3000
 ```
 
@@ -43,6 +43,7 @@ All responses are in JSON format. Successful responses return data objects, whil
 Returns the health status of the bot.
 
 **Response:**
+
 ```json
 {
   "status": "healthy",
@@ -53,6 +54,7 @@ Returns the health status of the bot.
 ```
 
 **Status Codes:**
+
 - `200` - Service is healthy
 - `503` - Service is unhealthy
 
@@ -65,6 +67,7 @@ Returns the health status of the bot.
 Returns a list of all registered team members.
 
 **Response:**
+
 ```json
 {
   "total": 5,
@@ -83,6 +86,7 @@ Returns a list of all registered team members.
 ```
 
 **Status Codes:**
+
 - `200` - Success
 - `500` - Internal server error
 
@@ -93,9 +97,11 @@ Returns a list of all registered team members.
 Permanently removes a team member by their Strava athlete ID.
 
 **Parameters:**
+
 - `athleteId` (path) - Strava athlete ID
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -109,6 +115,7 @@ Permanently removes a team member by their Strava athlete ID.
 ```
 
 **Status Codes:**
+
 - `200` - Member removed successfully
 - `404` - Member not found
 - `500` - Internal server error
@@ -120,9 +127,11 @@ Permanently removes a team member by their Strava athlete ID.
 Permanently removes a team member by their Discord user ID.
 
 **Parameters:**
+
 - `discordId` (path) - Discord user ID
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -136,6 +145,7 @@ Permanently removes a team member by their Discord user ID.
 ```
 
 **Status Codes:**
+
 - `200` - Member removed successfully
 - `404` - Member not found
 - `500` - Internal server error
@@ -147,9 +157,11 @@ Permanently removes a team member by their Discord user ID.
 Temporarily deactivates a team member (stops posting their activities).
 
 **Parameters:**
+
 - `athleteId` (path) - Strava athlete ID
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -158,6 +170,7 @@ Temporarily deactivates a team member (stops posting their activities).
 ```
 
 **Status Codes:**
+
 - `200` - Member deactivated successfully
 - `404` - Member not found
 - `500` - Internal server error
@@ -169,9 +182,11 @@ Temporarily deactivates a team member (stops posting their activities).
 Reactivates a previously deactivated team member.
 
 **Parameters:**
+
 - `athleteId` (path) - Strava athlete ID
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -180,6 +195,7 @@ Reactivates a previously deactivated team member.
 ```
 
 **Status Codes:**
+
 - `200` - Member reactivated successfully
 - `404` - Member not found
 - `500` - Internal server error
@@ -193,10 +209,12 @@ Reactivates a previously deactivated team member.
 Webhook verification endpoint for Strava. Used during webhook subscription setup.
 
 **Query Parameters:**
+
 - `hub.challenge` (required) - Challenge string from Strava
 - `hub.verify_token` (required) - Verification token
 
 **Response:**
+
 ```json
 {
   "hub.challenge": "challenge_string_here"
@@ -204,6 +222,7 @@ Webhook verification endpoint for Strava. Used during webhook subscription setup
 ```
 
 **Status Codes:**
+
 - `200` - Verification successful
 - `403` - Invalid verification token
 
@@ -214,6 +233,7 @@ Webhook verification endpoint for Strava. Used during webhook subscription setup
 Receives webhook events from Strava when activities are created, updated, or deleted.
 
 **Request Body:**
+
 ```json
 {
   "object_type": "activity",
@@ -226,6 +246,7 @@ Receives webhook events from Strava when activities are created, updated, or del
 ```
 
 **Response:**
+
 ```json
 {
   "received": true
@@ -233,6 +254,7 @@ Receives webhook events from Strava when activities are created, updated, or del
 ```
 
 **Status Codes:**
+
 - `200` - Event received and processed
 - `500` - Processing error
 
@@ -245,12 +267,14 @@ Receives webhook events from Strava when activities are created, updated, or del
 Initiates the Strava OAuth flow for member registration.
 
 **Query Parameters:**
+
 - `user_id` (required) - Discord user ID
 
 **Response:**
 Redirects to Strava authorization URL.
 
 **Status Codes:**
+
 - `302` - Redirect to Strava
 - `400` - Missing user_id parameter
 
@@ -261,6 +285,7 @@ Redirects to Strava authorization URL.
 Handles the OAuth callback from Strava after user authorization.
 
 **Query Parameters:**
+
 - `code` (required) - Authorization code from Strava
 - `state` - Discord user ID passed through OAuth flow
 - `error` - Error from Strava (if authorization failed)
@@ -269,6 +294,7 @@ Handles the OAuth callback from Strava after user authorization.
 HTML page indicating success or failure.
 
 **Status Codes:**
+
 - `200` - Authorization successful or failed (HTML response)
 - `400` - Missing authorization code
 - `500` - Internal error during token exchange
@@ -309,7 +335,7 @@ The API implements basic rate limiting to prevent abuse:
 
 Rate limit headers are included in responses:
 
-```
+```text
 X-RateLimit-Limit: 10
 X-RateLimit-Remaining: 9
 X-RateLimit-Reset: 1629123456
@@ -426,6 +452,7 @@ print(f"Status: {health['status']}")
 ### Input Validation
 
 All endpoints validate input parameters:
+
 - Athlete IDs must be valid numbers
 - Discord IDs must be valid snowflake format
 - Required parameters are checked
@@ -457,6 +484,7 @@ To add new API endpoints:
 ### Versioning
 
 Currently, the API is unversioned. Future versions should include:
+
 - Version prefix in URLs (`/v1/members`)
 - Version header support
 - Backward compatibility considerations
@@ -464,6 +492,7 @@ Currently, the API is unversioned. Future versions should include:
 ### Monitoring
 
 Consider implementing:
+
 - Request logging
 - Performance metrics
 - Error tracking

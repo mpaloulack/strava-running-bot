@@ -5,12 +5,14 @@ This document outlines how the Strava Running Bot complies with Strava's API ter
 ## ✅ Strava Branding Compliance
 
 ### Attribution Requirements
+
 - **"Powered by Strava"** text appears in all Discord embeds and web pages
 - **Strava logo** used in embed footers and web pages
 - **Strava orange color** (#FC4C02) used consistently
 - **Links to Strava** included where appropriate
 
 ### Visual Elements
+
 - Discord embeds include Strava logo in footers
 - Registration pages include proper Strava attribution
 - Success/error pages include "Powered by Strava" branding
@@ -18,11 +20,13 @@ This document outlines how the Strava Running Bot complies with Strava's API ter
 ## 🔒 Data Privacy & Usage
 
 ### What Data We Access
+
 - **Public Strava activities only** (runs, rides, etc.)
 - **Basic athlete information** (name, profile picture)
 - **OAuth tokens** (encrypted and stored securely)
 
 ### What We DON'T Access
+
 - ❌ Private activities
 - ❌ Followers-only activities  
 - ❌ Personal messages or comments
@@ -30,7 +34,9 @@ This document outlines how the Strava Running Bot complies with Strava's API ter
 - ❌ Location data beyond activity maps
 
 ### Data Filtering
+
 The bot automatically filters out:
+
 - Private activities (`activity.private = true`)
 - Followers-only activities (`activity.visibility = 'followers_only'`)
 - Hidden activities (`activity.hide_from_home = true`)
@@ -42,11 +48,13 @@ The bot automatically filters out:
 ## 🔐 Data Security
 
 ### Token Management
+
 - OAuth tokens encrypted with AES-256
 - Automatic token refresh when needed
 - Secure storage with encryption keys
 
 ### Access Control  
+
 - Only processes data for registered team members
 - Members can deactivate/remove themselves
 - Admin controls for member management
@@ -54,6 +62,7 @@ The bot automatically filters out:
 ## 📊 Rate Limiting
 
 ### ✅ Implementation Complete
+
 - **Rate limiting**: ✅ Implemented with conservative limits
 - **15-minute window**: 80 requests (Strava allows ~100)
 - **Daily window**: 900 requests (Strava allows ~1000)  
@@ -62,12 +71,14 @@ The bot automatically filters out:
 - **Monitoring**: Rate limit stats in `/botstatus` command
 
 ### Strava API Limits
+
 - **Official limits**: ~100 requests/15min, ~1000 requests/day
 - **Our limits**: 80 requests/15min, 900 requests/day (conservative)
 - **Queue management**: Requests queued when limits reached
 - **Automatic retry**: Delayed execution with optimal timing
 
 ### Rate Limiter Features
+
 - Real-time request tracking with sliding windows
 - Automatic cleanup of expired request timestamps  
 - Request queuing with FIFO processing
@@ -77,11 +88,13 @@ The bot automatically filters out:
 ## 🎯 Usage Scope
 
 ### Intended Use
+
 - **Team/club activity sharing** in Discord channels
 - **Motivation and engagement** for running groups
 - **Public activity celebration** and community building
 
 ### Data Retention
+
 - Member data stored until manually removed
 - No automatic data expiration (may need to implement)
 - Tokens refreshed as needed to maintain access
@@ -89,6 +102,7 @@ The bot automatically filters out:
 ## 📋 Production Checklist
 
 ### ✅ Completed
+
 - [x] Proper "Powered by Strava" attribution
 - [x] Strava logo usage in embeds
 - [x] Privacy filtering (public activities only)
@@ -99,6 +113,7 @@ The bot automatically filters out:
 - [x] **Rate limiting implementation** (NEW!)
 
 ### ⚠️ Recommended for Production
+
 - [ ] Submit app for Strava review (if required)
 - [ ] Add data retention policies
 - [ ] Terms of service for end users
@@ -106,13 +121,14 @@ The bot automatically filters out:
 
 ## 🌐 Links & Resources
 
-- **Strava Developer Agreement**: https://developers.strava.com/docs/getting-started/
-- **Strava API Guidelines**: https://developers.strava.com/guidelines/
+- **Strava Developer Agreement**: <https://developers.strava.com/docs/getting-started/>
+- **Strava API Guidelines**: <https://developers.strava.com/guidelines/>
 - **Bot Documentation**: See README.md and docs/ folder
 
 ## 📞 Contact
 
 For questions about data usage, privacy, or Strava compliance:
+
 - Review bot documentation
 - Check Strava developer guidelines  
 - Contact bot administrator

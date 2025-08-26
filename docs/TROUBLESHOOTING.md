@@ -69,6 +69,7 @@ docker-compose down && docker-compose up -d --build
 ### Discord Bot Not Responding
 
 #### Symptoms
+
 - Bot appears offline in Discord
 - Slash commands don't appear
 - No response to commands
@@ -89,42 +90,47 @@ echo $DISCORD_TOKEN | wc -c  # Should be around 70 characters
 
 #### Common Causes & Solutions
 
-**1. Invalid Bot Token**
-```bash
-# Error: "Invalid token"
-# Solution: Regenerate token in Discord Developer Portal
-# Update DISCORD_TOKEN in .env file
-# Restart bot
-```
+1. Invalid Bot Token
 
-**2. Missing Permissions**
-```bash
-# Error: "Missing permissions"
-# Solution: Check bot invite URL includes required permissions:
-# - Send Messages
-# - Use Slash Commands  
-# - Embed Links
-# - Attach Files
-```
+   ```bash
+   # Error: "Invalid token"
+   # Solution: Regenerate token in Discord Developer Portal
+   # Update DISCORD_TOKEN in .env file
+   # Restart bot
+   ```
 
-**3. Bot Kicked from Server**
-```bash
-# Error: "Unknown Guild" or similar
-# Solution: Re-invite bot to server
-# Check server audit logs for kick/ban events
-```
+2. Missing Permissions
 
-**4. Rate Limiting**
-```bash
-# Error: "Rate limited"
-# Check logs for rate limit messages
-# Wait for rate limit to reset (usually 1 hour)
-# Reduce command usage frequency
-```
+   ```bash
+   # Error: "Missing permissions"
+   # Solution: Check bot invite URL includes required    permissions:
+   # - Send Messages
+   # - Use Slash Commands  
+   # - Embed Links
+   # - Attach Files
+   ```
+
+3. Bot Kicked from Server
+
+   ```bash
+   # Error: "Unknown Guild" or similar
+   # Solution: Re-invite bot to server
+   # Check server audit logs for kick/ban events
+   ```
+
+4. Rate Limiting
+
+   ```bash
+   # Error: "Rate limited"
+   # Check logs for rate limit messages
+   # Wait for rate limit to reset (usually 1 hour)
+   # Reduce command usage frequency
+   ```
 
 ### Slash Commands Not Appearing
 
 #### Symptoms
+
 - Commands don't show up when typing `/`
 - Commands are outdated
 - Some commands missing
@@ -149,6 +155,7 @@ docker-compose logs strava-running-bot | grep -i "command"
 ### Registration Process Failing
 
 #### Symptoms
+
 - Users can't complete Strava authorization
 - Registration URL returns error
 - Members not appearing in `/members list`
@@ -168,37 +175,41 @@ docker-compose logs -f strava-running-bot | grep -i "register\|oauth"
 
 #### Common Issues
 
-**1. Invalid Redirect URI**
-```bash
-# Error: "redirect_uri_mismatch"
-# Check Strava app settings match your domain
-# Ensure HTTPS in production
-# Verify Authorization Callback Domain in Strava app
-```
+1. Invalid Redirect URI
 
-**2. Strava API Credentials Wrong**
-```bash
-# Error: "invalid_client"
-# Verify STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET
-# Check credentials are not swapped
-# Ensure no extra spaces in .env file
-```
+   ```bash
+   # Error: "redirect_uri_mismatch"
+   # Check Strava app settings match your domain
+   # Ensure HTTPS in production
+   # Verify Authorization Callback Domain in Strava app
+   ```
 
-**3. Member Data Not Saving**
-```bash
-# Check member storage
-curl http://localhost:3000/members
+2. Strava API Credentials Wrong
 
-# Check file permissions
-ls -la data/
+   ```bash
+   # Error: "invalid_client"
+   # Verify STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET
+   # Check credentials are not swapped
+   # Ensure no extra spaces in .env file
+   ```
 
-# Check encryption key
-echo $ENCRYPTION_KEY | wc -c  # Should be 64 characters
-```
+3. Member Data Not Saving
+
+   ```bash
+   # Check member storage
+   curl http://localhost:3000/members
+   
+   # Check file permissions
+   ls -la data/
+   
+   # Check encryption key
+   echo $ENCRYPTION_KEY | wc -c  # Should be 64 characters
+   ```
 
 ### Member Token Issues
 
 #### Symptoms
+
 - "Unable to access activities" errors
 - Member activities not posting
 - Token refresh failures
@@ -222,6 +233,7 @@ curl -X POST http://localhost:3000/members/discord/USER_ID/delete
 ### Activities Not Appearing in Discord
 
 #### Symptoms
+
 - Members complete activities but nothing posts to Discord
 - Some activities post, others don't
 - Delayed activity posting
@@ -243,78 +255,86 @@ curl -X POST http://localhost:3000/webhook/strava \
 
 #### Common Causes
 
-**1. Webhook Not Configured**
-```bash
-# Check webhook subscription
-node utils/setup.js list-webhooks
+1. Webhook Not Configured
 
-# Create webhook if missing
-node utils/setup.js create-webhook https://your-domain.com/webhook/strava
+   ```bash
+   # Check webhook subscription
+   node utils/setup.js list-webhooks
+   
+   # Create webhook if missing
+   node utils/setup.js create-webhook https://your-domain.com/   webhook/strava
+   
+   # Verify webhook endpoint accessible
+   curl -f https://your-domain.com/webhook/strava
+   ```
 
-# Verify webhook endpoint accessible
-curl -f https://your-domain.com/webhook/strava
-```
+2. Activity Filtering
 
-**2. Activity Filtering**
-```bash
-# Check activity filters in logs
-# Activities are filtered if:
-# - Older than 24 hours
-# - Less than 1 minute duration
-# - Less than 100m distance
-# - Manual entries without GPS data
+   ```bash
+   # Check activity filters in logs
+   # Activities are filtered if:
+   # - Older than 24 hours
+   # - Less than 1 minute duration
+   # - Less than 100m distance
+   # - Manual entries without GPS data
+   
+   # Check filter logs
+   docker-compose logs strava-running-bot | grep -i "skip\|   filter"
+   ```
 
-# Check filter logs
-docker-compose logs strava-running-bot | grep -i "skip\|filter"
-```
+3. Member Authorization Issues
 
-**3. Member Authorization Issues**
-```bash
-# Check member active status
-curl http://localhost:3000/members | jq '.members[] | select(.isActive == false)'
-
-# Check token expiry
-# Tokens refresh automatically, check logs for refresh errors
-docker-compose logs strava-running-bot | grep -i "token.*error"
-```
+   ```bash
+   # Check member active status
+   curl http://localhost:3000/members | jq '.members[] | select   (.isActive == false)'
+   
+   # Check token expiry
+   # Tokens refresh automatically, check logs for refresh    errors
+   docker-compose logs strava-running-bot | grep -i "token.   *error"
+   ```
 
 ### Incorrect Activity Data
 
 #### Symptoms
+
 - Missing pace, distance, or heart rate data
 - Wrong activity formatting
 - Broken route maps
 
 #### Solutions
 
-**1. Missing Activity Fields**
-```bash
-# Check Strava API response structure
-# Some activities may not have all data fields
-# Heart rate requires compatible device
-# GAP requires elevation data
-```
+1. Missing Activity Fields
 
-**2. Route Map Issues**
-```bash
-# Check Google Maps API key (optional)
-# Verify GOOGLE_MAPS_API_KEY in .env
-# Maps work without API key but may have limitations
-```
+   ```bash
+   # Check Strava API response structure
+   # Some activities may not have all data fields
+   # Heart rate requires compatible device
+   # GAP requires elevation data
+   ```
 
-**3. Formatting Problems**
-```bash
-# Check activity processing logs
-docker-compose logs strava-running-bot | grep -i "format\|embed"
+2. Route Map Issues
 
-# Test embed generation manually by triggering /last command
-```
+   ```bash
+   # Check Google Maps API key (optional)
+   # Verify GOOGLE_MAPS_API_KEY in .env
+   # Maps work without API key but may have limitations
+   ```
+
+3. Formatting Problems
+
+   ```bash
+   # Check activity processing logs
+   docker-compose logs strava-running-bot | grep -i "format\|   embed"
+   
+   # Test embed generation manually by triggering /last command
+   ```
 
 ## Discord Command Problems
 
 ### Commands Not Working
 
 #### Symptoms
+
 - Commands return errors
 - "Application did not respond" messages
 - Commands hang or timeout
@@ -334,37 +354,41 @@ docker-compose logs strava-running-bot | grep -i "command\|interaction"
 
 #### Solutions
 
-**1. Permission Errors**
-```bash
-# Verify bot has these permissions:
-# - Send Messages
-# - Use Slash Commands
-# - Embed Links
-# - Read Message History
+1. Permission Errors
 
-# Check channel-specific permissions
-# Bot may have server permissions but not channel permissions
-```
+   ```bash
+   # Verify bot has these permissions:
+   # - Send Messages
+   # - Use Slash Commands
+   # - Embed Links
+   # - Read Message History
+   
+   # Check channel-specific permissions
+   # Bot may have server permissions but not channel    permissions
+   ```
 
-**2. Command Timeout**
-```bash
-# Commands must respond within 3 seconds
-# Check for slow API calls in logs
-# Verify Strava API response times
-```
+2. Command Timeout
 
-**3. Database Errors**
-```bash
-# Check member data access
-curl http://localhost:3000/members
+   ```bash
+   # Commands must respond within 3 seconds
+   # Check for slow API calls in logs
+   # Verify Strava API response times
+   ```
 
-# Check file system permissions
-ls -la data/
-```
+3. Database Errors
+
+   ```bash
+   # Check member data access
+   curl http://localhost:3000/members
+   
+   # Check file system permissions
+   ls -la data/
+   ```
 
 ### Member Commands Failing
 
 #### Symptoms
+
 - `/members list` shows empty or errors
 - `/members remove` doesn't work
 - `/last` command can't find members
@@ -390,6 +414,7 @@ docker-compose restart strava-running-bot
 ### Webhook Events Not Received
 
 #### Symptoms
+
 - Activities complete but no webhook events
 - Webhook verification failing
 - Strava reports webhook errors
@@ -409,34 +434,38 @@ curl "http://localhost:3000/webhook/strava?hub.challenge=test&hub.verify_token=Y
 
 #### Solutions
 
-**1. Webhook URL Incorrect**
-```bash
-# Verify webhook URL is publicly accessible
-# Must be HTTPS in production
-# Must return 200 for verification requests
+1. Webhook URL Incorrect
 
-# Update webhook if needed
-node utils/setup.js delete-webhook OLD_SUBSCRIPTION_ID
-node utils/setup.js create-webhook https://your-domain.com/webhook/strava
-```
+   ```bash
+   # Verify webhook URL is publicly accessible
+   # Must be HTTPS in production
+   # Must return 200 for verification requests
+   
+   # Update webhook if needed
+   node utils/setup.js delete-webhook OLD_SUBSCRIPTION_ID
+   node utils/setup.js create-webhook https://your-domain.com/   webhook/strava
+   ```
 
-**2. Verification Token Mismatch**
-```bash
-# Check STRAVA_WEBHOOK_VERIFY_TOKEN matches what you set in webhook
-# Verify no extra spaces or characters in .env
-echo "$STRAVA_WEBHOOK_VERIFY_TOKEN" | hexdump -C
-```
+2. Verification Token Mismatch
 
-**3. Rate Limiting**
-```bash
-# Strava may throttle webhook deliveries
-# Check webhook subscription rate limits
-# Monitor webhook event frequency in logs
-```
+   ```bash
+   # Check STRAVA_WEBHOOK_VERIFY_TOKEN matches what you set in    webhook
+   # Verify no extra spaces or characters in .env
+   echo "$STRAVA_WEBHOOK_VERIFY_TOKEN" | hexdump -C
+   ```
+
+3. Rate Limiting
+
+   ```bash
+   # Strava may throttle webhook deliveries
+   # Check webhook subscription rate limits
+   # Monitor webhook event frequency in logs
+   ```
 
 ### Webhook Processing Errors
 
 #### Symptoms
+
 - Webhook events received but not processed
 - Processing errors in logs
 - Partial activity posting
@@ -461,6 +490,7 @@ curl -X POST http://localhost:3000/webhook/strava \
 ### Slow Response Times
 
 #### Symptoms
+
 - Commands take long time to respond
 - Activities post with delay
 - Health checks timing out
@@ -483,38 +513,42 @@ iostat -x 1 5
 
 #### Solutions
 
-**1. Resource Constraints**
-```bash
-# Increase Docker memory limit in docker-compose.yml
-# Increase CPU allocation
-# Monitor resource usage patterns
+1. Resource Constraints
 
-# Check for memory leaks
-docker-compose logs strava-running-bot | grep -i "memory\|oom"
-```
+   ```bash
+   # Increase Docker memory limit in docker-compose.yml
+   # Increase CPU allocation
+   # Monitor resource usage patterns
+   
+   # Check for memory leaks
+   docker-compose logs strava-running-bot | grep -i "memory\|   oom"
+   ```
 
-**2. API Rate Limiting**
-```bash
-# Check Strava API rate limit headers in logs
-# Implement exponential backoff for retries
-# Monitor API quota usage
+2. API Rate Limiting
 
-# Check rate limit status
-# Look for 429 responses in logs
-```
+   ```bash
+   # Check Strava API rate limit headers in logs
+   # Implement exponential backoff for retries
+   # Monitor API quota usage
+   
+   # Check rate limit status
+   # Look for 429 responses in logs
+   ```
 
-**3. Database Performance**
-```bash
-# Check member data file size
-ls -lh data/members.json
+3. Database Performance
 
-# Consider implementing database if file gets large
-# Implement data pagination for large teams
-```
+   ```bash
+   # Check member data file size
+   ls -lh data/members.json
+   
+   # Consider implementing database if file gets large
+   # Implement data pagination for large teams
+   ```
 
 ### High Memory Usage
 
 #### Symptoms
+
 - Container memory usage growing over time
 - Out of memory errors
 - Container restarts due to memory
@@ -541,6 +575,7 @@ docker-compose exec strava-running-bot node --expose-gc -e "
 ### Member Data Corruption
 
 #### Symptoms
+
 - Members disappear from list
 - Registration data lost
 - Encrypted data can't be decrypted
@@ -560,39 +595,43 @@ ls -la data/
 
 #### Solutions
 
-**1. Restore from Backup**
-```bash
-# List available backups
-ls -la backups/
+1. Restore from Backup
 
-# Restore latest backup
-cp backups/members_backup_LATEST.json data/members.json
-docker-compose restart strava-running-bot
-```
+   ```bash
+   # List available backups
+   ls -la backups/
+   
+   # Restore latest backup
+   cp backups/members_backup_LATEST.json data/members.json
+   docker-compose restart strava-running-bot
+   ```
 
-**2. Encryption Key Issues**
-```bash
-# Verify encryption key hasn't changed
-echo $ENCRYPTION_KEY | wc -c  # Should be 64 characters
+2. Encryption Key Issues
 
-# If key lost, members need to re-register
-# Clear data and start fresh
-rm data/members.json
-docker-compose restart strava-running-bot
-```
+   ```bash
+   # Verify encryption key hasn't changed
+   echo $ENCRYPTION_KEY | wc -c  # Should be 64 characters
+   
+   # If key lost, members need to re-register
+   # Clear data and start fresh
+   rm data/members.json
+   docker-compose restart strava-running-bot
+   ```
 
-**3. File Corruption**
-```bash
-# Check for valid JSON
-cat data/members.json | jq '.' || echo "Invalid JSON"
+3. File Corruption
 
-# Manual repair if possible
-# Or restore from backup
-```
+   ```bash
+   # Check for valid JSON
+   cat data/members.json | jq '.' || echo "Invalid JSON"
+   
+   # Manual repair if possible
+   # Or restore from backup
+   ```
 
 ### Storage Space Issues
 
 #### Symptoms
+
 - "No space left on device" errors
 - Log files growing too large
 - Container can't write data
@@ -624,6 +663,7 @@ logging:
 ### Container Won't Start
 
 #### Symptoms
+
 - Docker container exits immediately
 - Build failures
 - Port binding errors
@@ -646,41 +686,45 @@ netstat -tulpn | grep 3000
 
 #### Solutions
 
-**1. Build Failures**
-```bash
-# Clear Docker cache
-docker system prune -a
+1. Build Failures
 
-# Rebuild without cache
-docker-compose build --no-cache strava-running-bot
+   ```bash
+   # Clear Docker cache
+   docker system prune -a
+   
+   # Rebuild without cache
+   docker-compose build --no-cache strava-running-bot
+   
+   # Check Dockerfile syntax
+   docker build -t test .
+   ```
 
-# Check Dockerfile syntax
-docker build -t test .
-```
+2. Port Conflicts
 
-**2. Port Conflicts**
-```bash
-# Change port in docker-compose.yml
-ports:
-  - "3001:3000"  # Use different external port
+   ```bash
+   # Change port in docker-compose.yml
+   ports:
+     - "3001:3000"  # Use different external port
+   
+   # Or stop conflicting service
+   sudo lsof -ti:3000 | xargs kill -9
+   ```
 
-# Or stop conflicting service
-sudo lsof -ti:3000 | xargs kill -9
-```
+3. Permission Issues
 
-**3. Permission Issues**
-```bash
-# Check file ownership
-ls -la .env data/
-
-# Fix permissions
-chmod 644 .env
-chmod 755 data/
-```
+   ```bash
+   # Check file ownership
+   ls -la .env data/
+   
+   # Fix permissions
+   chmod 644 .env
+   chmod 755 data/
+   ```
 
 ### Docker Compose Issues
 
 #### Symptoms
+
 - Services don't start together
 - Environment variables not loaded
 - Volume mounting fails
@@ -707,6 +751,7 @@ docker-compose up -d
 ### External Access Issues
 
 #### Symptoms
+
 - Can't access bot from outside network
 - Webhook URL not reachable
 - SSL certificate errors
@@ -729,40 +774,44 @@ openssl s_client -connect your-domain.com:443 -servername your-domain.com
 
 #### Solutions
 
-**1. Port Forwarding**
-```bash
-# Configure router to forward external port to internal port 3000
-# Check router admin panel
-# Verify external IP and port accessibility
-```
+1. Port Forwarding
 
-**2. Firewall Issues**
-```bash
-# Check local firewall
-sudo ufw status
+   ```bash
+   # Configure router to forward external port to internal    port 3000
+   # Check router admin panel
+   # Verify external IP and port accessibility
+   ```
 
-# Allow port through firewall
-sudo ufw allow 3000/tcp
+2. Firewall Issues
 
-# Check cloud provider security groups
-# Ensure port 3000 (or 443 for HTTPS) is open
-```
+   ```bash
+   # Check local firewall
+   sudo ufw status
+   
+   # Allow port through firewall
+   sudo ufw allow 3000/tcp
+   
+   # Check cloud provider security groups
+   # Ensure port 3000 (or 443 for HTTPS) is open
+   ```
 
-**3. Reverse Proxy Issues**
-```bash
-# Check nginx configuration
-sudo nginx -t
+3. Reverse Proxy Issues
 
-# Check nginx logs
-sudo tail -f /var/log/nginx/error.log
-
-# Restart nginx
-sudo systemctl restart nginx
-```
+   ```bash
+   # Check nginx configuration
+   sudo nginx -t
+   
+   # Check nginx logs
+   sudo tail -f /var/log/nginx/error.log
+   
+   # Restart nginx
+   sudo systemctl restart nginx
+   ```
 
 ### DNS and Domain Issues
 
 #### Symptoms
+
 - Domain doesn't resolve to server
 - Intermittent connectivity
 - SSL certificate validation fails
@@ -789,6 +838,7 @@ sudo certbot renew --dry-run
 ### Authentication Failures
 
 #### Symptoms
+
 - Strava OAuth fails
 - Discord bot can't authenticate
 - API keys rejected
@@ -808,27 +858,30 @@ node utils/setup.js validate
 
 #### Solutions
 
-**1. Expired Credentials**
-```bash
-# Regenerate Discord bot token
-# Update DISCORD_TOKEN in .env
+1. Expired Credentials
 
-# Check Strava app status
-# Ensure app is not suspended or rate limited
-```
+   ```bash
+   # Regenerate Discord bot token
+   # Update DISCORD_TOKEN in .env
+   
+   # Check Strava app status
+   # Ensure app is not suspended or rate limited
+   ```
 
-**2. Scope Issues**
-```bash
-# Verify Strava OAuth scopes
-# Required: read,activity:read_all,profile:read_all
+2. Scope Issues
 
-# Check member authorization scopes
-curl http://localhost:3000/members | jq '.members[].tokens'
-```
+   ```bash
+   # Verify Strava OAuth scopes
+   # Required: read,activity:read_all,profile:read_all
+   
+   # Check member authorization scopes
+   curl http://localhost:3000/members | jq '.members[].tokens'
+   ```
 
 ### Security Errors
 
 #### Symptoms
+
 - Webhook signature validation fails
 - Encryption/decryption errors
 - Unauthorized access attempts
@@ -855,6 +908,7 @@ docker-compose logs strava-running-bot | grep -i "401\|403\|unauthorized"
 ### Insufficient Logging
 
 #### Symptoms
+
 - Can't diagnose issues
 - Missing error details
 - No audit trail

@@ -42,6 +42,7 @@ Examples of unacceptable behavior include:
 ### Prerequisites
 
 Before contributing, ensure you have completed the basic setup from the [main README](../README.md):
+
 - ✅ Node.js 22+ installed
 - ✅ Development environment working
 - ✅ Discord and Strava accounts for testing
@@ -52,11 +53,14 @@ For detailed setup instructions, follow the [Quick Start guide](../README.md#-qu
 
 1. **Fork the repository** on GitHub
 2. **Clone your fork** locally:
+
    ```bash
    git clone https://github.com/yourusername/strava-running-bot.git
    cd strava-running-bot
    ```
+
 3. **Add upstream remote**:
+
    ```bash
    git remote add upstream https://github.com/original/strava-running-bot.git
    ```
@@ -196,7 +200,7 @@ async function processNewActivity(activityId, athleteId) {
 
 #### File Organization
 
-```
+```text
 src/
 ├── discord/           # Discord-specific code
 ├── strava/           # Strava API integration
@@ -291,6 +295,7 @@ git commit -m "changes"
 ### Pull Request Process
 
 1. **Update your fork**:
+
    ```bash
    git fetch upstream
    git checkout main
@@ -298,6 +303,7 @@ git commit -m "changes"
    ```
 
 2. **Create feature branch**:
+
    ```bash
    git checkout -b feature/your-feature-name
    ```
@@ -308,12 +314,14 @@ git commit -m "changes"
    - Test your changes thoroughly
 
 4. **Commit your changes**:
+
    ```bash
    git add .
    git commit -m "Descriptive commit message"
    ```
 
 5. **Push to your fork**:
+
    ```bash
    git push origin feature/your-feature-name
    ```
