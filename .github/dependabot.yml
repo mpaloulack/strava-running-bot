@@ -35,6 +35,10 @@ updates:
     allow:
       - dependency-type: "direct"
       - dependency-type: "indirect"
+    # Ignore breaking changes that require significant code updates
+    ignore:
+      - dependency-name: "chalk"
+        update-types: ["version-update:semver-major"]
     # Enable auto-merge for patch updates that pass tests
     # Note: This requires branch protection rules with required status checks
     assignees:
