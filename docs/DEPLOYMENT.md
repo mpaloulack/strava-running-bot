@@ -14,6 +14,7 @@ This guide covers deployment scenarios beyond basic development setup. For initi
 ## Prerequisites
 
 Before deploying, ensure you have completed the basic setup from the [main README](../README.md):
+
 - ✅ Discord bot configured
 - ✅ Strava API credentials obtained  
 - ✅ Environment variables configured
@@ -326,7 +327,7 @@ heroku logs --tail
 
 Add `Procfile`:
 
-```
+```text
 web: npm start
 ```
 

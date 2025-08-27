@@ -162,6 +162,7 @@ docker run --rm -v strava-running-bot_bot_data:/data -v $(pwd):/backup alpine ta
 ### Common Issues
 
 1. **Bot won't start**
+
    ```bash
    # Check logs for errors
    docker-compose logs
@@ -171,6 +172,7 @@ docker run --rm -v strava-running-bot_bot_data:/data -v $(pwd):/backup alpine ta
    ```
 
 2. **Permission errors**
+
    ```bash
    # Check file permissions
    ls -la ../
@@ -180,6 +182,7 @@ docker run --rm -v strava-running-bot_bot_data:/data -v $(pwd):/backup alpine ta
    ```
 
 3. **Port conflicts**
+
    ```bash
    # Check what's using port 3000
    netstat -tulpn | grep 3000
@@ -188,6 +191,7 @@ docker run --rm -v strava-running-bot_bot_data:/data -v $(pwd):/backup alpine ta
    ```
 
 4. **Memory issues**
+
    ```bash
    # Check container resources
    docker stats strava-running-bot

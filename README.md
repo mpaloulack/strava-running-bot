@@ -16,12 +16,14 @@ A comprehensive Discord bot that automatically posts Strava activities from your
 ## �🎯 Features
 
 ### 🏃 **Real-time Activity Posting**
+
 - Automatically posts new activities from team members via Strava webhooks
 - Rich Discord embeds with comprehensive activity information
 - Supports all activity types (running, cycling, swimming, etc.)
 - Posts both public and private activities from registered members
 
 ### 📊 **Comprehensive Activity Display**
+
 - **Activity name and description**
 - **Distance, time, and pace**
 - **Grade Adjusted Pace (GAP)** for hill-adjusted performance
@@ -31,6 +33,7 @@ A comprehensive Discord bot that automatically posts Strava activities from your
 - **Activity type-specific styling and icons**
 
 ### 👥 **Team Management**
+
 - Support for 40+ team members with secure token management
 - OAuth2 authentication flow with encrypted token storage
 - Member registration, deactivation, and removal
@@ -38,6 +41,7 @@ A comprehensive Discord bot that automatically posts Strava activities from your
 - Web-based registration system
 
 ### 🎮 **Discord Integration**
+
 - **Slash Commands**: `/members`, `/register`, `/last`, `/botstatus`
 - **Member Management**: Add, remove, activate/deactivate members
 - **Activity Lookup**: View any member's latest activity on-demand
@@ -45,6 +49,7 @@ A comprehensive Discord bot that automatically posts Strava activities from your
 - **Autocomplete**: Smart member name suggestions
 
 ### 🔒 **Security & Reliability**
+
 - Encrypted token storage with AES-256 encryption
 - Non-blocking asynchronous operations
 - Graceful error handling and token refresh
@@ -63,6 +68,7 @@ A comprehensive Discord bot that automatically posts Strava activities from your
 ### Installation
 
 1. **Clone and Setup**
+
    ```bash
    git clone <your-repo-url>
    cd strava-running-bot
@@ -70,17 +76,20 @@ A comprehensive Discord bot that automatically posts Strava activities from your
    ```
 
 2. **Configure Environment**
+
    ```bash
    cp .env.example .env
    # Edit .env with your API credentials (see detailed setup guide below)
    ```
 
 3. **Start Development**
+
    ```bash
    npm run dev
    ```
 
 4. **Deploy with Docker** (Optional)
+
    ```bash
    docker-compose up -d
    ```
@@ -94,12 +103,14 @@ A comprehensive Discord bot that automatically posts Strava activities from your
 ### 1. Discord Bot Setup
 
 #### Step 1: Create a Discord Application
+
 1. Visit [Discord Developer Portal](https://discord.com/developers/applications)
 2. Click **"New Application"** button (top right)
 3. Enter a name for your bot (e.g., "Strava Running Bot")
 4. Click **"Create"**
 
 #### Step 2: Create and Configure the Bot
+
 1. In the left sidebar, click **"Bot"**
 2. Click **"Add Bot"** (if not already created)
 3. Under **"Token"** section:
@@ -108,10 +119,12 @@ A comprehensive Discord bot that automatically posts Strava activities from your
    - Paste this token in your `.env` file as `DISCORD_TOKEN`
 
 #### Step 3: Configure Bot Permissions
+
 1. Still in the Bot section, scroll down to **"Privileged Gateway Intents"**
 2. Enable **"Message Content Intent"** (required for some features)
 
 #### Step 4: Generate Bot Invite Link
+
 1. In the left sidebar, click **"OAuth2"** → **"URL Generator"**
 2. Under **"Scopes"**, select:
    - ✅ `bot`
@@ -126,12 +139,14 @@ A comprehensive Discord bot that automatically posts Strava activities from your
 4. Copy the generated URL at the bottom
 
 #### Step 5: Add Bot to Your Server
+
 1. Open the invite link in your browser
 2. Select your Discord server from the dropdown
 3. Click **"Authorize"**
 4. Complete the CAPTCHA if prompted
 
 #### Step 6: Get Channel ID
+
 1. In Discord, go to **User Settings** (gear icon ⚙️)
 2. Go to **"Advanced"** and enable **"Developer Mode"**
 3. Navigate to the channel where you want the bot to post activities
@@ -142,42 +157,50 @@ A comprehensive Discord bot that automatically posts Strava activities from your
 ### 2. Strava API Setup
 
 #### Step 1: Create Strava API Application
+
 1. Go to [Strava API Settings](https://www.strava.com/settings/api)
 2. Log in with your Strava account (create one if you don't have it)
 3. Click **"Create App"** button
 
 #### Step 2: Fill Application Details
+
 1. **Application Name**: Enter your bot name (e.g., "Strava Running Bot")
 2. **Category**: Select **"Other"**
 3. **Club**: Leave blank (unless you have a specific Strava club)
 4. **Website**: Enter your website URL or GitHub repository URL
 5. **Application Description**: Brief description of your bot
-6. **Authorization Callback Domain**: 
+6. **Authorization Callback Domain**:
    - For **development**: `localhost` or `127.0.0.1`
    - For **production**: Your actual domain (e.g., `yourdomain.com`)
    - ⚠️ **Important**: Don't include `http://` or `https://`, just the domain
 
 #### Step 3: Get API Credentials
+
 1. After creating the app, you'll see your application details
 2. Copy the **"Client ID"** and paste it in your `.env` file as `STRAVA_CLIENT_ID`
 3. Copy the **"Client Secret"** and paste it in your `.env` file as `STRAVA_CLIENT_SECRET`
 4. **⚠️ IMPORTANT**: Keep the Client Secret confidential!
 
 #### Step 4: Generate Webhook Verification Token
+
 1. Generate a secure random token for webhook verification:
+
    ```bash
    node -e "console.log(require('crypto').randomBytes(16).toString('hex'))"
    ```
+
 2. Copy the generated token to your `.env` file as `STRAVA_WEBHOOK_VERIFY_TOKEN`
 3. This token ensures that webhook requests are actually coming from Strava
 
 #### Step 5: Note Your Rate Limits
+
 - Strava API has rate limits: **100 requests per 15 minutes**, **1000 requests per day**
 - The bot automatically handles these limits with proper throttling
 
 ### 3. Environment Configuration
 
 #### Setup Your Environment File
+
 ```bash
 cp .env.example .env
 ```
@@ -185,6 +208,7 @@ cp .env.example .env
 Edit your `.env` file with the credentials obtained from the previous steps. The `.env.example` file contains detailed comments for each variable.
 
 #### Generate Required Keys
+
 ```bash
 # Generate encryption key (required)
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
@@ -199,17 +223,20 @@ node -e "console.log(require('crypto').randomBytes(16).toString('hex'))"
 
 **⚠️ Note**: Webhooks are only needed for production deployment. For development, you can test the bot without webhooks.
 
-#### Prerequisites for Webhook Setup:
+#### Prerequisites for Webhook Setup
+
 - A **public domain** or server accessible from the internet
 - **HTTPS enabled** (Strava requires HTTPS for webhooks)
 - Your bot running on that server
 
 #### Step 1: Verify Your Server is Accessible
+
 1. Deploy your bot to your production server
 2. Ensure it's running on a public domain with HTTPS
 3. Test that `https://yourdomain.com/health` returns a health check response
 
 #### Step 2: Create Webhook Subscription
+
 ```bash
 # Create webhook subscription (replace with your actual domain)
 node utils/setup.js create-webhook https://yourdomain.com/webhook/strava
@@ -218,6 +245,7 @@ node utils/setup.js create-webhook https://yourdomain.com/webhook/strava
 ```
 
 #### Step 3: Verify Webhook Setup
+
 ```bash
 # List existing webhooks to confirm creation
 node utils/setup.js list-webhooks
@@ -226,11 +254,13 @@ node utils/setup.js list-webhooks
 ```
 
 #### Step 4: Test Webhook (Optional)
+
 1. Post a new activity on Strava (or use an existing member's activity)
 2. Check your bot's logs to see if the webhook is received
 3. Verify the activity appears in your Discord channel
 
-#### Webhook Management Commands:
+#### Webhook Management Commands
+
 ```bash
 # List all webhook subscriptions
 node utils/setup.js list-webhooks
@@ -242,7 +272,8 @@ node utils/setup.js delete-webhook SUBSCRIPTION_ID
 node utils/setup.js validate-webhook
 ```
 
-#### Troubleshooting Webhooks:
+#### Troubleshooting Webhooks
+
 - **403 Forbidden**: Check that your `STRAVA_WEBHOOK_VERIFY_TOKEN` matches
 - **404 Not Found**: Verify your server is running and accessible
 - **SSL Certificate Error**: Ensure your domain has valid HTTPS
@@ -270,16 +301,19 @@ node utils/setup.js validate-webhook
 ## 🌐 API Endpoints
 
 ### Health & Status
+
 - `GET /health` - Health check endpoint
 - `GET /members` - List all registered members (JSON)
 
 ### Member Management
+
 - `POST /members/:athleteId/delete` - Remove member by athlete ID
 - `POST /members/discord/:discordId/delete` - Remove member by Discord ID
 - `POST /members/:athleteId/deactivate` - Deactivate member
 - `POST /members/:athleteId/reactivate` - Reactivate member
 
 ### Strava Integration
+
 - `GET /webhook/strava` - Webhook verification endpoint
 - `POST /webhook/strava` - Webhook event receiver
 - `GET /auth/strava` - Start OAuth flow
@@ -300,7 +334,7 @@ curl http://localhost:3000/health
 
 ## 🏗️ Project Architecture
 
-```
+```text
 strava-running-bot/
 ├── src/
 │   ├── discord/
@@ -335,30 +369,35 @@ strava-running-bot/
 ### Key Components
 
 #### **ActivityProcessor**
+
 - Central orchestrator for all bot operations
 - Handles activity processing pipeline
 - Manages Discord and Strava integrations
 - Coordinates member management
 
 #### **DiscordBot**
+
 - Discord.js client wrapper
 - Slash command registration and handling
 - Rich embed generation for activities
 - Event handling and error management
 
 #### **StravaAPI**
+
 - Complete Strava API wrapper
 - OAuth2 authentication flow
 - Activity data processing
 - Rate limiting and error handling
 
 #### **MemberManager**
+
 - Secure member data storage with encryption
 - Token management and refresh
 - Member lifecycle operations
 - Discord user mapping
 
 #### **WebhookServer**
+
 - Express.js server for webhooks and API
 - Strava webhook event processing
 - Member management endpoints
@@ -495,18 +534,21 @@ node utils/setup.js list-webhooks
 ## 🔐 Security Considerations
 
 ### Data Protection
+
 - **Encryption**: All sensitive member data encrypted with AES-256
 - **Token Security**: Secure storage and automatic rotation of API tokens
 - **Access Control**: Permission-based Discord command access
 - **Input Validation**: Comprehensive input validation and sanitization
 
 ### Network Security
+
 - **HTTPS Required**: Production deployment requires HTTPS
 - **Webhook Verification**: Strava webhook signature validation
 - **Rate Limiting**: API rate limiting and abuse prevention
 - **Container Security**: Non-root user and minimal container surface
 
 ### Best Practices
+
 - Regular security updates and dependency management
 - Secure environment variable management
 - Audit logs for administrative actions
@@ -517,6 +559,7 @@ node utils/setup.js list-webhooks
 ### Common Issues
 
 #### Bot Not Responding
+
 ```bash
 # Check bot status
 curl http://localhost:3000/health
@@ -529,6 +572,7 @@ docker-compose logs -f
 ```
 
 #### Member Registration Failing
+
 ```bash
 # Verify Strava credentials
 node utils/setup.js validate
@@ -538,6 +582,7 @@ node utils/setup.js validate
 ```
 
 #### Activities Not Posting
+
 ```bash
 # Check webhook subscription
 node utils/setup.js list-webhooks
@@ -550,6 +595,7 @@ docker-compose logs -f | grep webhook
 ```
 
 #### Token Refresh Errors
+
 ```bash
 # Check member status
 curl http://localhost:3000/members
@@ -591,7 +637,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Running Community** for inspiration and testing
 
 ---
-
 **Built with ❤️ for the running community**
-
 For questions, issues, or contributions, please visit our [GitHub repository](https://github.com/your-repo/strava-running-bot).

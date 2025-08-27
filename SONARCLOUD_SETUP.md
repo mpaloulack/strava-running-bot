@@ -5,6 +5,7 @@ This guide walks you through setting up SonarCloud code quality analysis for the
 ## 🎯 What's Included
 
 ### ✅ Files Already Created
+
 - `sonar-project.properties` - SonarCloud configuration
 - `.github/workflows/sonarcloud.yml` - GitHub Actions workflow
 - `tests/ActivityFormatter.test.js` - Example unit tests
@@ -13,6 +14,7 @@ This guide walks you through setting up SonarCloud code quality analysis for the
 - SonarCloud badges added to README.md
 
 ### 📊 Analysis Features
+
 - **Code quality analysis** on every push and pull request
 - **Security vulnerability detection**
 - **Code coverage reporting** (when tests are added)
@@ -22,21 +24,25 @@ This guide walks you through setting up SonarCloud code quality analysis for the
 ## 🚀 Setup Steps (Manual)
 
 ### Step 1: Create SonarCloud Account
+
 1. Go to [SonarCloud.io](https://sonarcloud.io)
 2. Sign up with your GitHub account
 3. Import your `strava-running-bot` repository
 
 ### Step 2: Configure Organization
+
 1. In SonarCloud, create or select organization: `mmarquet`
 2. The project key should be: `mmarquet_strava-running-bot`
 3. Make sure the project is set to **public** (for free analysis)
 
 ### Step 3: Get SONAR_TOKEN
+
 1. In SonarCloud, go to **My Account > Security**
 2. Generate a new token named "strava-bot-github-actions"
 3. Copy the token (you'll need it in the next step)
 
 ### Step 4: Add GitHub Secret
+
 1. Go to your GitHub repository: `https://github.com/mmarquet/strava-running-bot`
 2. Go to **Settings > Secrets and Variables > Actions**
 3. Click **New repository secret**
@@ -45,6 +51,7 @@ This guide walks you through setting up SonarCloud code quality analysis for the
 6. Click **Add secret**
 
 ### Step 5: Trigger Analysis
+
 1. Push this commit to GitHub
 2. The GitHub Action will automatically run
 3. Check the **Actions** tab to see the workflow progress
@@ -53,24 +60,29 @@ This guide walks you through setting up SonarCloud code quality analysis for the
 ## 🔧 Local Development
 
 ### Install Dependencies
+
 ```bash
 npm install
 ```
 
 ### Run Tests Locally
+
 ```bash
 npm test                # Run tests with coverage
 npm run test:watch      # Run tests in watch mode
 ```
 
 ### Run Linting
+
 ```bash
 npm run lint            # Check code style
 npm run lint:fix        # Fix auto-fixable issues
 ```
 
 ### Manual SonarCloud Analysis (Optional)
+
 If you have SonarCloud CLI installed:
+
 ```bash
 sonar-scanner
 ```
@@ -80,6 +92,7 @@ sonar-scanner
 The SonarCloud analysis will provide:
 
 ### 🎯 Quality Gate Criteria
+
 - **Coverage**: New code coverage > 80%
 - **Duplications**: New code duplication < 3%
 - **Maintainability**: New code maintainability rating = A
@@ -87,6 +100,7 @@ The SonarCloud analysis will provide:
 - **Security**: New code security rating = A
 
 ### 📊 Metrics Tracked
+
 - **Lines of Code**: Total codebase size
 - **Bugs**: Reliability issues that should be fixed
 - **Vulnerabilities**: Security issues requiring attention
@@ -97,6 +111,7 @@ The SonarCloud analysis will provide:
 ## 🎨 README Badges
 
 The following badges are now displayed in README.md:
+
 - **Quality Gate Status**: Overall pass/fail status
 - **Maintainability Rating**: A-E rating for code maintainability  
 - **Security Rating**: A-E rating for security issues
@@ -106,6 +121,7 @@ The following badges are now displayed in README.md:
 ## 🔧 Configuration Details
 
 ### SonarCloud Project Settings
+
 - **Project Key**: `mmarquet_strava-running-bot`
 - **Organization**: `mmarquet`
 - **Source Directory**: `src/`
@@ -113,6 +129,7 @@ The following badges are now displayed in README.md:
 - **Exclusions**: `node_modules`, `coverage`, `docs`
 
 ### GitHub Actions Workflow
+
 - **Triggers**: Push to `strava-running-bot` and `main` branches, pull requests
 - **Node.js Version**: 22
 - **Quality Gate**: Enforced but non-blocking initially
@@ -121,11 +138,13 @@ The following badges are now displayed in README.md:
 ## 🚨 Next Steps
 
 ### Immediate
+
 1. Complete SonarCloud setup following steps above
 2. Verify first analysis runs successfully
 3. Review initial code quality report
 
 ### Future Improvements
+
 1. **Add more tests**: Increase code coverage
 2. **Fix code smells**: Address maintainability issues
 3. **Security review**: Address any security hotspots
@@ -134,14 +153,16 @@ The following badges are now displayed in README.md:
 ## 📞 Troubleshooting
 
 ### Common Issues
+
 1. **SONAR_TOKEN not working**: Regenerate token in SonarCloud
 2. **Quality Gate failing**: Review specific criteria in SonarCloud
 3. **Tests not running**: Check Jest configuration in package.json
 4. **ESLint errors**: Run `npm run lint:fix` to auto-fix issues
 
 ### Support
-- SonarCloud Community: https://community.sonarsource.com/
-- GitHub Actions Docs: https://docs.github.com/en/actions
+
+- SonarCloud Community: <https://community.sonarsource.com/>
+- GitHub Actions Docs: <https://docs.github.com/en/actions>
 
 ---
 
