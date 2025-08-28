@@ -156,7 +156,8 @@ class DiscordBot {
       try {
         await this.client.destroy();
       } catch (_err) {
-        // ignore destroy errors
+        // Log destroy errors but don't fail the shutdown process
+        logger.discord.warn('Error during Discord client destruction:', _err.message);
       }
     }
     logger.discord.info('Discord bot stopped');
