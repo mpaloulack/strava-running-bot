@@ -1,7 +1,8 @@
 version: '3.8'
-
 services:
   strava-running-bot:
+    # Use prebuilt image if DOCKER_IMAGE is set, otherwise use build
+    image: ${DOCKER_IMAGE:-}
     build:
       context: .
       dockerfile: Dockerfile
@@ -11,24 +12,24 @@ services:
     # Environment variables (override with .env file)
     environment:
       - NODE_ENV=production
-      - PORT=3000
+      - PORT=${PORT:-3000}
     
     # Load environment variables from .env file
     env_file:
       - .env
     
-    # Port mapping
+    # Port mapping - use host PORT from .env (fallback to 3000)
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:3000"
     
     # Volume for persistent data storage
     volumes:
       - bot_data:/app/data
       - ./logs:/app/logs:rw
     
-    # Health check
+    # Health check (runs inside the container, use container PORT)
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:${PORT:-3000}/health"]
       interval: 30s
       timeout: 10s
       retries: 3
