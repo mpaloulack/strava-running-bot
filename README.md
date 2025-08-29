@@ -91,7 +91,7 @@ A comprehensive Discord bot that automatically posts Strava activities from your
 4. **Deploy with Docker** (Optional)
 
    ```bash
-   docker compose -f docker/docker-compose.yml up -d
+   docker compose -f docker-compose.yml up -d
    ```
 
 > **💡 Need help getting credentials?** Follow the [Complete Setup Guide](#-complete-setup-guide) below for detailed instructions.
@@ -355,7 +355,7 @@ strava-running-bot/
 ├── data/                       # Member data storage (encrypted)
 ├── logs/                       # Application logs
 ├── .env.example                # Environment variables template
-├── docker/
+├── 
 │   ├── docker-compose.yml      # Docker deployment configuration
 │   └── Dockerfile              # Container image definition
 └── README.md                   # This documentation
@@ -448,26 +448,46 @@ strava-running-bot/
 
 ```bash
 # Start with Docker Compose
-docker compose -f docker/docker-compose.yml up -d
+docker compose -f docker-compose.yml up -d
 
 # View logs
-docker compose -f docker/docker-compose.yml logs -f
+docker compose -f docker-compose.yml logs -f
 
 # Check status
-docker compose -f docker/docker-compose.yml ps
+docker compose -f docker-compose.yml ps
 ```
 
-### Production Deployment
+### Production deployment (docker-compose.prod.yml) — separate usage
+The docker-compose.prod.yml file is optional and intended to run a pre-built image (for example, ghcr.io/<owner>/strava-running-bot:latest) on your server. Benefits:
+- No build on the server — faster and reproducible.
+- Works well with Watchtower for automatic updates.
 
-For production deployment on a NAS or server:
+When to use it
+- You build and push the image from CI (e.g. GitHub Actions → GHCR).
+- Your server can pull the image from GHCR (public or authenticated).
 
-1. **Configure Environment**: Set `NODE_ENV=production` in `.env`
-2. **Resource Limits**: Adjust memory/CPU limits in `docker/docker-compose.yml`
-3. **Domain Setup**: Configure domain and HTTPS for webhooks
-4. **Monitoring**: Set up log monitoring and alerting
-5. **Backups**: Regular backup of member data volume
+Server usage examples
+1. Place your `.env` file on the server (do not commit it).
+2. Using the image defined in docker-compose.prod.yml:
+   - docker compose -f docker-compose.prod.yml pull
+   - docker compose -f docker-compose.prod.yml up -d
+3. To force a specific image (override):
+   - DOCKER_IMAGE="ghcr.io/youruser/strava-running-bot:latest" docker compose -f docker-compose.yml up -d
+   (The primary docker-compose.yml supports DOCKER_IMAGE as an override)
 
-See [docs/DOCKER_DEPLOYMENT.md](./docs/DOCKER_DEPLOYMENT.md) for detailed Docker deployment instructions.
+Watchtower (automatic updates)
+- If Watchtower monitors your GHCR image, it will detect new image tags and pull/restart the container automatically.
+- Minimal Watchtower example (run on same host):
+  docker run -d --name watchtower \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    containrrr/watchtower \
+    --cleanup --interval 300 \
+    ghcr.io/youruser/strava-running-bot:latest
+
+Security / best practices
+- Keep `.env` out of the repository and restrict its permissions.
+- If GHCR is private, configure `docker login ghcr.io` on the server for pull authentication.
+- Watchtower may need access to credentials for private images.
 
 ## 📊 Monitoring & Maintenance
 
@@ -481,7 +501,7 @@ curl http://localhost:3000/health
 curl http://localhost:3000/members
 
 # Check Docker health
-docker compose -f docker/docker-compose.yml ps
+docker compose -f docker-compose.yml ps
 ```
 
 ### Logs
@@ -491,10 +511,10 @@ docker compose -f docker/docker-compose.yml ps
 npm run dev
 
 # Docker
-docker compose -f docker/docker-compose.yml logs -f
+docker compose -f docker-compose.yml logs -f
 
 # Specific timeframe
-docker compose -f docker/docker-compose.yml logs --since="1h"
+docker compose -f docker-compose.yml logs --since="1h"
 ```
 
 ### Maintenance Tasks
@@ -580,7 +600,7 @@ node utils/setup.js list-webhooks
 curl http://localhost:3000/health
 
 # View logs
-docker compose -f docker/docker-compose.yml logs -f
+docker compose -f docker-compose.yml logs -f
 
 # Verify Discord permissions
 # Check bot invite URL and server permissions
@@ -606,7 +626,7 @@ node utils/setup.js list-webhooks
 curl http://localhost:3000/members
 
 # Check webhook logs
-docker compose -f docker/docker-compose.yml logs -f | grep webhook
+docker compose -f docker-compose.yml logs -f | grep webhook
 ```
 
 #### Token Refresh Errors
@@ -649,6 +669,18 @@ For additional support:
 
 ## 📄 License
 
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🏆 Acknowledgments
+
+- **Strava API** for providing comprehensive fitness data access
+- **Discord.js** for excellent Discord bot development framework
+- **Node.js Community** for robust ecosystem and best practices
+- **Running Community** for inspiration and testing
+
+---
+**Built with ❤️ for the running community**
+For questions, issues, or contributions, please visit our [GitHub repository](https://github.com/your-repo/strava-running-bot).
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## 🏆 Acknowledgments
