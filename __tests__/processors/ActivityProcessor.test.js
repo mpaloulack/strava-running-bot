@@ -49,7 +49,8 @@ describe('ActivityProcessor', () => {
       refresh_token: 'test_refresh_token',
       expires_at: Math.floor(Date.now() / 1000) + 3600
     },
-    isActive: true
+    isActive: true,
+    canViewPrivateActivity: false
   };
 
   const mockActivity = {
@@ -178,7 +179,10 @@ describe('ActivityProcessor', () => {
       expect(mockMemberManager.getMemberByAthleteId).toHaveBeenCalledWith(12345);
       expect(mockMemberManager.getValidAccessToken).toHaveBeenCalledWith(mockMember);
       expect(mockStravaAPI.getActivity).toHaveBeenCalledWith(98765, 'valid_token');
-      expect(mockStravaAPI.shouldPostActivity).toHaveBeenCalledWith(mockActivity);
+      expect(mockStravaAPI.shouldPostActivity).toHaveBeenCalledWith(
+        mockActivity,
+        { canViewPrivateActivity: mockMember.canViewPrivateActivity }
+      );
       expect(mockStravaAPI.processActivityData).toHaveBeenCalledWith(
         mockActivity,
         expect.objectContaining({ ...mockMember.athlete, discordUser: mockMember.discordUser })
@@ -650,7 +654,10 @@ describe('ActivityProcessor', () => {
 
       await activityProcessor.processNewActivity(98765, 12345);
 
-      expect(mockStravaAPI.shouldPostActivity).toHaveBeenCalledWith(null);
+      expect(mockStravaAPI.shouldPostActivity).toHaveBeenCalledWith(
+        null,
+        { canViewPrivateActivity: mockMember.canViewPrivateActivity }
+      );
       expect(logger.activityProcessing).toHaveBeenCalledWith(98765, 12345, 'UNKNOWN', 'FAILED', expect.any(Object));
     });
 

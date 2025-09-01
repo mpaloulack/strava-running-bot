@@ -87,8 +87,21 @@ class DiscordBot {
         count: data.length,
         commands: data.map(cmd => cmd.name)
       });
+
+      // Log the full command objects for debugging
+      logger.discord.info('Registered command definitions:', commands);
+
     } catch (error) {
-      logger.discord.error('Error registering Discord commands', error);
+      logger.discord.error('Error registering Discord commands', {
+        message: error.message,
+        stack: error.stack,
+        commands: this.commands.getCommands().map(cmd => {
+          // Some commands may be objects, not SlashCommandBuilder
+          if (typeof cmd.toJSON === 'function') return cmd.toJSON();
+          if (cmd.data && typeof cmd.data.toJSON === 'function') return cmd.data.toJSON();
+          return cmd;
+        })
+      });
       throw error;
     }
   }

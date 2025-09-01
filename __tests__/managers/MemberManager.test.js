@@ -713,3 +713,78 @@ describe('MemberManager', () => {
     });
   });
 });
+
+describe('MemberManager additional tests', () => {
+  let mgr;
+  const sampleAthlete = {
+    id: 555,
+    firstname: 'Alice',
+    lastname: 'Runner',
+    profile: 'url',
+    profile_medium: 'url',
+    city: 'City',
+    state: 'State',
+    country: 'Country',
+    sex: 'F',
+    premium: false,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+  const mockDiscordUser = { id: 'D1', username: 'alice', displayName: 'Alice' };
+  const tokenData = { access_token: 'a', refresh_token: 'r', expires_at: Math.floor(Date.now()/1000)+7200, token_type: 'Bearer' };
+
+  beforeEach(() => {
+    jest.resetModules();
+    mgr = new MemberManager();
+    // prevent any fs writes from saveMembersAsync
+    mgr.saveMembersAsync = jest.fn();
+  });
+
+  it('registerMember stores and maps member correctly', async () => {
+    const member = await mgr.registerMember('D1', sampleAthlete, tokenData, mockDiscordUser);
+    expect(mgr.members.get(sampleAthlete.id.toString())).toBeDefined();
+    expect(mgr.discordToStrava.get('D1')).toBe(sampleAthlete.id.toString());
+    expect(member.tokens.access_token).toBe(tokenData.access_token);
+  });
+
+  it('togglePrivateActivity flips value and returns new value', async () => {
+    const member = await mgr.registerMember('D2', { ...sampleAthlete, id: 777 }, tokenData, mockDiscordUser);
+    // initial is false
+    expect(member.canViewPrivateActivity).toBe(false);
+    const newValue = await mgr.togglePrivateActivity('D2');
+    expect(newValue).toBe(true);
+    const second = await mgr.togglePrivateActivity('D2');
+    expect(second).toBe(false);
+  });
+
+  it('encrypt and decrypt member tokens roundtrip when encryption key present', () => {
+    const originalKey = config.security?.encryptionKey;
+    // set temporary key (32 bytes hex)
+    config.security = config.security || {};
+    config.security.encryptionKey = 'a'.repeat(64);
+
+    const member = {
+      tokens: { access_token: 'X', refresh_token: 'Y' }
+    };
+    const encrypted = mgr.encryptMemberData(member);
+    expect(encrypted.tokens).toHaveProperty('encrypted');
+    expect(encrypted.tokens).toHaveProperty('iv');
+    expect(encrypted.tokens).toHaveProperty('authTag');
+
+    const decrypted = mgr.decryptMemberData(encrypted);
+    expect(decrypted.tokens.access_token).toBe('X');
+    expect(decrypted.tokens.refresh_token).toBe('Y');
+
+    // restore
+    if (originalKey) config.security.encryptionKey = originalKey;
+    else delete config.security.encryptionKey;
+  });
+
+  it('removeMember deletes member and mapping', async () => {
+    const m = await mgr.registerMember('D3', { ...sampleAthlete, id: 888 }, tokenData, mockDiscordUser);
+    const removed = await mgr.removeMember(888);
+    expect(removed).toBeDefined();
+    expect(mgr.members.get('888')).toBeUndefined();
+    expect(mgr.discordToStrava.get('D3')).toBeUndefined();
+  });
+});

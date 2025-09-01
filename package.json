@@ -1,6 +1,6 @@
 {
   "name": "strava-running-bot",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Discord bot that displays Strava activities from running team members",
   "main": "src/index.js",
   "scripts": {
@@ -8,6 +8,7 @@
     "dev": "nodemon src/index.js",
     "test": "jest --coverage",
     "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage --coverageDirectory=coverage",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix"
   },

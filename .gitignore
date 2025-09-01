@@ -28,6 +28,9 @@ coverage/
 logs
 *.log
 
+data
+./data
+members.json
 # Runtime data
 tmp/
 temp/

@@ -97,7 +97,7 @@ class ActivityQueue {
       }
 
       const memberName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
-
+      
       // Get valid access token
       const accessToken = await this.activityProcessor.memberManager.getValidAccessToken(member);
       if (!accessToken) {
@@ -119,7 +119,7 @@ class ActivityQueue {
       const activity = await this.activityProcessor.stravaAPI.getActivity(activityId, accessToken);
       
       // Check if activity should still be posted (might have been made private, etc.)
-      if (!this.activityProcessor.stravaAPI.shouldPostActivity(activity)) {
+      if (!this.activityProcessor.stravaAPI.shouldPostActivity(activity,{canViewPrivateActivity: member.canViewPrivateActivity})) {
         logger.activity.info('Activity no longer meets posting criteria, skipping', {
           activityId,
           activityName: activity.name,

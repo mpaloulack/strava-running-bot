@@ -585,6 +585,11 @@ describe('StravaAPI', () => {
         expect(stravaAPI.shouldPostActivity(flaggedActivity)).toBe(false);
         expect(logger.strava.debug).toHaveBeenCalledWith('Skipping flagged activity', expect.any(Object));
       });
+
+      it('should allow private activities when caller can view private (options object)', () => {
+        const privateActivity = { ...baseActivity, private: true };
+        expect(stravaAPI.shouldPostActivity(privateActivity, { canViewPrivateActivity: true })).toBe(true);
+      });
     });
 
     describe('age filters', () => {

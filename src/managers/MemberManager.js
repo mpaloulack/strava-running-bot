@@ -22,6 +22,8 @@ class MemberManager {
       // Decrypt and restore member data
       for (const member of memberData.members) {
         const decryptedMember = this.decryptMemberData(member);
+        // Ensure new flag is present (backwards compatibility)
+        decryptedMember.sharePrivateActivities = !!decryptedMember.sharePrivateActivities;
         this.members.set(decryptedMember.athlete.id.toString(), decryptedMember);
         
         if (decryptedMember.discordUserId) {
@@ -122,6 +124,7 @@ class MemberManager {
         expires_in: tokenData.expires_in,
         token_type: tokenData.token_type
       },
+      canViewPrivateActivity: false,
       registeredAt: new Date().toISOString(),
       lastTokenRefresh: new Date().toISOString(),
       isActive: true
@@ -375,6 +378,17 @@ class MemberManager {
         return registeredAt > weekAgo;
       }).length
     };
+  }
+
+  // Toggle canViewPrivateActivity for a member by Discord user ID
+  async togglePrivateActivity(discordUserId) {
+    const athleteId = this.discordToStrava.get(discordUserId);
+    if (!athleteId) return null;
+    const member = this.members.get(athleteId);
+    if (!member) return null;
+    member.canViewPrivateActivity = !member.canViewPrivateActivity;
+    this.saveMembersAsync();
+    return member.canViewPrivateActivity;
   }
 }
 
