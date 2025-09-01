@@ -550,9 +550,8 @@ class DiscordCommands {
           accessToken
         );
 
-        const shouldPostActivity = this.activityProcessor.stravaAPI.shouldPostActivity(detailedActivity, member.canViewPrivateActivity, { skipAgeFilter: true })
+        const shouldPostActivity = this.activityProcessor.stravaAPI.shouldPostActivity(detailedActivity, { canViewPrivateActivity: member.canViewPrivateActivity, skipAgeFilter: true });
 
-        console.log('Checking activity visibility', { activityId: detailedActivity.id, shouldPostActivity });
         // Check if this activity can be displayed (respects privacy settings, skip age filter for /last command)
         if (shouldPostActivity) {
           logger.discord.debug('Found public activity', { activityId: detailedActivity.id });

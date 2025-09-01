@@ -37,7 +37,8 @@ describe('ActivityQueue', () => {
     },
     tokens: {
       access_token: 'test_access_token'
-    }
+    },
+    canViewPrivateActivity: false,
   };
 
   const mockActivity = {
@@ -206,7 +207,10 @@ describe('ActivityQueue', () => {
       expect(mockMemberManager.getMemberByAthleteId).toHaveBeenCalledWith(athleteId);
       expect(mockMemberManager.getValidAccessToken).toHaveBeenCalledWith(mockMember);
       expect(mockStravaAPI.getActivity).toHaveBeenCalledWith(activityId, 'valid_token');
-      expect(mockStravaAPI.shouldPostActivity).toHaveBeenCalledWith(mockActivity);
+      expect(mockStravaAPI.shouldPostActivity).toHaveBeenCalledWith(
+        mockActivity,
+        { canViewPrivateActivity: mockMember.canViewPrivateActivity }
+      );
       expect(mockStravaAPI.processActivityData).toHaveBeenCalledWith(
         mockActivity,
         expect.objectContaining({
