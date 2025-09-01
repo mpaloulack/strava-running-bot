@@ -94,15 +94,23 @@ class MemberManager {
   async registerMember(discordUserId, athlete, tokenData, discordUser = null) {
     const athleteId = athlete.id.toString();
     
+    // Normalize discord user id: prefer explicit param but fall back to discordUser.id when available
+    const resolvedDiscordUserId = discordUserId || (discordUser && (discordUser.id || discordUser.userId)) || null;
+    
+    // Normalize discord user object and guard against missing methods/properties
+    const normalizedDiscordUser = discordUser ? {
+      username: discordUser.username || null,
+      displayName: discordUser.displayName || discordUser.globalName || discordUser.username || null,
+      discriminator: discordUser.discriminator || null,
+      avatar: discordUser.avatar || null,
+      avatarURL: (typeof discordUser.displayAvatarURL === 'function')
+        ? discordUser.displayAvatarURL()
+        : (discordUser.avatarURL || null)
+    } : null;
+
     const member = {
-      discordUserId: discordUserId,
-      discordUser: discordUser ? {
-        username: discordUser.username,
-        displayName: discordUser.displayName || discordUser.globalName || discordUser.username,
-        discriminator: discordUser.discriminator,
-        avatar: discordUser.avatar,
-        avatarURL: discordUser.displayAvatarURL ? discordUser.displayAvatarURL() : null
-      } : null,
+      discordUserId: resolvedDiscordUserId,
+      discordUser: normalizedDiscordUser,
       athlete: {
         id: athlete.id,
         firstname: athlete.firstname,
@@ -131,12 +139,15 @@ class MemberManager {
     };
 
     this.members.set(athleteId, member);
-    this.discordToStrava.set(discordUserId, athleteId);
+    // Only map discord -> athlete when we actually have a resolved discord user id
+    if (resolvedDiscordUserId) {
+      this.discordToStrava.set(resolvedDiscordUserId, athleteId);
+    }
     
     // Save asynchronously without blocking
     this.saveMembersAsync();
     
-    const displayName = discordUser ? discordUser.displayName || discordUser.username : discordUserId;
+    const displayName = normalizedDiscordUser ? (normalizedDiscordUser.displayName || normalizedDiscordUser.username) : (resolvedDiscordUserId || discordUserId || athleteId);
     logger.memberAction('REGISTERED', `${athlete.firstname} ${athlete.lastname}`, discordUserId, athleteId, {
       displayName,
       registeredAt: member.registeredAt

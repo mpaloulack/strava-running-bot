@@ -295,6 +295,30 @@ describe('MemberManager', () => {
       expect(member.discordUser).toBeNull();
       expect(member.discordUserId).toBe(mockMember.discordUserId);
     });
+
+    it('registerMember creates mapping when only discordUser object with id is provided', async () => {
+      const discordUserObj = { id: 'DU_ONLY', username: 'duuser', displayName: 'DU User', avatar: null };
+      const athlete = { ...mockMember.athlete, id: 9999 };
+      const member = await memberManager.registerMember(undefined, athlete, mockMember.tokens, discordUserObj);
+
+      expect(member).toBeDefined();
+      expect(member.discordUserId).toBe('DU_ONLY');
+      expect(member.discordUser.displayName).toBe('DU User');
+      // mapping should be created using the id from the discordUser object
+      expect(memberManager.discordToStrava.get('DU_ONLY')).toBe(athlete.id.toString());
+    });
+
+    it('registerMember does not create mapping when no discordUserId and no discordUser provided', async () => {
+      const athlete = { ...mockMember.athlete, id: 10000 };
+      const member = await memberManager.registerMember(null, athlete, mockMember.tokens, null);
+
+      expect(member).toBeDefined();
+      expect(member.discordUserId).toBeNull();
+      expect(member.discordUser).toBeNull();
+      // Ensure no mapping exists for this athlete under a discord id
+      const found = Array.from(memberManager.discordToStrava.values()).includes(athlete.id.toString());
+      expect(found).toBe(false);
+    });
   });
 
   describe('getMemberByAthleteId', () => {
