@@ -1,8 +1,9 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const ActivityEmbedBuilder = require('../utils/EmbedBuilder');
 const DiscordUtils = require('../utils/DiscordUtils');
 const logger = require('../utils/Logger');
 const config = require('../../config/config');
+const { togglePrivateActivity } = require('../managers/MemberManager');
 
 class DiscordCommands {
   constructor(activityProcessor) {
@@ -54,6 +55,11 @@ class DiscordCommands {
                 .setRequired(true)
             )
         )
+        .addSubcommand(subcommand =>
+          subcommand
+            .setName('toggleprivateactivity')
+            .setDescription('Toggle private activity visibility for a team member')
+        )
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
       // Register command
@@ -78,8 +84,16 @@ class DiscordCommands {
             .setDescription('Team member name (first name, last name, or @mention)')
             .setRequired(true)
             .setAutocomplete(true)
-        )
+        ),
+
+      // Toggle private activity command (top-level)
+      new SlashCommandBuilder()
+        .setName('toggleprivateactivity')
+        .setDescription('Toggle your ability to view your private Strava activities'),
+
     ];
+  
+    
   }
 
   // Handle slash command interactions
@@ -107,6 +121,9 @@ class DiscordCommands {
         break;
       case 'last':
         await this.handleLastActivityCommand(interaction, options);
+        break;
+      case 'toggleprivateactivity':
+        await this.handleTogglePrivateActivityCommand(interaction);
         break;
       default:
         await interaction.reply({ 
@@ -149,6 +166,9 @@ class DiscordCommands {
       break;
     case 'reactivate':
       await this.reactivateMember(interaction, options);
+      break;
+    case 'toggleprivateactivity':
+      await this.handleTogglePrivateActivityCommand(interaction);
       break;
     }
   }
@@ -417,7 +437,7 @@ class DiscordCommands {
       })
       .setTimestamp();
 
-    await interaction.reply({ embeds: [embed] });
+    await interaction.reply({ embeds: [embed], ephemeral: true });
   }
 
 
@@ -506,11 +526,11 @@ class DiscordCommands {
         return;
       }
 
-      // Fetch their latest activities (get more to find latest public one)
+      // Fetch their latest activities (get more to find latest public activity)
       const activities = await this.activityProcessor.stravaAPI.getAthleteActivities(
         accessToken,
         1, // page
-        10  // get up to 10 to find latest public activity
+        10,  // get up to 10 to find latest public activity
       );
 
       if (!activities || activities.length === 0) {
@@ -530,8 +550,12 @@ class DiscordCommands {
           accessToken
         );
 
+        const shouldPostActivity = this.activityProcessor.stravaAPI.shouldPostActivity(detailedActivity, member.canViewPrivateActivity, { skipAgeFilter: true })
+
+        console.log('Checking activity visibility', { activityId: detailedActivity.id, shouldPostActivity });
         // Check if this activity can be displayed (respects privacy settings, skip age filter for /last command)
-        if (this.activityProcessor.stravaAPI.shouldPostActivity(detailedActivity, { skipAgeFilter: true })) {
+        if (shouldPostActivity) {
+          logger.discord.debug('Found public activity', { activityId: detailedActivity.id });
           publicActivity = detailedActivity;
           break; // Found the latest public activity
         }
@@ -587,7 +611,7 @@ class DiscordCommands {
       const firstName = member.athlete.firstname.toLowerCase();
       const lastName = member.athlete.lastname.toLowerCase();
       const fullName = `${firstName} ${lastName}`;
-      
+
       return discordName.includes(searchTerm) || 
              discordName === searchTerm ||
              firstName.includes(searchTerm) || 
@@ -637,6 +661,26 @@ class DiscordCommands {
     }
   }
 
+  // Add the handler for toggleUserPrivateActivity
+  async handleTogglePrivateActivityCommand(interaction) {
+    const memberManager = this.activityProcessor.memberManager;
+    const discordId = interaction.user.id;
+    const member = await memberManager.getMemberByDiscordId(discordId);
+
+    if (!member) {
+      await interaction.reply({ content: 'You are not registered.', ephemeral: true });
+      return;
+    }
+
+    const newValue = await memberManager.togglePrivateActivity(discordId);
+
+    await interaction.reply({
+      content: newValue
+        ? '✅ You can now view your private Strava activities.'
+        : '❌ You can no longer view your private Strava activities.',
+      ephemeral: true
+    });
+  }
 }
 
 module.exports = DiscordCommands;

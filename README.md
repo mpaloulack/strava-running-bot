@@ -39,6 +39,7 @@ A comprehensive Discord bot that automatically posts Strava activities from your
 - Member registration, deactivation, and removal
 - Discord slash commands for easy team management
 - Web-based registration system
+- **Per-member private activity access control** (`canViewPrivateActivity` flag, self-toggle only)
 
 ### 🎮 **Discord Integration**
 
@@ -244,6 +245,65 @@ node utils/setup.js create-webhook https://yourdomain.com/webhook/strava
 # This will register your server to receive activity updates from Strava
 ```
 
+#### Create webhook via Docker (recommended)
+Make sure your server at BASE_URL is reachable by Strava (HTTPS) before running these.
+
+- If the container is already running:
+  ```bash
+  # runs the setup script inside the running container
+  docker compose -f docker-compose.yml exec strava-running-bot \
+    node utils/setup.js create-webhook https://bot.wazany.fr/webhook/strava
+  ```
+
+- If the container is not running (one-off run with compose, uses env_file from compose):
+  ```bash
+  # runs the setup script in a temporary container (no service startup)
+  docker compose -f docker-compose.yml run --rm --no-deps \
+    --entrypoint node strava-running-bot \
+    utils/setup.js create-webhook https://bot.wazany.fr/webhook/strava
+  ```
+
+- Using the built image directly (ensure .env or env vars are provided):
+  ```bash
+  docker run --rm --env-file .env \
+    ghcr.io/your-gh-user/strava-running-bot:latest \
+    node utils/setup.js create-webhook https://bot.wazany.fr/webhook/strava
+  ```
+
+Notes:
+- The script needs correct env vars (STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, STRAVA_WEBHOOK_VERIFY_TOKEN, BASE_URL). Provide them via .env, compose env, or docker --env / --env-file.
+- Strava will perform a verification request to the callback URL; your app must respond correctly for the webhook to be created.
+
+#### Create webhook via Docker (direct docker exec)
+If you prefer not to use docker compose, you can call the setup script directly with docker:
+
+- Find the container (if running):
+  ```bash
+  docker ps
+  ```
+
+- Run the setup script inside an already running container:
+  ```bash
+  docker exec -it strava-running-bot \
+    node utils/setup.js create-webhook https://bot.wazany.fr/webhook/strava
+  ```
+  - If you need to run as the non-root user created in the image:
+    ```bash
+    docker exec -u botuser -it strava-running-bot \
+      node utils/setup.js create-webhook https://bot.wazany.fr/webhook/strava
+    ```
+
+- If the container is not running, run a one‑off container (ensure env vars are provided via --env or --env-file):
+  ```bash
+  docker run --rm --env-file .env \
+    ghcr.io/your-gh-user/strava-running-bot:latest \
+    node utils/setup.js create-webhook https://bot.wazany.fr/webhook/strava
+  ```
+
+Notes:
+- The script requires STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, STRAVA_WEBHOOK_VERIFY_TOKEN and BASE_URL to be available inside the container. Using docker exec against a running container inherits its environment. For one‑off runs provide them with --env or --env-file.
+- Strava will perform a verification request to the callback URL; ensure your app/endpoint is reachable (HTTPS) and responds correctly.
+
 #### Step 3: Verify Webhook Setup
 
 ```bash
@@ -280,6 +340,9 @@ node utils/setup.js validate-webhook
 |---------|-------------|-------|
 | `/register` | Register yourself with Strava | `/register` |
 | `/last` | Show last activity from a member | `/last member: John` |
+| `/toggleprivateactivity` | Toggle your ability to view your private Strava activities | `/toggleprivateactivity` |
+
+> Only you can toggle your own private activities. Admins cannot change this for you.
 
 ### Admin Commands (Manage Server Permission Required)
 

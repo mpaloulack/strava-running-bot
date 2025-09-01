@@ -224,10 +224,11 @@ class StravaAPI {
 
   // Check if activity should be posted (filters)
   // skipAgeFilter: if true, don't filter activities older than 24 hours (for /last command)
-  shouldPostActivity(activity, options = {}) {
+  shouldPostActivity(activity,sharePrivateActivities, options = {}) {
     const { skipAgeFilter = false } = options;
+    console.log("shouldPostActivity", activity.private, activity.visibility, activity.hide_from_home , sharePrivateActivities);
     // Skip if activity is not public (private or followers-only)
-    if (activity.private === true) {
+    if (activity.private === true && !sharePrivateActivities) {
       logger.strava.debug('Skipping private activity', {
         name: activity.name,
         private: activity.private,
@@ -241,7 +242,7 @@ class StravaAPI {
     // - null/undefined or 'everyone' = public
     // - 'followers_only' = visible to followers only  
     // - private: true = private
-    if (activity.visibility === 'followers_only') {
+    if (activity.visibility === 'followers_only' && !sharePrivateActivities) {
       logger.strava.debug('Skipping followers-only activity', {
         name: activity.name,
         visibility: activity.visibility,
@@ -251,7 +252,7 @@ class StravaAPI {
     }
 
     // Skip if activity is hidden from home feed
-    if (activity.hide_from_home === true) {
+    if (activity.hide_from_home === true && !sharePrivateActivities) {
       logger.strava.debug('Skipping activity hidden from home feed', {
         name: activity.name,
         hideFromHome: activity.hide_from_home,

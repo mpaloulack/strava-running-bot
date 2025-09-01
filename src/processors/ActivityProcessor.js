@@ -75,7 +75,7 @@ class ActivityProcessor {
       const activity = await this.stravaAPI.getActivity(activityId, accessToken);
       
       // Check if activity should be posted
-      if (!this.stravaAPI.shouldPostActivity(activity)) {
+      if (!this.stravaAPI.shouldPostActivity(activity, member.canViewPrivateActivity)) {
         logger.activityProcessing(activityId, athleteId, activity.name, 'FILTERED', {
           reason: 'Activity filtered by posting rules'
         });

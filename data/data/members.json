@@ -1,0 +1,39 @@
+{
+  "version": "1.0",
+  "savedAt": "2025-09-01T11:42:52.465Z",
+  "members": [
+    {
+      "discordUserId": "127141538991046656",
+      "discordUser": {
+        "username": "wazany",
+        "displayName": "Wazany",
+        "discriminator": "0",
+        "avatar": "ea56098cd6ff31982d4c71ae1c0feef8",
+        "avatarURL": "https://cdn.discordapp.com/avatars/127141538991046656/ea56098cd6ff31982d4c71ae1c0feef8.webp"
+      },
+      "athlete": {
+        "id": 882231,
+        "firstname": "Maxime",
+        "lastname": "P",
+        "profile": "https://dgalywyr863hv.cloudfront.net/pictures/athletes/882231/6486418/2/large.jpg",
+        "profile_medium": "https://dgalywyr863hv.cloudfront.net/pictures/athletes/882231/6486418/2/medium.jpg",
+        "city": "Montréal",
+        "state": "Quebec",
+        "country": "Canada",
+        "sex": "M",
+        "premium": true,
+        "created_at": "2012-08-02T09:01:14Z",
+        "updated_at": "2024-09-19T23:09:20Z"
+      },
+      "tokens": {
+        "encrypted": "c31a9cc8022479d7643f7afa66e8ce0998596959ff055d976d27d6c6aa300e652e2faf4315fab27a8b9df9f81a0c6dd0dec9bf1d3354592eb974978724490cb26e69d3c633d27f5e848f256bedb5c7752baa065f598f7c2ef731e29b6fab3ab8d15fbcd316d22ab454e4f399e30d7089563597328d82f1eb01aa9d19d24ae719c766a851d51d780baef12227bae72d067f139b93e4fb64b3be8f99f9eb04ad22a1e8635043de1cdeb48d557961476df35c5517cfe41655",
+        "iv": "6e6cf6ae1326c24a8ac55d78282ff0af",
+        "authTag": "86417bde4bcf2fdeffb9b8d7d522d7a6"
+      },
+      "registeredAt": "2025-08-31T22:38:38.188Z",
+      "lastTokenRefresh": "2025-09-01T11:41:41.063Z",
+      "isActive": true,
+      "canViewPrivateActivity": true
+    }
+  ]
+}
