@@ -136,7 +136,7 @@ describe('DatabaseManager', () => {
     // Clean up test directory
     try {
       await fs.rm(testDataDir, { recursive: true, force: true });
-    } catch (error) {
+    } catch (_error) {
       // Ignore cleanup errors
     }
   });
@@ -922,4 +922,229 @@ describe('DatabaseManager', () => {
 
   // Note: JSON migration methods (migrateFromJson, migrateSingleMember) are complex
   // and depend on file system operations. These are better tested with integration tests.
+
+  describe('upsertActivity', () => {
+    beforeEach(() => {
+      DatabaseManager.isInitialized = true;
+      DatabaseManager.db = mockDb;
+    });
+
+    const mockActivity = {
+      id: 98765,
+      name: 'Morning Run',
+      type: 'Run',
+      sport_type: 'Run',
+      distance: 5000.5,
+      moving_time: 1800,
+      elapsed_time: 1850,
+      total_elevation_gain: 50.3,
+      average_speed: 2.77,
+      max_speed: 3.5,
+      average_heartrate: 145.2,
+      max_heartrate: 170,
+      start_date: '2026-03-19T07:00:00Z',
+      start_date_local: '2026-03-19T08:00:00+01:00',
+      timezone: 'Europe/Paris',
+      map: { summary_polyline: 'abcdef123' },
+      has_heartrate: true,
+    };
+
+    it('should insert a new activity with all mapped fields', async () => {
+      const mockInsertChain = {
+        values: jest.fn().mockReturnThis(),
+        onConflictDoUpdate: jest.fn().mockResolvedValue(undefined),
+      };
+      mockDb.insert.mockReturnValue(mockInsertChain);
+
+      await DatabaseManager.upsertActivity(12345, mockActivity);
+
+      expect(mockDb.insert).toHaveBeenCalled();
+      expect(mockInsertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({
+          strava_activity_id: '98765',
+          member_athlete_id: 12345,
+          name: 'Morning Run',
+          type: 'Run',
+          sport_type: 'Run',
+          distance: 5000.5,
+          moving_time: 1800,
+          elapsed_time: 1850,
+          total_elevation_gain: 50.3,
+          average_speed: 2.77,
+          max_speed: 3.5,
+          average_heartrate: 145.2,
+          max_heartrate: 170,
+          start_date: '2026-03-19T07:00:00Z',
+          start_date_local: '2026-03-19T08:00:00+01:00',
+          timezone: 'Europe/Paris',
+          map_summary_polyline: 'abcdef123',
+          has_heartrate: 1,
+        })
+      );
+      expect(mockInsertChain.onConflictDoUpdate).toHaveBeenCalled();
+    });
+
+    it('should convert activity.id to string for strava_activity_id', async () => {
+      const mockInsertChain = {
+        values: jest.fn().mockReturnThis(),
+        onConflictDoUpdate: jest.fn().mockResolvedValue(undefined),
+      };
+      mockDb.insert.mockReturnValue(mockInsertChain);
+
+      await DatabaseManager.upsertActivity(12345, { ...mockActivity, id: 123456789012345 });
+
+      expect(mockInsertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ strava_activity_id: '123456789012345' })
+      );
+    });
+
+    it('should handle null optional fields gracefully', async () => {
+      const mockInsertChain = {
+        values: jest.fn().mockReturnThis(),
+        onConflictDoUpdate: jest.fn().mockResolvedValue(undefined),
+      };
+      mockDb.insert.mockReturnValue(mockInsertChain);
+
+      const minimalActivity = { id: 1, name: 'Run', type: 'Run' };
+      await DatabaseManager.upsertActivity(12345, minimalActivity);
+
+      expect(mockInsertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({
+          strava_activity_id: '1',
+          distance: null,
+          average_heartrate: null,
+          map_summary_polyline: null,
+          has_heartrate: 0,
+        })
+      );
+    });
+
+    it('should use onConflictDoUpdate to upsert existing activity', async () => {
+      const mockInsertChain = {
+        values: jest.fn().mockReturnThis(),
+        onConflictDoUpdate: jest.fn().mockResolvedValue(undefined),
+      };
+      mockDb.insert.mockReturnValue(mockInsertChain);
+
+      await DatabaseManager.upsertActivity(12345, mockActivity);
+
+      expect(mockInsertChain.onConflictDoUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: expect.anything(),
+          set: expect.objectContaining({ strava_activity_id: '98765' }),
+        })
+      );
+    });
+  });
+
+  describe('getPBSyncCursors', () => {
+    beforeEach(() => {
+      DatabaseManager.isInitialized = true;
+      DatabaseManager.db = mockDb;
+    });
+
+    it('should return mapped cursor objects for matching keys', async () => {
+      const mockSelectChain = {
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockResolvedValue([
+          { key: 'pb_sync_cursor_111', value: '1750000000', updated_at: '2026-03-19T10:00:00Z' },
+          { key: 'pb_sync_cursor_222', value: '1748000000', updated_at: '2026-03-18T08:00:00Z' },
+        ]),
+      };
+      mockDb.select.mockReturnValue(mockSelectChain);
+
+      const result = await DatabaseManager.getPBSyncCursors();
+
+      expect(result).toHaveLength(2);
+      expect(result[0]).toEqual({ discordUserId: '111', cursor: '1750000000', updatedAt: '2026-03-19T10:00:00Z' });
+      expect(result[1]).toEqual({ discordUserId: '222', cursor: '1748000000', updatedAt: '2026-03-18T08:00:00Z' });
+    });
+
+    it('should return empty array when no cursors exist', async () => {
+      const mockSelectChain = {
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockResolvedValue([]),
+      };
+      mockDb.select.mockReturnValue(mockSelectChain);
+
+      const result = await DatabaseManager.getPBSyncCursors();
+
+      expect(result).toEqual([]);
+    });
+
+    it('should return empty array and log error when DB throws', async () => {
+      const mockSelectChain = {
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockRejectedValue(new Error('DB error')),
+      };
+      mockDb.select.mockReturnValue(mockSelectChain);
+
+      const result = await DatabaseManager.getPBSyncCursors();
+
+      expect(result).toEqual([]);
+      expect(logger.database.error).toHaveBeenCalledWith(
+        'Failed to query PB sync cursors',
+        expect.objectContaining({ error: 'DB error' })
+      );
+    });
+  });
+
+  describe('getPBCountByAthleteId', () => {
+    beforeEach(() => {
+      DatabaseManager.isInitialized = true;
+      DatabaseManager.db = mockDb;
+    });
+
+    it('should return count of PBs for an athlete', async () => {
+      const mockSelectChain = {
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockResolvedValue([{ count: 5 }]),
+      };
+      mockDb.select.mockReturnValue(mockSelectChain);
+
+      const count = await DatabaseManager.getPBCountByAthleteId(12345);
+
+      expect(count).toBe(5);
+    });
+
+    it('should return 0 when athlete has no PBs', async () => {
+      const mockSelectChain = {
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockResolvedValue([{ count: 0 }]),
+      };
+      mockDb.select.mockReturnValue(mockSelectChain);
+
+      const count = await DatabaseManager.getPBCountByAthleteId(12345);
+
+      expect(count).toBe(0);
+    });
+
+    it('should return 0 when result array is empty', async () => {
+      const mockSelectChain = {
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockResolvedValue([]),
+      };
+      mockDb.select.mockReturnValue(mockSelectChain);
+
+      const count = await DatabaseManager.getPBCountByAthleteId(12345);
+
+      expect(count).toBe(0);
+    });
+
+    it('should return 0 and log error when DB throws', async () => {
+      const mockSelectChain = {
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockRejectedValue(new Error('DB error')),
+      };
+      mockDb.select.mockReturnValue(mockSelectChain);
+
+      const count = await DatabaseManager.getPBCountByAthleteId(12345);
+
+      expect(count).toBe(0);
+      expect(logger.database.error).toHaveBeenCalledWith(
+        'Failed to get PB count',
+        expect.objectContaining({ athleteId: 12345, error: 'DB error' })
+      );
+    });
+  });
 });

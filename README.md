@@ -49,12 +49,22 @@ A comprehensive bot that automatically posts Strava activities from your running
 
 ### 🎮 **Discord Integration**
 
-- **Slash Commands**: `/members`, `/register`, `/last`, `/botstatus`, `/my-races`, `/all-races`, `/settings`, `/scheduler`
+- **Slash Commands**: `/members`, `/register`, `/last`, `/sync`, `/pb`, `/botstatus`, `/my-races`, `/all-races`, `/settings`, `/scheduler`
 - **Member Management**: Add, remove, activate/deactivate members
 - **Activity Lookup**: View any member's latest activity on-demand
 - **Race Management**: Complete race lifecycle management with team visibility
 - **Admin Controls**: Permission-based management commands
 - **Autocomplete**: Smart member name suggestions
+
+### 🏆 **Personal Best Tracking**
+
+- **Automatic PB Detection**: Detects new personal bests from every synced Strava activity
+- **History Sync**: Scan the last 12 months of Strava history to populate PBs
+- **Resumable Sync**: Checkpoint-based sync that can resume after interruption
+- **All-time PRs**: Import all-time PRs from Strava's PR endpoint (1 Mile to Marathon)
+- **Manual Import**: Add PBs from specific activities (useful for races older than 1 year)
+- **Team Visibility**: View any member's personal bests with formatted embed display
+- **Admin Status**: Admin command to inspect active/interrupted syncs and PB counts per member
 
 ### 🔒 **Security & Reliability**
 
@@ -288,6 +298,9 @@ node utils/setup.js validate-webhook
 |---------|-------------|-------|
 | `/register` | Register yourself with Strava | `/register` |
 | `/last` | Show last activity from a member | `/last member: John` |
+| `/sync` | Sync recent Strava activities and update Personal Bests | `/sync` or `/sync from: 2025-01-01` |
+| `/pb check` | View your personal bests (or another member's) | `/pb check` or `/pb check member: @user` |
+| `/pb add` | Manually add PBs from a specific Strava activity | `/pb add activity_url: https://www.strava.com/activities/123456` |
 
 ### Race Management Commands
 
@@ -309,6 +322,7 @@ node utils/setup.js validate-webhook
 | `/members deactivate` | Temporarily deactivate a member | `/members deactivate user: @user` |
 | `/members reactivate` | Reactivate a deactivated member | `/members reactivate user: @user` |
 | `/botstatus` | Show bot statistics and health | `/botstatus` |
+| `/pb status` | Show PB sync status and stored PBs per member | `/pb status` |
 | `/all-races list` | List all team races | `/all-races list` or `/all-races list status: upcoming` |
 | `/all-races upcoming` | Show upcoming races for all members | `/all-races upcoming days: 60` |
 | `/settings channel` | Set the Discord channel used for bot posts | `/settings channel channel: #running` |
@@ -406,12 +420,17 @@ strava-running-bot/
 │   │   ├── native-sqlite-adapter.js  # better-sqlite3 adapter
 │   │   ├── schema.js                 # Drizzle schema definitions
 │   │   └── migrations/               # Generated SQL migrations
+│   │       ├── 001_complete_initial_schema.sql
+│   │       ├── 002_add_elevation_field.sql
+│   │       ├── 003_add_personal_bests_table.sql
+│   │       └── 004_add_activities_table.sql
 │   ├── discord/
 │   │   ├── bot.js                    # Discord client + command registration
 │   │   └── commands.js               # Slash command handlers
 │   ├── managers/
 │   │   ├── ActivityQueue.js          # Delayed activity post queue
 │   │   ├── MemberManager.js          # Team member management
+│   │   ├── PBManager.js              # Personal Best tracking & sync
 │   │   ├── RaceManager.js            # Race management system
 │   │   ├── Scheduler.js              # Cron jobs for race announcements
 │   │   └── SettingsManager.js        # Runtime-mutable settings
@@ -450,6 +469,46 @@ strava-running-bot/
 └── README.md                         # This documentation
 ```
 
+## 🗄️ Database Schema
+
+The bot uses SQLite with automatic migrations. Below are the key tables:
+
+### `members`
+Stores registered team members with encrypted Strava OAuth tokens, Discord user info, and activation status.
+
+### `activities`
+Caches processed Strava activities to avoid duplicate Discord posts.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `pr_categories` | TEXT | JSON array of PR category names achieved in this activity (e.g. `["5K","10K"]`). `NULL` if no PRs. |
+
+### `personal_bests`
+One row per athlete per distance category — always holds the current best time for that category.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER | Auto-increment primary key |
+| `member_athlete_id` | INTEGER | Foreign key → `members.athlete_id` (cascade delete) |
+| `category` | TEXT | Normalized label: `5K`, `Half Marathon`, `Marathon`, etc. |
+| `distance_m` | REAL | Actual distance in metres from the Strava best effort |
+| `elapsed_time` | INTEGER | Best elapsed time in seconds |
+| `moving_time` | INTEGER | Best moving time in seconds |
+| `strava_activity_id` | TEXT | ID of the Strava activity where the PB was set |
+| `activity_name` | TEXT | Name of that activity |
+| `activity_date` | TEXT | ISO date string of the activity |
+| `created_at` / `updated_at` | TEXT | Timestamps |
+
+> **Unique constraint**: `(member_athlete_id, category)` — only one record per athlete per distance. An `UPDATE` replaces the previous best in-place.
+
+### `races`
+Tracks upcoming and past races entered by team members with status, distance, and race type.
+
+### `settings`
+Key/value store used internally for sync checkpoints (e.g. cursor timestamps for resumable PB history syncs).
+
+---
+
 ### Key Components
 
 #### **ActivityProcessor**
@@ -483,6 +542,14 @@ strava-running-bot/
 - Token management with automatic refresh
 - Member lifecycle operations (register/deactivate/remove)
 - Discord user mapping and profile integration
+
+#### **PBManager**
+
+- Personal best detection from `best_efforts` data in Strava activity responses
+- Supports 12 standard distances: 400m, ½ Mile, 1K, 1 Mile, 2 Miles, 5K, 10K, 15K, 20K, Half Marathon, 20 Miles, Marathon
+- Checkpoint-based history sync (last 12 months) that resumes after interruption
+- Manual import from specific Strava activities with optional distance override
+- Formats PBs as Discord embed fields with time, pace, and direct Strava links
 
 #### **RaceManager**
 

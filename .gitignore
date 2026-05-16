@@ -95,3 +95,6 @@ test-results/
 # Build artifacts
 build/
 dist/
+
+
+settings.local.json

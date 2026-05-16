@@ -101,9 +101,8 @@ describe('ActivityProcessor', () => {
       getAllMembers: jest.fn(),
       getMemberCount: jest.fn(),
       databaseManager: {
-        settingsManager: {
-          // Add mock settings manager if needed
-        }
+        upsertActivity: jest.fn().mockResolvedValue(undefined),
+        settingsManager: {},
       }
     };
 
@@ -324,6 +323,32 @@ describe('ActivityProcessor', () => {
         'valid_token'
       );
       expect(mockDiscordBot.postActivity).toHaveBeenCalled();
+    });
+
+    it('should call upsertActivity after fetching the activity', async () => {
+      await activityProcessor.processNewActivity(98765, 12345);
+
+      expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(
+        12345,
+        mockActivity
+      );
+    });
+
+    it('should continue posting to Discord even if upsertActivity throws', async () => {
+      mockMemberManager.databaseManager.upsertActivity.mockRejectedValue(new Error('DB error'));
+
+      await activityProcessor.processNewActivity(98765, 12345);
+
+      expect(mockDiscordBot.postActivity).toHaveBeenCalled();
+      expect(activityProcessor.processedActivities.has('12345-98765')).toBe(true);
+    });
+
+    it('should not call upsertActivity for filtered activities', async () => {
+      mockStravaAPI.shouldPostActivity.mockReturnValue(false);
+
+      await activityProcessor.processNewActivity(98765, 12345);
+
+      expect(mockMemberManager.databaseManager.upsertActivity).not.toHaveBeenCalled();
     });
   });
 

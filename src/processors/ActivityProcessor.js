@@ -4,6 +4,7 @@ const DatabaseMemberManager = require('../database/DatabaseMemberManager');
 const ActivityQueue = require('../managers/ActivityQueue');
 const Scheduler = require('../managers/Scheduler');
 const RaceManager = require('../managers/RaceManager');
+const PBManager = require('../managers/PBManager');
 const config = require('../../config/config');
 const dynamicConfig = require('../../config/dynamicConfig');
 const logger = require('../utils/Logger');
@@ -20,6 +21,9 @@ class ActivityProcessor {
     // Initialize race management and scheduler
     this.raceManager = new RaceManager();
     this.scheduler = new Scheduler(this, this.raceManager);
+
+    // Initialize PB manager
+    this.pbManager = new PBManager();
   }
 
   async initialize() {
@@ -109,7 +113,7 @@ class ActivityProcessor {
 
       // Fetch detailed activity data
       const activity = await this.stravaAPI.getActivity(activityId, accessToken);
-      
+
       // Check if activity should be posted
       if (!this.stravaAPI.shouldPostActivity(activity)) {
         logger.activityProcessing(activityId, athleteId, activity.name, 'FILTERED', {
@@ -119,12 +123,35 @@ class ActivityProcessor {
         return;
       }
 
+      // Save activity to DB (non-blocking)
+      try {
+        await this.memberManager.databaseManager.upsertActivity(athleteId, activity);
+      } catch (saveError) {
+        logger.activity.error('Failed to save activity to DB', {
+          activityId,
+          error: saveError.message,
+        });
+      }
+
       // Process activity data for Discord with member info including Discord user data
       const athleteWithDiscordInfo = {
         ...member.athlete,
         discordUser: member.discordUser
       };
       const processedActivity = await this.stravaAPI.processActivityWithStreams(activity, athleteWithDiscordInfo, accessToken);
+
+      // Check for new Personal Bests (non-blocking)
+      let pbResults = [];
+      try {
+        pbResults = await this.pbManager.checkAndUpdatePBs(athleteId, activity);
+      } catch (pbError) {
+        logger.activity.error('PB check failed (non-blocking)', {
+          activityId,
+          athleteId,
+          error: pbError.message,
+        });
+      }
+      processedActivity.pbResults = pbResults;
 
       // Post to Discord
       await this.discordBot.postActivity(processedActivity);

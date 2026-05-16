@@ -64,6 +64,16 @@ jest.mock('discord.js', () => {
             optionCallback(option);
             subcommand.options.push(option);
             return subcommand;
+          }),
+          addUserOption: jest.fn().mockImplementation((optionCallback) => {
+            const option = {
+              setName: jest.fn().mockReturnThis(),
+              setDescription: jest.fn().mockReturnThis(),
+              setRequired: jest.fn().mockReturnThis()
+            };
+            optionCallback(option);
+            subcommand.options.push(option);
+            return subcommand;
           })
         };
         callback(subcommand);
@@ -72,12 +82,15 @@ jest.mock('discord.js', () => {
       }),
       addStringOption: jest.fn().mockImplementation((callback) => {
         const option = {
+          name: '',
           autocomplete: false,
-          setName: jest.fn().mockReturnThis(),
+          required: false,
+          choices: [],
+          setName: jest.fn().mockImplementation((name) => { option.name = name; return option; }),
           setDescription: jest.fn().mockReturnThis(),
-          setRequired: jest.fn().mockReturnThis(),
+          setRequired: jest.fn().mockImplementation((req) => { option.required = req; return option; }),
           setMaxLength: jest.fn().mockReturnThis(),
-          addChoices: jest.fn().mockReturnThis(),
+          addChoices: jest.fn().mockImplementation((...choices) => { option.choices.push(...choices); return option; }),
           setAutocomplete: jest.fn().mockImplementation((auto) => {
             option.autocomplete = auto;
             return option;
@@ -120,6 +133,24 @@ jest.mock('discord.js', () => {
 });
 jest.mock('../../src/utils/EmbedBuilder');
 jest.mock('../../src/utils/DiscordUtils');
+jest.mock('../../src/managers/PBManager', () => jest.fn().mockImplementation(() => ({
+  getMemberPBsByDiscordId: jest.fn().mockResolvedValue([]),
+  syncFromHistory: jest.fn().mockResolvedValue({ processed: 0, updated: 0, errors: 0 }),
+  formatPBsForEmbed: jest.fn().mockReturnValue([]),
+  extractBestEfforts: jest.fn().mockReturnValue([]),
+  checkAndUpdatePBsFromEfforts: jest.fn().mockResolvedValue([]),
+  databaseManager: {
+    getPBSyncCursors: jest.fn().mockResolvedValue([]),
+    getPBCountByAthleteId: jest.fn().mockResolvedValue(0),
+  },
+})));
+jest.mock('../../src/managers/RaceManager', () => jest.fn().mockImplementation(() => ({
+  getMemberRaces: jest.fn().mockResolvedValue([]),
+  getUpcomingRaces: jest.fn().mockResolvedValue([]),
+  addRace: jest.fn(),
+  removeRace: jest.fn(),
+  updateRace: jest.fn(),
+})));
 jest.mock('../../src/utils/Logger', () => ({
   discord: {
     info: jest.fn(),
@@ -261,7 +292,7 @@ describe('DiscordCommands', () => {
     it('should return array of slash commands', () => {
       const commands = discordCommands.getCommands();
 
-      expect(commands).toHaveLength(8); // members, register, botstatus, last, race, teamraces, settings, scheduler
+      expect(commands).toHaveLength(10); // members, register, botstatus, last, race, teamraces, settings, scheduler, pb, sync
       expect(commands.every(cmd => cmd instanceof SlashCommandBuilder)).toBe(true);
     });
 
@@ -294,6 +325,29 @@ describe('DiscordCommands', () => {
 
       expect(lastCommand).toBeDefined();
       expect(lastCommand.options[0].autocomplete).toBe(true);
+    });
+
+    it('should include pb command with 3 subcommands (check, add, status)', () => {
+      const commands = discordCommands.getCommands();
+      const pbCommand = commands.find(cmd => cmd.name === 'pb');
+
+      expect(pbCommand).toBeDefined();
+      expect(pbCommand.options).toHaveLength(3); // check, add, status
+      expect(pbCommand.options.map(o => o.name)).toEqual(expect.arrayContaining(['check', 'add', 'status']));
+      expect(pbCommand.options.map(o => o.name)).not.toContain('year');
+    });
+
+    it('should include top-level sync command with period option', () => {
+      const commands = discordCommands.getCommands();
+      const syncCommand = commands.find(cmd => cmd.name === 'sync');
+
+      expect(syncCommand).toBeDefined();
+      const periodOption = syncCommand.options.find(o => o.name === 'period');
+      expect(periodOption).toBeDefined();
+      expect(periodOption.required).toBe(true);
+      const choiceValues = periodOption.choices.map(c => c.value);
+      expect(choiceValues).toContain('current_year');
+      expect(choiceValues).toContain('last_365_days');
     });
   });
 
@@ -334,6 +388,15 @@ describe('DiscordCommands', () => {
       await discordCommands.handleCommand(mockInteraction);
 
       expect(discordCommands.handleLastActivityCommand).toHaveBeenCalledWith(mockInteraction, mockInteraction.options);
+    });
+
+    it('should handle sync command', async () => {
+      mockInteraction.commandName = 'sync';
+      jest.spyOn(discordCommands, 'handleSyncCommand').mockResolvedValue();
+
+      await discordCommands.handleCommand(mockInteraction);
+
+      expect(discordCommands.handleSyncCommand).toHaveBeenCalledWith(mockInteraction, mockInteraction.options);
     });
 
     it('should handle unknown command', async () => {
@@ -1288,6 +1351,645 @@ describe('DiscordCommands', () => {
           distanceKm: null
         });
       });
+    });
+  });
+
+  // ─── handlePBCheck ─────────────────────────────────────────────────────────
+
+  describe('handlePBCheck', () => {
+    let checkInteraction;
+
+    beforeEach(() => {
+      checkInteraction = {
+        user: { tag: 'TestUser#1234', id: '123456789', globalName: 'TestUser', username: 'testuser' },
+        member: { displayName: 'Test Display' },
+        deferReply: jest.fn().mockResolvedValue(undefined),
+        editReply: jest.fn().mockResolvedValue(undefined),
+        options: { getUser: jest.fn().mockReturnValue(null) },
+      };
+    });
+
+    it('should defer reply', async () => {
+      await discordCommands.handlePBCheck(checkInteraction, checkInteraction.options);
+
+      expect(checkInteraction.deferReply).toHaveBeenCalled();
+    });
+
+    it('should reply with "no PBs" message when getMemberPBsByDiscordId returns empty array', async () => {
+      // getMemberPBsByDiscordId is already mocked to return [] by default
+
+      await discordCommands.handlePBCheck(checkInteraction, checkInteraction.options);
+
+      expect(checkInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('No Personal Bests') })
+      );
+      expect(checkInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('/sync') })
+      );
+    });
+
+    it('should send embed when PBs exist', async () => {
+      discordCommands.pbManager.getMemberPBsByDiscordId.mockResolvedValue([
+        { category: '5K', elapsed_time: 1200 },
+      ]);
+      discordCommands.pbManager.formatPBsForEmbed.mockReturnValue([
+        { name: '🏆 TestUser', value: '5K — 20:00', inline: false },
+      ]);
+
+      await discordCommands.handlePBCheck(checkInteraction, checkInteraction.options);
+
+      expect(checkInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ embeds: [expect.any(Object)] })
+      );
+    });
+
+    it('should use targetUser id and name when member option is provided', async () => {
+      checkInteraction.options.getUser.mockReturnValue({ id: '999', globalName: 'OtherUser', username: 'other' });
+      discordCommands.pbManager.getMemberPBsByDiscordId.mockResolvedValue([
+        { category: '5K', elapsed_time: 1200 },
+      ]);
+
+      await discordCommands.handlePBCheck(checkInteraction, checkInteraction.options);
+
+      expect(discordCommands.pbManager.getMemberPBsByDiscordId).toHaveBeenCalledWith('999');
+    });
+
+    it('should reply with error message when getMemberPBsByDiscordId throws', async () => {
+      discordCommands.pbManager.getMemberPBsByDiscordId.mockRejectedValue(new Error('DB error'));
+
+      await discordCommands.handlePBCheck(checkInteraction, checkInteraction.options);
+
+      expect(checkInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('Failed') })
+      );
+      expect(logger.discord.error).toHaveBeenCalled();
+    });
+  });
+
+  // ─── handleSyncCommand ─────────────────────────────────────────────────────
+
+  describe('handleSyncCommand', () => {
+    let syncInteraction;
+
+    beforeEach(() => {
+      syncInteraction = {
+        user: { tag: 'TestUser#1234', id: '123456789' },
+        deferReply: jest.fn().mockResolvedValue(undefined),
+        editReply: jest.fn().mockResolvedValue(undefined),
+        options: {
+          getString: jest.fn().mockReturnValue('current_year'),
+        },
+      };
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue({
+        discordUserId: '123456789',
+        athleteId: 12345,
+        isActive: true,
+      });
+      mockMemberManager.getValidAccessToken.mockResolvedValue('valid_token');
+    });
+
+    it('should reply with error when user is not registered', async () => {
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue(null);
+
+      await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
+
+      expect(syncInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('not registered') })
+      );
+      expect(discordCommands.pbManager.syncFromHistory).not.toHaveBeenCalled();
+    });
+
+    it('should reply with error when access token cannot be retrieved', async () => {
+      mockMemberManager.getValidAccessToken.mockResolvedValue(null);
+
+      await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
+
+      expect(syncInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('access token') })
+      );
+    });
+
+    it('should call syncFromHistory with current_year afterTs', async () => {
+      discordCommands.pbManager.syncFromHistory.mockResolvedValue({ processed: 10, updated: 2, errors: 0 });
+      syncInteraction.options.getString.mockReturnValue('current_year');
+
+      await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
+
+      expect(discordCommands.pbManager.syncFromHistory).toHaveBeenCalledWith(
+        '123456789',
+        'valid_token',
+        mockStravaAPI,
+        expect.any(Function),
+        expect.any(Number)
+      );
+      const calledAfterTs = discordCommands.pbManager.syncFromHistory.mock.calls[0][4];
+      const now = new Date();
+      const jan1 = Math.floor(new Date(now.getFullYear(), 0, 1).getTime() / 1000);
+      expect(Math.abs(calledAfterTs - jan1)).toBeLessThan(60);
+    });
+
+    it('should call syncFromHistory with last_365_days afterTs', async () => {
+      discordCommands.pbManager.syncFromHistory.mockResolvedValue({ processed: 5, updated: 1, errors: 0 });
+      syncInteraction.options.getString.mockReturnValue('last_365_days');
+
+      await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
+
+      const calledAfterTs = discordCommands.pbManager.syncFromHistory.mock.calls[0][4];
+      const expected365 = Math.floor((Date.now() - 365 * 24 * 60 * 60 * 1000) / 1000);
+      expect(Math.abs(calledAfterTs - expected365)).toBeLessThan(60);
+    });
+
+    it('should reply with embed showing updated count', async () => {
+      discordCommands.pbManager.syncFromHistory.mockResolvedValue({ processed: 10, updated: 3, errors: 0 });
+
+      await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
+
+      expect(syncInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ embeds: expect.any(Array) })
+      );
+    });
+
+    it('should include period label in progress message for current_year', async () => {
+      discordCommands.pbManager.syncFromHistory.mockResolvedValue({ processed: 0, updated: 0, errors: 0 });
+      syncInteraction.options.getString.mockReturnValue('current_year');
+
+      await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
+
+      // The first editReply call contains the progress message with the period label
+      const progressMessage = syncInteraction.editReply.mock.calls[0][0].content;
+      expect(progressMessage).toContain('Current year');
+    });
+
+    it('should include period label in progress message for last_365_days', async () => {
+      discordCommands.pbManager.syncFromHistory.mockResolvedValue({ processed: 0, updated: 0, errors: 0 });
+      syncInteraction.options.getString.mockReturnValue('last_365_days');
+
+      await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
+
+      const progressMessage = syncInteraction.editReply.mock.calls[0][0].content;
+      expect(progressMessage).toContain('Last 365 days');
+    });
+
+    it('should block a second concurrent sync from the same user', async () => {
+      discordCommands.pbSyncInProgress.add('123456789');
+
+      await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
+
+      expect(syncInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('already in progress') })
+      );
+      expect(discordCommands.pbManager.syncFromHistory).not.toHaveBeenCalled();
+    });
+
+    it('should release the lock after sync completes', async () => {
+      discordCommands.pbManager.syncFromHistory.mockResolvedValue({ processed: 0, updated: 0, errors: 0 });
+
+      await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
+
+      expect(discordCommands.pbSyncInProgress.has('123456789')).toBe(false);
+    });
+
+    it('should release the lock even if syncFromHistory throws', async () => {
+      discordCommands.pbManager.syncFromHistory.mockRejectedValue(new Error('API down'));
+
+      await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
+
+      expect(discordCommands.pbSyncInProgress.has('123456789')).toBe(false);
+      expect(syncInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('Failed') })
+      );
+    });
+  });
+
+  // ─── handlePBAdd ───────────────────────────────────────────────────────────
+
+  describe('handlePBAdd', () => {
+    let addInteraction;
+
+    beforeEach(() => {
+      addInteraction = {
+        user: { tag: 'TestUser#1234', id: '123456789' },
+        deferReply: jest.fn().mockResolvedValue(undefined),
+        editReply: jest.fn().mockResolvedValue(undefined),
+        options: {
+          getString: jest.fn().mockReturnValue('https://www.strava.com/activities/15730864623'),
+          getInteger: jest.fn().mockReturnValue(null),
+        },
+      };
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue({
+        discordUserId: '123456789',
+        athleteId: 12345,
+        isActive: true,
+      });
+      mockMemberManager.getValidAccessToken.mockResolvedValue('valid_token');
+      mockStravaAPI.getActivity.mockResolvedValue({
+        id: 15730864623,
+        name: 'Race',
+        type: 'Run',
+        start_date: '2024-01-01T10:00:00Z',
+        best_efforts: [
+          { name: '5K', distance: 5000, elapsed_time: 1037, moving_time: 1037 },
+        ],
+      });
+      discordCommands.pbManager.checkAndUpdatePBs = jest.fn().mockResolvedValue([
+        { isNewPB: true, category: '5K', newPB: { elapsedTime: 1037 }, previousPB: null },
+      ]);
+    });
+
+    it('should reply with error for invalid URL format', async () => {
+      addInteraction.options.getString.mockReturnValue('not-a-url');
+
+      await discordCommands.handlePBAdd(addInteraction, addInteraction.options);
+
+      expect(addInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('Invalid Strava activity URL') })
+      );
+      expect(mockStravaAPI.getActivity).not.toHaveBeenCalled();
+    });
+
+    it('should extract activity ID from URL and call getActivity', async () => {
+      await discordCommands.handlePBAdd(addInteraction, addInteraction.options);
+
+      expect(mockStravaAPI.getActivity).toHaveBeenCalledWith('15730864623', 'valid_token');
+    });
+
+    it('should reply with error when user is not registered', async () => {
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue(null);
+
+      await discordCommands.handlePBAdd(addInteraction, addInteraction.options);
+
+      expect(addInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('not registered') })
+      );
+    });
+
+    it('should reply with success listing new PBs when new records found', async () => {
+      await discordCommands.handlePBAdd(addInteraction, addInteraction.options);
+
+      expect(addInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('5K') })
+      );
+    });
+
+    it('should reply with no-new-PBs message when all times are slower than existing', async () => {
+      discordCommands.pbManager.checkAndUpdatePBs.mockResolvedValue([
+        { isNewPB: false, category: '5K', newPB: null, previousPB: { elapsed_time: 900 } },
+      ]);
+
+      await discordCommands.handlePBAdd(addInteraction, addInteraction.options);
+
+      expect(addInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('no new Personal Bests') })
+      );
+    });
+
+    it('should reply with error when getActivity throws', async () => {
+      mockStravaAPI.getActivity.mockRejectedValue(new Error('Activity not found'));
+
+      await discordCommands.handlePBAdd(addInteraction, addInteraction.options);
+
+      expect(addInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('Failed') })
+      );
+    });
+
+    describe('distance_m override', () => {
+      beforeEach(() => {
+        // Set up extractBestEfforts and checkAndUpdatePBsFromEfforts for override path
+        discordCommands.pbManager.extractBestEfforts = jest.fn().mockReturnValue([
+          { category: '5K', distanceM: 5080, elapsedTime: 1037, movingTime: 1037, activityId: 15730864623, activityName: 'Race', activityDate: '2024-01-01' },
+        ]);
+        discordCommands.pbManager.checkAndUpdatePBsFromEfforts = jest.fn().mockResolvedValue([
+          { isNewPB: true, category: '5K', newPB: { elapsedTime: 1037 }, previousPB: null },
+        ]);
+      });
+
+      it('should call checkAndUpdatePBs (no override) when distance_m not provided', async () => {
+        addInteraction.options.getInteger = jest.fn().mockReturnValue(null);
+
+        await discordCommands.handlePBAdd(addInteraction, addInteraction.options);
+
+        expect(discordCommands.pbManager.checkAndUpdatePBs).toHaveBeenCalled();
+        expect(discordCommands.pbManager.checkAndUpdatePBsFromEfforts).not.toHaveBeenCalled();
+      });
+
+      it('should call checkAndUpdatePBsFromEfforts when distance_m is provided', async () => {
+        addInteraction.options.getInteger = jest.fn().mockReturnValue(5000);
+
+        await discordCommands.handlePBAdd(addInteraction, addInteraction.options);
+
+        expect(discordCommands.pbManager.extractBestEfforts).toHaveBeenCalled();
+        expect(discordCommands.pbManager.checkAndUpdatePBsFromEfforts).toHaveBeenCalled();
+        expect(discordCommands.pbManager.checkAndUpdatePBs).not.toHaveBeenCalled();
+      });
+
+      it('should apply override to closest effort distanceM', async () => {
+        addInteraction.options.getInteger = jest.fn().mockReturnValue(5000);
+
+        await discordCommands.handlePBAdd(addInteraction, addInteraction.options);
+
+        const passedEfforts = discordCommands.pbManager.checkAndUpdatePBsFromEfforts.mock.calls[0][1];
+        expect(passedEfforts[0].distanceM).toBe(5000);
+      });
+
+      it('should not show warning when difference is less than 5%', async () => {
+        // GPS: 5080m, override: 5000m → diff = 1.57% < 5%
+        addInteraction.options.getInteger = jest.fn().mockReturnValue(5000);
+
+        await discordCommands.handlePBAdd(addInteraction, addInteraction.options);
+
+        const reply = addInteraction.editReply.mock.calls[0][0];
+        expect(reply.content).not.toContain('⚠️');
+      });
+
+      it('should show warning when difference is 5% or more', async () => {
+        // GPS: 5080m, override: 4700m → diff = 7.5% ≥ 5%
+        addInteraction.options.getInteger = jest.fn().mockReturnValue(4700);
+
+        await discordCommands.handlePBAdd(addInteraction, addInteraction.options);
+
+        const reply = addInteraction.editReply.mock.calls[0][0];
+        expect(reply.content).toContain('⚠️');
+        expect(reply.content).toContain('4700');
+        expect(reply.content).toContain('5080');
+      });
+
+      it('should still record PB even when warning is shown', async () => {
+        addInteraction.options.getInteger = jest.fn().mockReturnValue(4700);
+
+        await discordCommands.handlePBAdd(addInteraction, addInteraction.options);
+
+        const reply = addInteraction.editReply.mock.calls[0][0];
+        expect(reply.content).toContain('Personal Best');
+      });
+
+      it('should handle distance_m provided but no best efforts extracted', async () => {
+        addInteraction.options.getInteger = jest.fn().mockReturnValue(5000);
+        discordCommands.pbManager.extractBestEfforts.mockReturnValue([]);
+        discordCommands.pbManager.checkAndUpdatePBsFromEfforts.mockResolvedValue([]);
+
+        await discordCommands.handlePBAdd(addInteraction, addInteraction.options);
+
+        expect(addInteraction.editReply).toHaveBeenCalledWith(
+          expect.objectContaining({ content: expect.stringContaining('no new Personal Bests') })
+        );
+      });
+
+      it('should create synthetic effort when no best efforts exist and record PB', async () => {
+        // Activity GPS = 4990m (< 5K), no best_efforts generated by Strava
+        mockStravaAPI.getActivity.mockResolvedValue({
+          id: 15730864623,
+          name: 'City 5K Race',
+          type: 'Run',
+          start_date: '2024-06-01T09:00:00Z',
+          elapsed_time: 1185,
+          moving_time: 1180,
+          distance: 4990,
+          best_efforts: [],
+        });
+        addInteraction.options.getInteger = jest.fn().mockReturnValue(5000);
+        discordCommands.pbManager.extractBestEfforts.mockReturnValue([]);
+        discordCommands.pbManager.checkAndUpdatePBsFromEfforts.mockResolvedValue([
+          { isNewPB: true, category: '5K', newPB: { elapsedTime: 1185 }, previousPB: null },
+        ]);
+
+        await discordCommands.handlePBAdd(addInteraction, addInteraction.options);
+
+        // Synthetic effort should be passed to checkAndUpdatePBsFromEfforts
+        const passedEfforts = discordCommands.pbManager.checkAndUpdatePBsFromEfforts.mock.calls[0][1];
+        expect(passedEfforts).toHaveLength(1);
+        expect(passedEfforts[0].distanceM).toBe(5000);
+        expect(passedEfforts[0].elapsedTime).toBe(1185);
+        expect(passedEfforts[0].category).toBe('5K');
+      });
+
+      it('should show 📝 note when synthetic effort is used', async () => {
+        mockStravaAPI.getActivity.mockResolvedValue({
+          id: 15730864623, name: 'Race', type: 'Run',
+          start_date: '2024-06-01T09:00:00Z',
+          elapsed_time: 1185, moving_time: 1180, distance: 4990,
+          best_efforts: [],
+        });
+        addInteraction.options.getInteger = jest.fn().mockReturnValue(5000);
+        discordCommands.pbManager.extractBestEfforts.mockReturnValue([]);
+        discordCommands.pbManager.checkAndUpdatePBsFromEfforts.mockResolvedValue([
+          { isNewPB: true, category: '5K', newPB: { elapsedTime: 1185 }, previousPB: null },
+        ]);
+
+        await discordCommands.handlePBAdd(addInteraction, addInteraction.options);
+
+        const reply = addInteraction.editReply.mock.calls[0][0];
+        expect(reply.content).toContain('📝');
+        expect(reply.content).not.toContain('⚠️');
+      });
+
+      it('should use synthetic fallback when closest effort is beyond 15% threshold', async () => {
+        // closest effort is 1 mile (1609m), override is 5000m → |1609-5000|/5000 = 67.8% > 15%
+        mockStravaAPI.getActivity.mockResolvedValue({
+          id: 15730864623, name: 'Short Run', type: 'Run',
+          start_date: '2024-06-01T09:00:00Z',
+          elapsed_time: 1185, moving_time: 1180, distance: 4990,
+          best_efforts: [],
+        });
+        addInteraction.options.getInteger = jest.fn().mockReturnValue(5000);
+        discordCommands.pbManager.extractBestEfforts.mockReturnValue([
+          { category: '1 Mile', distanceM: 1609, elapsedTime: 380, movingTime: 375, activityId: 15730864623, activityName: 'Short Run', activityDate: '2024-06-01' },
+        ]);
+        discordCommands.pbManager.checkAndUpdatePBsFromEfforts.mockResolvedValue([
+          { isNewPB: true, category: '5K', newPB: { elapsedTime: 1185 }, previousPB: null },
+        ]);
+
+        await discordCommands.handlePBAdd(addInteraction, addInteraction.options);
+
+        const passedEfforts = discordCommands.pbManager.checkAndUpdatePBsFromEfforts.mock.calls[0][1];
+        // Should have original 1 mile effort + synthetic 5K effort
+        const syntheticEffort = passedEfforts.find(e => e.category === '5K' && e.distanceM === 5000);
+        expect(syntheticEffort).toBeDefined();
+        expect(syntheticEffort.elapsedTime).toBe(1185);
+
+        const reply = addInteraction.editReply.mock.calls[0][0];
+        expect(reply.content).toContain('📝');
+      });
+
+      it('should use "?" for distance when activity.distance is falsy', async () => {
+        mockStravaAPI.getActivity.mockResolvedValue({
+          id: 15730864623,
+          name: 'Race',
+          type: 'Run',
+          start_date: '2024-06-01T09:00:00Z',
+          elapsed_time: 1185,
+          moving_time: 1180,
+          distance: 0,
+          best_efforts: [],
+        });
+        addInteraction.options.getInteger = jest.fn().mockReturnValue(5000);
+        discordCommands.pbManager.extractBestEfforts.mockReturnValue([]);
+        discordCommands.pbManager.checkAndUpdatePBsFromEfforts.mockResolvedValue([
+          { isNewPB: true, category: '5K', newPB: { elapsedTime: 1185 }, previousPB: null },
+        ]);
+
+        await discordCommands.handlePBAdd(addInteraction, addInteraction.options);
+
+        const reply = addInteraction.editReply.mock.calls[0][0];
+        expect(reply.content).toContain('?');
+      });
+
+      it('should handle activity with no start_date gracefully', async () => {
+        mockStravaAPI.getActivity.mockResolvedValue({
+          id: 15730864623,
+          name: 'Race',
+          type: 'Run',
+          start_date: null,
+          elapsed_time: 1185,
+          moving_time: 1180,
+          distance: 4990,
+          best_efforts: [],
+        });
+        addInteraction.options.getInteger = jest.fn().mockReturnValue(5000);
+        discordCommands.pbManager.extractBestEfforts.mockReturnValue([]);
+        discordCommands.pbManager.checkAndUpdatePBsFromEfforts.mockResolvedValue([
+          { isNewPB: true, category: '5K', newPB: { elapsedTime: 1185 }, previousPB: null },
+        ]);
+
+        await discordCommands.handlePBAdd(addInteraction, addInteraction.options);
+
+        expect(addInteraction.editReply).toHaveBeenCalled();
+      });
+    });
+  });
+
+  // ─── handlePBStatus ────────────────────────────────────────────────────────
+
+  describe('handlePBStatus', () => {
+    let statusInteraction;
+
+    beforeEach(() => {
+      statusInteraction = {
+        user: { tag: 'Admin#0001', id: '999999' },
+        memberPermissions: { has: jest.fn().mockReturnValue(true) },
+        deferReply: jest.fn().mockResolvedValue(undefined),
+        editReply: jest.fn().mockResolvedValue(undefined),
+      };
+      mockMemberManager.getAllMembers.mockResolvedValue([mockMember]);
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue(mockMember);
+      discordCommands.pbManager.databaseManager.getPBSyncCursors.mockResolvedValue([]);
+      discordCommands.pbManager.databaseManager.getPBCountByAthleteId.mockResolvedValue(3);
+    });
+
+    it('should defer with ephemeral: true', async () => {
+      await discordCommands.handlePBStatus(statusInteraction, {});
+
+      expect(statusInteraction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    });
+
+    it('should reply with embed when user has ManageGuild permission', async () => {
+      await discordCommands.handlePBStatus(statusInteraction, {});
+
+      expect(statusInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ embeds: expect.any(Array) })
+      );
+    });
+
+    it('should reply with permission error when user lacks ManageGuild', async () => {
+      statusInteraction.memberPermissions.has.mockReturnValue(false);
+
+      await discordCommands.handlePBStatus(statusInteraction, {});
+
+      expect(statusInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('permission') })
+      );
+      expect(discordCommands.pbManager.databaseManager.getPBSyncCursors).not.toHaveBeenCalled();
+    });
+
+    it('should show active syncs from pbSyncInProgress', async () => {
+      discordCommands.pbSyncInProgress.add('888888');
+
+      await discordCommands.handlePBStatus(statusInteraction, {});
+
+      expect(statusInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ embeds: expect.any(Array) })
+      );
+
+      discordCommands.pbSyncInProgress.delete('888888');
+    });
+
+    it('should query getPBSyncCursors for interrupted syncs', async () => {
+      discordCommands.pbManager.databaseManager.getPBSyncCursors.mockResolvedValue([
+        { discordUserId: '555', cursor: '1750000000', updatedAt: '2026-03-19T00:00:00Z' },
+      ]);
+
+      await discordCommands.handlePBStatus(statusInteraction, {});
+
+      expect(discordCommands.pbManager.databaseManager.getPBSyncCursors).toHaveBeenCalled();
+      expect(statusInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ embeds: expect.any(Array) })
+      );
+    });
+
+    it('should not list cursor as interrupted if userId is in pbSyncInProgress', async () => {
+      discordCommands.pbSyncInProgress.add('555');
+      discordCommands.pbManager.databaseManager.getPBSyncCursors.mockResolvedValue([
+        { discordUserId: '555', cursor: '1750000000', updatedAt: '2026-03-19T00:00:00Z' },
+      ]);
+      discordCommands.pbManager.databaseManager.getPBCountByAthleteId.mockClear();
+
+      await discordCommands.handlePBStatus(statusInteraction, {});
+
+      // getPBCountByAthleteId should only be called for the member summary, not for '555' cursor
+      const calls = discordCommands.pbManager.databaseManager.getPBCountByAthleteId.mock.calls;
+      // none of the calls should have been for the discordUserId resolution path (cursor was filtered)
+      expect(statusInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ embeds: expect.any(Array) })
+      );
+
+      discordCommands.pbSyncInProgress.delete('555');
+    });
+
+    it('should call getPBCountByAthleteId for each active member', async () => {
+      await discordCommands.handlePBStatus(statusInteraction, {});
+
+      expect(discordCommands.pbManager.databaseManager.getPBCountByAthleteId).toHaveBeenCalledWith(
+        mockMember.athleteId
+      );
+    });
+
+    it('should reply with error message on DB failure', async () => {
+      discordCommands.pbManager.databaseManager.getPBSyncCursors.mockRejectedValue(new Error('DB fail'));
+
+      await discordCommands.handlePBStatus(statusInteraction, {});
+
+      expect(statusInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('Failed') })
+      );
+      expect(logger.discord.error).toHaveBeenCalledWith(
+        'Error retrieving PB sync status',
+        expect.any(Object)
+      );
+    });
+
+    it('should handle getMemberByDiscordId returning null for a cursor entry', async () => {
+      discordCommands.pbManager.databaseManager.getPBSyncCursors.mockResolvedValue([
+        { discordUserId: 'unknown999', cursor: '1750000000', updatedAt: '2026-03-19T00:00:00Z' },
+      ]);
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue(null);
+
+      await discordCommands.handlePBStatus(statusInteraction, {});
+
+      expect(statusInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ embeds: expect.any(Array) })
+      );
+    });
+
+    it('should display member Discord mention when member has no athlete field', async () => {
+      mockMemberManager.getAllMembers.mockResolvedValue([
+        { discordUserId: '111222', athleteId: 99999, isActive: true },
+      ]);
+
+      await discordCommands.handlePBStatus(statusInteraction, {});
+
+      expect(statusInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ embeds: expect.any(Array) })
+      );
     });
   });
 });

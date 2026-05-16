@@ -86,6 +86,61 @@ const CHANNEL_TYPE = {
   GUILD_ANNOUNCEMENT: 5
 };
 
+// Personal Best - maps Strava best_effort names to normalized display labels
+const PB_EFFORT_LABELS = {
+  '400m':          '400m',
+  '1/2 mile':      '½ Mile',
+  '1K':            '1K',
+  '1 mile':        '1 Mile',
+  '2 mile':        '2 Miles',
+  '5K':            '5K',
+  '10K':           '10K',
+  '15K':           '15K',
+  '20K':           '20K',
+  'Half-Marathon': 'Half Marathon',
+  '20 mile':       '20 Miles',
+  'Marathon':      'Marathon',
+};
+
+// Activity types that support PB tracking
+const SUPPORTED_PB_TYPES = ['Run'];
+
+// Maximum distance shortfall/excess (as a fraction) to still consider
+// an activity distance as covering a PB category.
+// 0.02 = 2%: covers typical GPS inaccuracy (consumer watches are 0.5-2% off).
+// e.g. 4900m (2.0% short of 5K) → qualifies; 4899m (2.02% short) → does not
+const PB_DISTANCE_TOLERANCE_PERCENT = 0.02;
+
+// Maps each PB category label to its canonical distance in meters
+// Used to resolve a user-specified distance to the nearest PB category
+const CATEGORY_DISTANCES = {
+  '400m':          400,
+  '½ Mile':        805,
+  '1K':            1000,
+  '1 Mile':        1609,
+  '2 Miles':       3219,
+  '5K':            5000,
+  '10K':           10000,
+  '15K':           15000,
+  '20K':           20000,
+  'Half Marathon': 21097,
+  '20 Miles':      32187,
+  'Marathon':      42195,
+};
+
+// Maps Strava /athletes/{id}/prs record_type (distance in meters) → PB category labels
+// NOTE: Uses an undocumented Strava web endpoint. Distances without elapsed_time are skipped.
+const STRAVA_PR_RECORD_TYPE_MAP = {
+  1609:  '1 Mile',
+  3219:  '2 Miles',
+  5000:  '5K',
+  10000: '10K',
+  15000: '15K',
+  20000: '20K',
+  21097: 'Half Marathon',
+  42195: 'Marathon',
+};
+
 module.exports = {
   ENCRYPTION,
   TIME,
@@ -95,5 +150,10 @@ module.exports = {
   RACE_STATUS,
   RACE_TYPE,
   RACE_EMOJI,
-  CHANNEL_TYPE
+  CHANNEL_TYPE,
+  PB_EFFORT_LABELS,
+  SUPPORTED_PB_TYPES,
+  PB_DISTANCE_TOLERANCE_PERCENT,
+  STRAVA_PR_RECORD_TYPE_MAP,
+  CATEGORY_DISTANCES,
 };

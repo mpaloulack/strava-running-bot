@@ -16,11 +16,11 @@ describe('RateLimiter', () => {
     it('should initialize with correct limits', () => {
       expect(rateLimiter.limits).toEqual({
         short: {
-          requests: 80,
+          requests: 240,
           window: 15 * 60 * 1000
         },
         daily: {
-          requests: 900,
+          requests: 2400,
           window: 24 * 60 * 60 * 1000
         }
       });

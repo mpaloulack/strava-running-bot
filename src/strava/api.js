@@ -398,6 +398,7 @@ class StravaAPI {
   resetRateLimiter() {
     return this.rateLimiter.reset();
   }
+
 }
 
 module.exports = StravaAPI;

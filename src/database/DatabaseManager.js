@@ -1,8 +1,8 @@
 const fs = require('node:fs').promises;
 const path = require('node:path');
-const { eq, and, desc, asc, gte, lte, sql } = require('drizzle-orm');
+const { eq, and, desc, asc, gte, lte, sql, like } = require('drizzle-orm');
 const dbConnection = require('./connection');
-const { members, races, migrationLog, settings } = require('./schema');
+const { members, races, migrationLog, settings, personalBests, activities } = require('./schema');
 const logger = require('../utils/Logger');
 const config = require('../../config/config');
 const SettingsManager = require('../managers/SettingsManager');
@@ -624,6 +624,138 @@ class DatabaseManager {
 
     // Order by race date
     return await query.orderBy(asc(races.race_date));
+  }
+
+  // === PERSONAL BEST MANAGEMENT ===
+  async upsertPersonalBest(athleteId, pbData) {
+    await this.ensureInitialized();
+
+    const existing = await this.getPersonalBest(athleteId, pbData.category);
+
+    if (existing) {
+      const result = await this.db.update(personalBests)
+        .set({
+          distance_m: pbData.distanceM,
+          elapsed_time: pbData.elapsedTime,
+          moving_time: pbData.movingTime,
+          strava_activity_id: String(pbData.activityId ?? pbData.stravaActivityId),
+          activity_name: pbData.activityName || null,
+          activity_date: pbData.activityDate,
+          updated_at: new Date().toISOString(),
+        })
+        .where(
+          and(
+            eq(personalBests.member_athlete_id, Number.parseInt(athleteId)),
+            eq(personalBests.category, pbData.category)
+          )
+        )
+        .returning();
+      return result[0] || null;
+    }
+
+    const result = await this.db.insert(personalBests).values({
+      member_athlete_id: Number.parseInt(athleteId),
+      category: pbData.category,
+      distance_m: pbData.distanceM,
+      elapsed_time: pbData.elapsedTime,
+      moving_time: pbData.movingTime,
+      strava_activity_id: String(pbData.activityId ?? pbData.stravaActivityId),
+      activity_name: pbData.activityName || null,
+      activity_date: pbData.activityDate,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).returning();
+
+    return result[0] || null;
+  }
+
+  async getPersonalBestsByAthleteId(athleteId) {
+    await this.ensureInitialized();
+
+    return await this.db.select()
+      .from(personalBests)
+      .where(eq(personalBests.member_athlete_id, Number.parseInt(athleteId)))
+      .orderBy(asc(personalBests.distance_m));
+  }
+
+  async getPersonalBest(athleteId, category) {
+    await this.ensureInitialized();
+
+    return await this.db.select()
+      .from(personalBests)
+      .where(
+        and(
+          eq(personalBests.member_athlete_id, Number.parseInt(athleteId)),
+          eq(personalBests.category, category)
+        )
+      )
+      .get() || null;
+  }
+
+  async getPBSyncCursors() {
+    await this.ensureInitialized();
+    try {
+      const rows = await this.db.select()
+        .from(settings)
+        .where(like(settings.key, 'pb_sync_cursor_%'));
+      return rows.map(row => ({
+        discordUserId: row.key.replace('pb_sync_cursor_', ''),
+        cursor: row.value,
+        updatedAt: row.updated_at,
+      }));
+    } catch (error) {
+      logger.database.error('Failed to query PB sync cursors', { error: error.message });
+      return [];
+    }
+  }
+
+  async getPBCountByAthleteId(athleteId) {
+    await this.ensureInitialized();
+    try {
+      const result = await this.db.select({ count: sql`count(*)` })
+        .from(personalBests)
+        .where(eq(personalBests.member_athlete_id, Number.parseInt(athleteId)));
+      return Number(result[0]?.count ?? 0);
+    } catch (error) {
+      logger.database.error('Failed to get PB count', { athleteId, error: error.message });
+      return 0;
+    }
+  }
+
+  // === ACTIVITY MANAGEMENT ===
+  async upsertActivity(athleteId, activity) {
+    await this.ensureInitialized();
+
+    const record = {
+      strava_activity_id: String(activity.id),
+      member_athlete_id: Number.parseInt(athleteId),
+      name: activity.name || null,
+      type: activity.type || null,
+      sport_type: activity.sport_type || null,
+      distance: activity.distance ?? null,
+      moving_time: activity.moving_time ?? null,
+      elapsed_time: activity.elapsed_time ?? null,
+      total_elevation_gain: activity.total_elevation_gain ?? null,
+      average_speed: activity.average_speed ?? null,
+      max_speed: activity.max_speed ?? null,
+      average_heartrate: activity.average_heartrate ?? null,
+      max_heartrate: activity.max_heartrate ?? null,
+      start_date: activity.start_date || null,
+      start_date_local: activity.start_date_local || null,
+      timezone: activity.timezone || null,
+      map_summary_polyline: activity.map?.summary_polyline || null,
+      has_heartrate: activity.has_heartrate ? 1 : 0,
+      pr_categories: activity.pr_categories ?? null,
+      updated_at: new Date().toISOString(),
+    };
+
+    await this.db
+      .insert(activities)
+      .values(record)
+      .onConflictDoUpdate({
+        target: activities.strava_activity_id,
+        set: record,
+      });
   }
 
   // === UTILITY METHODS ===
