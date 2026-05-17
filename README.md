@@ -1,21 +1,6 @@
 # Strava Running Bot 🏃‍♂️
 
-A comprehensive### 🏆 **Race Management System**
-
-- **Enhanced Race Planning**: Add upcoming races with road/trail categorization
-- **Smart Distance Presets**: Quick selection for 5K, 10K, Half Marathon, Marathon
-- **Custom Distances**: Flexible distance input for trail races and non-standard events
-- **Race Tracking**: Monitor race status (registered, completed, cancelled, DNS, DNF)
-- **Team Calendar**: View upcoming races for all team members
-- **Public Announcements**: Race additions are shared with the entire team
-
-### 📅 **Automated Race Announcements**
-
-- **Weekly Summaries**: Automatic posts every Monday at 8:00 AM UTC with the week's races
-- **Monthly Overviews**: First-of-month announcements with all races for the month
-- **Smart Formatting**: Races grouped by date with member names and race details
-- **Configurable Scheduling**: Customizable timing and timezone settings
-- **Manual Triggers**: Admin commands to test and manually trigger announcements bot that automatically posts Strava activities from your running team members to a dedicated Discord channel. Built with real-time webhooks, rich activity displays, complete team management functionality, and an advanced race management system for tracking your team's upcoming events.
+A comprehensive bot that automatically posts Strava activities from your running team members to a dedicated Discord channel. Built with real-time webhooks, rich activity displays, complete team management functionality, and an advanced race management system for tracking your team's upcoming events.
 
 ![Discord Bot](https://img.shields.io/badge/Discord-Bot-5865F2?style=for-the-badge&logo=discord&logoColor=white)
 ![Strava](https://img.shields.io/badge/Strava-API-FC4C02?style=for-the-badge&logo=strava&logoColor=white)
@@ -23,11 +8,8 @@ A comprehensive### 🏆 **Race Management System**
 ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 ![SQLite](https://img.shields.io/badge/SQLite-Database-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
 
-[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=mmarquet_strava-running-bot&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=mmarquet_strava-running-bot)
-[![Maintainability Rating](https://sonarcloud.io/api/project_badges/measure?project=mmarquet_strava-running-bot&metric=sqale_rating)](https://sonarcloud.io/summary/new_code?id=mmarquet_strava-running-bot)
-[![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=mmarquet_strava-running-bot&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=mmarquet_strava-running-bot)
-[![Bugs](https://sonarcloud.io/api/project_badges/measure?project=mmarquet_strava-running-bot&metric=bugs)](https://sonarcloud.io/summary/new_code?id=mmarquet_strava-running-bot)
-[![Code Smells](https://sonarcloud.io/api/project_badges/measure?project=mmarquet_strava-running-bot&metric=code_smells)](https://sonarcloud.io/summary/new_code?id=mmarquet_strava-running-bot)
+[![CI](https://github.com/mpaloulack/strava-running-bot/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mpaloulack/strava-running-bot/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/mpaloulack/strava-running-bot/branch/main/graph/badge.svg)](https://codecov.io/gh/mpaloulack/strava-running-bot)
 
 ## 🎯 Features
 
@@ -56,7 +38,7 @@ A comprehensive### 🏆 **Race Management System**
 - Discord slash commands for easy team management
 - Web-based registration system
 
-### � **Race Management System**
+### 🏆 **Race Management System**
 
 - **Enhanced Race Planning**: Add upcoming races with road/trail categorization
 - **Smart Distance Presets**: Quick selection for 5K, 10K, Half Marathon, Marathon
@@ -65,9 +47,9 @@ A comprehensive### 🏆 **Race Management System**
 - **Team Calendar**: View upcoming races for all team members
 - **Public Announcements**: Race additions are shared with the entire team
 
-### �🎮 **Discord Integration**
+### 🎮 **Discord Integration**
 
-- **Slash Commands**: `/members`, `/register`, `/last`, `/botstatus`, `/my-races`, `/all-races`
+- **Slash Commands**: `/members`, `/register`, `/last`, `/botstatus`, `/my-races`, `/all-races`, `/settings`, `/scheduler`
 - **Member Management**: Add, remove, activate/deactivate members
 - **Activity Lookup**: View any member's latest activity on-demand
 - **Race Management**: Complete race lifecycle management with team visibility
@@ -96,7 +78,7 @@ A comprehensive### 🏆 **Race Management System**
 1. **Clone and Setup**
 
    ```bash
-   git clone https://github.com/mmarquet/strava-running-bot.git
+   git clone https://github.com/mpaloulack/strava-running-bot.git
    cd strava-running-bot
    npm install
    ```
@@ -117,7 +99,7 @@ A comprehensive### 🏆 **Race Management System**
 4. **Deploy with Docker** (Optional)
 
    ```bash
-   docker compose -f docker/docker-compose.yml up -d
+   docker compose -f docker-compose.yml up -d
    ```
 
 > **💡 Need help getting credentials?** Follow the [Complete Setup Guide](#-complete-setup-guide) below for detailed instructions.
@@ -322,12 +304,15 @@ node utils/setup.js validate-webhook
 | Command | Description | Usage |
 |---------|-------------|-------|
 | `/members list` | List all registered team members | `/members list` |
+| `/members inactive` | List inactive members and optionally notify them | `/members inactive notify: dm` |
 | `/members remove` | Remove a team member | `/members remove user: @user` |
 | `/members deactivate` | Temporarily deactivate a member | `/members deactivate user: @user` |
 | `/members reactivate` | Reactivate a deactivated member | `/members reactivate user: @user` |
 | `/botstatus` | Show bot statistics and health | `/botstatus` |
 | `/all-races list` | List all team races | `/all-races list` or `/all-races list status: upcoming` |
 | `/all-races upcoming` | Show upcoming races for all members | `/all-races upcoming days: 60` |
+| `/settings channel` | Set the Discord channel used for bot posts | `/settings channel channel: #running` |
+| `/settings view` | View current bot settings | `/settings view` |
 | `/scheduler weekly` | Manually trigger weekly race announcement | `/scheduler weekly` |
 | `/scheduler monthly` | Manually trigger monthly race announcement | `/scheduler monthly` |
 | `/scheduler status` | Show scheduler status and upcoming races | `/scheduler status` |
@@ -411,42 +396,58 @@ curl http://localhost:3000/health
 ```text
 strava-running-bot/
 ├── src/
+│   ├── constants/
+│   │   └── index.js                  # Shared constants
 │   ├── database/
-│   │   ├── connection.js       # SQLite database connection
-│   │   ├── DatabaseManager.js  # Database operations manager
-│   │   └── migrations/         # Database schema migrations
-│   │       ├── 001_initial_schema.sql
-│   │       └── 002_add_race_type_distance.sql
+│   │   ├── connection.js             # SQLite connection
+│   │   ├── DatabaseManager.js        # Drizzle-backed DB operations
+│   │   ├── DatabaseMemberManager.js  # Member persistence layer
+│   │   ├── migrate.js                # Migration runner
+│   │   ├── native-sqlite-adapter.js  # better-sqlite3 adapter
+│   │   ├── schema.js                 # Drizzle schema definitions
+│   │   └── migrations/               # Generated SQL migrations
 │   ├── discord/
-│   │   ├── bot.js              # Discord bot implementation
-│   │   └── commands.js         # Slash command handlers
-│   ├── strava/
-│   │   └── api.js              # Strava API integration
-│   ├── server/
-│   │   └── webhook.js          # Webhook server & API endpoints
-│   ├── processors/
-│   │   └── ActivityProcessor.js # Main activity processing logic
+│   │   ├── bot.js                    # Discord client + command registration
+│   │   └── commands.js               # Slash command handlers
 │   ├── managers/
-│   │   ├── MemberManager.js    # Team member management
-│   │   └── RaceManager.js      # Race management system
+│   │   ├── ActivityQueue.js          # Delayed activity post queue
+│   │   ├── MemberManager.js          # Team member management
+│   │   ├── RaceManager.js            # Race management system
+│   │   ├── Scheduler.js              # Cron jobs for race announcements
+│   │   └── SettingsManager.js        # Runtime-mutable settings
+│   ├── processors/
+│   │   └── ActivityProcessor.js      # Webhook → fetch → format → post
+│   ├── server/
+│   │   └── webhook.js                # Express webhook + OAuth callback
+│   ├── strava/
+│   │   └── api.js                    # Strava API wrapper + OAuth + refresh
 │   ├── utils/
-│   │   ├── ActivityFormatter.js # Activity data formatting
-│   │   ├── DiscordUtils.js     # Discord utility functions
-│   │   ├── EmbedBuilder.js     # Discord embed creation
-│   │   ├── Logger.js           # Logging utilities
-│   │   └── RateLimiter.js      # Strava API rate limiting
-│   └── index.js                # Application entry point
+│   │   ├── ActivityFormatter.js      # Activity data formatting
+│   │   ├── DateUtils.js              # Date/time helpers
+│   │   ├── DiscordUtils.js           # Discord helpers
+│   │   ├── EmbedBuilder.js           # Discord embed creation
+│   │   ├── EncryptionUtils.js        # AES-256 token encryption
+│   │   ├── Logger.js                 # Logging utilities
+│   │   └── RateLimiter.js            # Strava API rate limiting
+│   └── index.js                      # Application entry point
 ├── config/
-│   └── config.js               # Configuration management
+│   ├── config.js                     # env → config object
+│   └── dynamicConfig.js              # DB-backed runtime config
 ├── utils/
-│   └── setup.js                # Setup and management utilities
-├── data/                       # Database and member data storage
-├── logs/                       # Application logs
-├── .env.example                # Environment variables template
-├── docker/
-│   ├── docker-compose.yml      # Docker deployment configuration
-│   └── Dockerfile              # Container image definition
-└── README.md                   # This documentation
+│   └── setup.js                      # Setup & webhook-management CLI
+├── scripts/
+│   └── refresh-expired-tokens.js     # Maintenance script
+├── public/                           # Static assets served by webhook server
+├── __tests__/                        # Jest test suites (mirrors src/)
+├── docs/                             # API, deployment, troubleshooting, etc.
+├── .github/workflows/
+│   ├── ci.yml                        # Lint + tests + Codecov upload
+│   └── build-and-push.yml            # Docker image build & push
+├── .env.example                      # Environment variables template
+├── Dockerfile                        # Container image definition
+├── docker-compose.yml                # Local Docker deployment
+├── docker-compose.prod.yml           # Production Docker deployment
+└── README.md                         # This documentation
 ```
 
 ### Key Components
@@ -590,13 +591,13 @@ SCHEDULER_TIMEZONE="America/New_York"  # Default: UTC
 
 ```bash
 # Start with Docker Compose
-docker compose -f docker/docker-compose.yml up -d
+docker compose -f docker-compose.yml up -d
 
 # View logs
-docker compose -f docker/docker-compose.yml logs -f
+docker compose -f docker-compose.yml logs -f
 
 # Check status
-docker compose -f docker/docker-compose.yml ps
+docker compose -f docker-compose.yml ps
 ```
 
 ### Production Deployment
@@ -604,7 +605,7 @@ docker compose -f docker/docker-compose.yml ps
 For production deployment on a NAS or server:
 
 1. **Configure Environment**: Set `NODE_ENV=production` in `.env`
-2. **Resource Limits**: Adjust memory/CPU limits in `docker/docker-compose.yml`
+2. **Resource Limits**: Adjust memory/CPU limits in `docker-compose.yml`
 3. **Domain Setup**: Configure domain and HTTPS for webhooks
 4. **Monitoring**: Set up log monitoring and alerting
 5. **Backups**: Regular backup of member data volume
@@ -623,7 +624,7 @@ curl http://localhost:3000/health
 curl http://localhost:3000/members
 
 # Check Docker health
-docker compose -f docker/docker-compose.yml ps
+docker compose -f docker-compose.yml ps
 ```
 
 ### Logs
@@ -633,10 +634,10 @@ docker compose -f docker/docker-compose.yml ps
 npm run dev
 
 # Docker
-docker compose -f docker/docker-compose.yml logs -f
+docker compose -f docker-compose.yml logs -f
 
 # Specific timeframe
-docker compose -f docker/docker-compose.yml logs --since="1h"
+docker compose -f docker-compose.yml logs --since="1h"
 ```
 
 ### Maintenance Tasks
@@ -723,7 +724,7 @@ node utils/setup.js list-webhooks
 curl http://localhost:3000/health
 
 # View logs
-docker compose -f docker/docker-compose.yml logs -f
+docker compose -f docker-compose.yml logs -f
 
 # Verify Discord permissions
 # Check bot invite URL and server permissions
@@ -749,7 +750,7 @@ node utils/setup.js list-webhooks
 curl http://localhost:3000/members
 
 # Check webhook logs
-docker compose -f docker/docker-compose.yml logs -f | grep webhook
+docker compose -f docker-compose.yml logs -f | grep webhook
 ```
 
 #### Token Refresh Errors
