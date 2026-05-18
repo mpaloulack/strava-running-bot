@@ -5,6 +5,7 @@ const ActivityQueue = require('../managers/ActivityQueue');
 const Scheduler = require('../managers/Scheduler');
 const RaceManager = require('../managers/RaceManager');
 const PBManager = require('../managers/PBManager');
+const LeaderboardManager = require('../managers/LeaderboardManager');
 const config = require('../../config/config');
 const dynamicConfig = require('../../config/dynamicConfig');
 const logger = require('../utils/Logger');
@@ -20,7 +21,8 @@ class ActivityProcessor {
     
     // Initialize race management and scheduler
     this.raceManager = new RaceManager();
-    this.scheduler = new Scheduler(this, this.raceManager);
+    this.leaderboardManager = new LeaderboardManager();
+    this.scheduler = new Scheduler(this, this.raceManager, this.leaderboardManager);
 
     // Initialize PB manager
     this.pbManager = new PBManager();

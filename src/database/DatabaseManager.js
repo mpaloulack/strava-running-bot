@@ -1,6 +1,6 @@
 const fs = require('node:fs').promises;
 const path = require('node:path');
-const { eq, and, desc, asc, gte, lte, sql, like } = require('drizzle-orm');
+const { eq, and, desc, asc, gte, lte, lt, inArray, sql, like } = require('drizzle-orm');
 const dbConnection = require('./connection');
 const { members, races, migrationLog, settings, personalBests, activities } = require('./schema');
 const logger = require('../utils/Logger');
@@ -753,6 +753,31 @@ class DatabaseManager {
         target: activities.strava_activity_id,
         set: record,
       });
+  }
+
+  // Aggregate run distance per active member for a date window.
+  // Date strings are compared lexicographically against `start_date_local`
+  // (ISO 8601) — local-day boundaries match what the runner expects ("did
+  // that 11pm run on March 31 count for March?").
+  async getMonthlyRunTotals(startDateISO, endDateISO, runTypes) {
+    await this.ensureInitialized();
+
+    return await this.db.select({
+      athleteId: activities.member_athlete_id,
+      totalDistanceM: sql`SUM(${activities.distance})`.as('totalDistanceM'),
+      activityCount: sql`COUNT(*)`.as('activityCount'),
+    })
+      .from(activities)
+      .innerJoin(members, eq(members.athlete_id, activities.member_athlete_id))
+      .where(and(
+        inArray(activities.type, runTypes),
+        gte(activities.start_date_local, startDateISO),
+        lt(activities.start_date_local, endDateISO),
+        eq(members.is_active, 1),
+        sql`${activities.distance} > 0`
+      ))
+      .groupBy(activities.member_athlete_id)
+      .orderBy(desc(sql`totalDistanceM`));
   }
 
   // === UTILITY METHODS ===

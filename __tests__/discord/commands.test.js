@@ -292,7 +292,7 @@ describe('DiscordCommands', () => {
     it('should return array of slash commands', () => {
       const commands = discordCommands.getCommands();
 
-      expect(commands).toHaveLength(11); // members, register, botstatus, last, race, teamraces, settings, scheduler, pb, help, sync
+      expect(commands).toHaveLength(12); // members, register, botstatus, last, race, teamraces, settings, scheduler, pb, help, sync, leaderboard
       expect(commands.every(cmd => cmd instanceof SlashCommandBuilder)).toBe(true);
     });
 

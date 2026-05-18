@@ -429,6 +429,7 @@ strava-running-bot/
 │   │   └── commands.js               # Slash command handlers
 │   ├── managers/
 │   │   ├── ActivityQueue.js          # Delayed activity post queue
+│   │   ├── LeaderboardManager.js     # Monthly running-km leaderboard
 │   │   ├── MemberManager.js          # Team member management
 │   │   ├── PBManager.js              # Personal Best tracking & sync
 │   │   ├── RaceManager.js            # Race management system
@@ -563,10 +564,18 @@ Key/value store used internally for sync checkpoints (e.g. cursor timestamps for
 #### **Scheduler**
 
 - **Automated Race Announcements**: Cron-based scheduling for weekly and monthly race summaries
+- **Monthly Leaderboard**: Posts the previous month's running-kilometre ranking on day 1
 - **Configurable Timing**: Customizable schedule patterns with timezone support
 - **Smart Race Grouping**: Intelligent organization of races by date and week
 - **Discord Integration**: Direct posting to team channel with rich embedded announcements
 - **Manual Triggers**: Admin testing capabilities with instant announcement generation
+
+#### **LeaderboardManager**
+
+- Aggregates the cached `activities` table by member for a calendar month
+- Filters to running types (`Run`, `TrailRun`, `VirtualRun`) and active members only
+- Uses `start_date_local` so a 11pm March 31 run counts in March, not April UTC
+- Surfaced via `/leaderboard` (current or previous month) and the monthly cron job
 #### **DatabaseManager**
 
 - SQLite database with automatic migrations

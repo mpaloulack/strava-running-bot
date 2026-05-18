@@ -4,6 +4,7 @@ const DiscordUtils = require('../utils/DiscordUtils');
 const ActivityFormatter = require('../utils/ActivityFormatter');
 const RaceManager = require('../managers/RaceManager');
 const PBManager = require('../managers/PBManager');
+const LeaderboardManager = require('../managers/LeaderboardManager');
 const logger = require('../utils/Logger');
 const config = require('../../config/config');
 const { TIME, DISCORD, CATEGORY_DISTANCES } = require('../constants');
@@ -27,6 +28,7 @@ class DiscordCommands {
     this.activityProcessor = activityProcessor;
     this.raceManager = new RaceManager();
     this.pbManager = new PBManager();
+    this.leaderboardManager = new LeaderboardManager();
     this.pbSyncInProgress = new Set();
   }
 
@@ -439,6 +441,21 @@ class DiscordCommands {
               { name: 'Last 365 days', value: 'last_365_days' }
             )
         ),
+
+      // Monthly running leaderboard (km per team member)
+      new SlashCommandBuilder()
+        .setName('leaderboard')
+        .setDescription('Show running kilometres ranking for a month')
+        .addStringOption(option =>
+          option
+            .setName('month')
+            .setDescription('Which month to show (defaults to current)')
+            .setRequired(false)
+            .addChoices(
+              { name: 'Current month', value: 'current' },
+              { name: 'Previous month', value: 'previous' }
+            )
+        ),
     ];
   }
 
@@ -489,6 +506,9 @@ class DiscordCommands {
         break;
       case 'sync':
         await this.handleSyncCommand(interaction, options);
+        break;
+      case 'leaderboard':
+        await this.handleLeaderboardCommand(interaction, options);
         break;
       case 'help':
         await this.handleHelpCommand(interaction);
@@ -1829,6 +1849,42 @@ class DiscordCommands {
         content: '❌ Failed to retrieve team races.',
         ephemeral: true
       });
+    }
+  }
+
+  // === LEADERBOARD COMMAND HANDLER ===
+
+  async handleLeaderboardCommand(interaction, options) {
+    await interaction.deferReply();
+
+    try {
+      const choice = options.getString('month') ?? 'current';
+      const period = choice === 'previous'
+        ? LeaderboardManager.getPreviousMonth()
+        : LeaderboardManager.getCurrentMonth();
+
+      const result = await this.leaderboardManager.getMonthlyLeaderboard({
+        year: period.year,
+        month: period.month,
+        memberManager: this.activityProcessor.memberManager,
+      });
+
+      const embed = ActivityEmbedBuilder.buildMonthlyLeaderboardEmbed(result);
+      await interaction.editReply({ embeds: [embed] });
+
+      logger.discord.info('Leaderboard rendered', {
+        user: interaction.user.tag,
+        year: result.year,
+        month: result.month,
+        runners: result.entries.length,
+      });
+    } catch (error) {
+      logger.discord.error('Error rendering leaderboard', {
+        user: interaction.user.tag,
+        error: error.message,
+        stack: error.stack
+      });
+      await interaction.editReply({ content: '❌ Failed to render leaderboard.' });
     }
   }
 

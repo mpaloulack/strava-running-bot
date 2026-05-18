@@ -38,10 +38,13 @@ const config = {
     // Enable/disable scheduled race announcements
     weeklyEnabled: process.env.WEEKLY_RACE_ANNOUNCEMENTS !== 'false', // Default: enabled
     monthlyEnabled: process.env.MONTHLY_RACE_ANNOUNCEMENTS !== 'false', // Default: enabled
+    leaderboardEnabled: process.env.MONTHLY_LEADERBOARD !== 'false', // Default: enabled
 
     // Cron schedule patterns
     weeklySchedule: process.env.WEEKLY_SCHEDULE || '0 8 * * 1', // Every Monday at 8:00 AM
     monthlySchedule: process.env.MONTHLY_SCHEDULE || '0 8 1 * *', // First day of month at 8:00 AM
+    // 9 AM (after the 8 AM race announcement) on day 1 of every month — posts the previous month's totals.
+    leaderboardSchedule: process.env.LEADERBOARD_SCHEDULE || '0 9 1 * *',
 
     // Timezone for scheduling (important for proper timing)
     timezone: process.env.SCHEDULER_TIMEZONE || 'UTC',

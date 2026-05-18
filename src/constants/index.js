@@ -105,6 +105,12 @@ const PB_EFFORT_LABELS = {
 // Activity types that support PB tracking
 const SUPPORTED_PB_TYPES = ['Run'];
 
+// Activity types counted toward the monthly running leaderboard.
+// Wider than SUPPORTED_PB_TYPES because the leaderboard just sums distance —
+// trail and treadmill runs are still running, even though Strava only emits
+// best_efforts (used for PBs) on the 'Run' type.
+const LEADERBOARD_RUN_TYPES = ['Run', 'TrailRun', 'VirtualRun'];
+
 // Maximum distance shortfall/excess (as a fraction) to still consider
 // an activity distance as covering a PB category.
 // 0.02 = 2%: covers typical GPS inaccuracy (consumer watches are 0.5-2% off).
@@ -153,6 +159,7 @@ module.exports = {
   CHANNEL_TYPE,
   PB_EFFORT_LABELS,
   SUPPORTED_PB_TYPES,
+  LEADERBOARD_RUN_TYPES,
   PB_DISTANCE_TOLERANCE_PERCENT,
   STRAVA_PR_RECORD_TYPE_MAP,
   CATEGORY_DISTANCES,

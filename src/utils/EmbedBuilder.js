@@ -226,6 +226,45 @@ class ActivityEmbedBuilder {
       }
     }
   }
+
+  /**
+   * Build an embed listing members ranked by total run distance for a month.
+   * Rows go into the description (4096-char budget) rather than a single field
+   * (1024-char limit) so the embed scales past ~15 runners without truncation.
+   * @param {{year: number, month: number, entries: Array<{memberName: string, totalDistanceM: number, activityCount: number}>}} data
+   * @returns {EmbedBuilder}
+   */
+  static buildMonthlyLeaderboardEmbed({ year, month, entries }) {
+    const monthLabel = new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString('en-US', {
+      month: 'long', year: 'numeric', timeZone: 'UTC',
+    });
+
+    const embed = new EmbedBuilder()
+      .setTitle('🏆 Monthly Running Leaderboard')
+      .setColor('#D4AF37')
+      .setTimestamp();
+
+    if (!entries || entries.length === 0) {
+      embed.setDescription(`Total kilometres run in **${monthLabel}**\n\n📭 No running activities recorded for any team member.`);
+      return embed;
+    }
+
+    const medal = (i) => (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`);
+    const lines = entries.map((entry, i) => {
+      const km = (entry.totalDistanceM / 1000).toFixed(2);
+      const runs = `${entry.activityCount} run${entry.activityCount === 1 ? '' : 's'}`;
+      return `${medal(i)} ${entry.memberName} — **${km} km** · ${runs}`;
+    });
+
+    embed.setDescription(`Total kilometres run in **${monthLabel}**\n\n${lines.join('\n')}`);
+
+    const totalKm = entries.reduce((s, e) => s + e.totalDistanceM, 0) / 1000;
+    embed.setFooter({
+      text: `${entries.length} runner${entries.length === 1 ? '' : 's'} · ${totalKm.toFixed(2)} km total`,
+    });
+
+    return embed;
+  }
 }
 
 module.exports = ActivityEmbedBuilder;
