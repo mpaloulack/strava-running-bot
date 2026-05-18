@@ -1,3 +1,9 @@
+// EmbedBuilder.js requires the config module which calls process.exit when env
+// vars are missing. Mock it so the test runs cleanly in CI.
+jest.mock('../../config/config', () => ({
+  server: { baseUrl: 'https://test.example.com' },
+}));
+
 const ActivityEmbedBuilder = require('../../src/utils/EmbedBuilder');
 
 describe('ActivityEmbedBuilder.buildMonthlyLeaderboardEmbed', () => {

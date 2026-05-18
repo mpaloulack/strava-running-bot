@@ -52,6 +52,25 @@ jest.mock('discord.js', () => ({
   EmbedBuilder: jest.fn(() => mockEmbedBuilder)
 }));
 
+// Mock config so EmbedBuilder.js (loaded by Scheduler.js) doesn't exit on
+// missing env vars in CI environments where .env is absent.
+jest.mock('../../config/config', () => ({
+  server: { baseUrl: 'https://test.example.com' },
+}));
+
+// LeaderboardManager would otherwise require DatabaseManager → SettingsManager
+// → real DB code at module load. The Scheduler tests inject a mock instance,
+// so the real class is never used — but the Scheduler also calls the static
+// getPreviousMonth() helper, so we expose that on the mock.
+jest.mock('../../src/managers/LeaderboardManager', () => {
+  const MockLeaderboardManager = jest.fn().mockImplementation(() => ({
+    getMonthlyLeaderboard: jest.fn(),
+  }));
+  MockLeaderboardManager.getPreviousMonth = jest.fn(() => ({ year: 2026, month: 4 }));
+  MockLeaderboardManager.getCurrentMonth = jest.fn(() => ({ year: 2026, month: 5 }));
+  return MockLeaderboardManager;
+});
+
 describe('Scheduler', () => {
   let scheduler;
   let mockActivityProcessor;
