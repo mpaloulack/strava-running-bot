@@ -660,5 +660,30 @@ describe('Scheduler', () => {
       expect(scheduler.healthState).toBe('unhealthy');
       expect(mockChannel.send).not.toHaveBeenCalled();
     });
+
+    test('cron callback invokes runHealthSelfCheck on tick', async () => {
+      await scheduler.initialize(healthConfig);
+      // Health-check is the only cron job registered with this config
+      const cronCallback = cron.schedule.mock.calls[0][1];
+      const spy = jest.spyOn(scheduler, 'runHealthSelfCheck').mockResolvedValueOnce();
+
+      cronCallback();
+
+      expect(spy).toHaveBeenCalled();
+    });
+
+    test('validateStatus accepts 2xx and rejects everything else', async () => {
+      await scheduler.initialize(healthConfig);
+      axios.get.mockResolvedValueOnce({ status: 200 });
+
+      await scheduler.runHealthSelfCheck();
+
+      const validateStatus = axios.get.mock.calls[0][1].validateStatus;
+      expect(validateStatus(200)).toBe(true);
+      expect(validateStatus(299)).toBe(true);
+      expect(validateStatus(300)).toBe(false);
+      expect(validateStatus(404)).toBe(false);
+      expect(validateStatus(500)).toBe(false);
+    });
   });
 });
