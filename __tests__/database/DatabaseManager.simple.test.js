@@ -1037,6 +1037,41 @@ describe('DatabaseManager', () => {
     });
   });
 
+  describe('getMonthlyRunTotals', () => {
+    beforeEach(() => {
+      DatabaseManager.isInitialized = true;
+      DatabaseManager.db = mockDb;
+    });
+
+    it('aggregates distance per athlete via inner join and groupBy', async () => {
+      const mockRows = [
+        { athleteId: 111, totalDistanceM: 52340.5, activityCount: 6 },
+        { athleteId: 222, totalDistanceM: 31200, activityCount: 4 },
+      ];
+
+      const mockSelectChain = {
+        from: jest.fn().mockReturnThis(),
+        innerJoin: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        groupBy: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockResolvedValue(mockRows),
+      };
+      mockDb.select.mockReturnValue(mockSelectChain);
+
+      const result = await DatabaseManager.getMonthlyRunTotals(
+        '2026-04-01T00:00:00.000Z',
+        '2026-05-01T00:00:00.000Z',
+        ['Run', 'TrailRun', 'VirtualRun']
+      );
+
+      expect(result).toEqual(mockRows);
+      expect(mockSelectChain.innerJoin).toHaveBeenCalledTimes(1);
+      expect(mockSelectChain.where).toHaveBeenCalledTimes(1);
+      expect(mockSelectChain.groupBy).toHaveBeenCalledTimes(1);
+      expect(mockSelectChain.orderBy).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('getPBSyncCursors', () => {
     beforeEach(() => {
       DatabaseManager.isInitialized = true;

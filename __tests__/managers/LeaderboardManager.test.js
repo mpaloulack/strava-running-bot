@@ -39,12 +39,26 @@ describe('LeaderboardManager', () => {
       const now = new Date(Date.UTC(2026, 11, 31));
       expect(LeaderboardManager.getPreviousMonth(now)).toEqual({ year: 2026, month: 11 });
     });
+
+    it('defaults to the current process time when no argument is given', () => {
+      const result = LeaderboardManager.getPreviousMonth();
+      expect(typeof result.year).toBe('number');
+      expect(result.month).toBeGreaterThanOrEqual(1);
+      expect(result.month).toBeLessThanOrEqual(12);
+    });
   });
 
   describe('getCurrentMonth', () => {
     it('returns current month in 1-12 form', () => {
       const now = new Date(Date.UTC(2026, 4, 18));
       expect(LeaderboardManager.getCurrentMonth(now)).toEqual({ year: 2026, month: 5 });
+    });
+
+    it('defaults to the current process time when no argument is given', () => {
+      const result = LeaderboardManager.getCurrentMonth();
+      expect(typeof result.year).toBe('number');
+      expect(result.month).toBeGreaterThanOrEqual(1);
+      expect(result.month).toBeLessThanOrEqual(12);
     });
   });
 
@@ -99,6 +113,21 @@ describe('LeaderboardManager', () => {
       const result = await manager.getMonthlyLeaderboard({ year: 2026, month: 3, memberManager });
 
       expect(result.entries[0].memberName).toBe('Unknown');
+    });
+
+    it('logs and rethrows when the database query fails', async () => {
+      const dbError = new Error('connection lost');
+      databaseManager.getMonthlyRunTotals.mockRejectedValue(dbError);
+      const logger = require('../../src/utils/Logger');
+
+      await expect(
+        manager.getMonthlyLeaderboard({ year: 2026, month: 3, memberManager })
+      ).rejects.toThrow('connection lost');
+
+      expect(logger.database.error).toHaveBeenCalledWith(
+        'Failed to query monthly leaderboard totals',
+        expect.objectContaining({ year: 2026, month: 3, error: 'connection lost' })
+      );
     });
 
     it('returns empty entries array when no rows match', async () => {

@@ -310,6 +310,30 @@ describe('Scheduler', () => {
   });
 
   describe('Monthly Leaderboard', () => {
+    test('the registered cron callback invokes postMonthlyLeaderboard', async () => {
+      const cfg = {
+        scheduler: {
+          weeklyEnabled: false,
+          monthlyEnabled: false,
+          leaderboardEnabled: true,
+          weeklySchedule: '0 8 * * 1',
+          monthlySchedule: '0 8 1 * *',
+          leaderboardSchedule: '0 9 1 * *',
+          timezone: 'UTC'
+        }
+      };
+      mockLeaderboardManager.getMonthlyLeaderboard.mockResolvedValue({
+        year: 2026, month: 4, startDate: '', endDate: '', entries: [],
+      });
+
+      await scheduler.initialize(cfg);
+      // node-cron's schedule(cronExpr, callback, opts) — invoke the captured callback
+      const cronCallback = cron.schedule.mock.calls[0][1];
+      await cronCallback();
+
+      expect(mockLeaderboardManager.getMonthlyLeaderboard).toHaveBeenCalled();
+    });
+
     test('schedules a leaderboard cron job when enabled', async () => {
       const cfg = {
         scheduler: {
