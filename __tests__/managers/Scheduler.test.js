@@ -1,5 +1,6 @@
 const Scheduler = require('../../src/managers/Scheduler');
 const cron = require('node-cron');
+const axios = require('axios');
 
 // Mock cron job
 const mockCronJob = {
@@ -11,6 +12,11 @@ const mockCronJob = {
 // Mock node-cron
 jest.mock('node-cron', () => ({
   schedule: jest.fn(() => mockCronJob)
+}));
+
+// Mock axios for health self-check
+jest.mock('axios', () => ({
+  get: jest.fn()
 }));
 
 // Mock Logger
@@ -515,6 +521,169 @@ describe('Scheduler', () => {
 
       expect(roadEmbed).toBe(mockEmbedBuilder);
       expect(trailEmbed).toBe(mockEmbedBuilder);
+    });
+  });
+
+  describe('Health Self-Check', () => {
+    const healthConfig = {
+      scheduler: {
+        weeklyEnabled: false,
+        monthlyEnabled: false,
+        weeklySchedule: '0 8 * * 1',
+        monthlySchedule: '0 8 1 * *',
+        timezone: 'UTC'
+      },
+      server: { baseUrl: 'https://bot.example.com' },
+      healthCheck: {
+        enabled: true,
+        schedule: '*/5 * * * *',
+        timeoutMs: 10000,
+        discordNotify: true
+      }
+    };
+
+    test('does not register a health-check job when disabled', async () => {
+      const disabledConfig = {
+        ...healthConfig,
+        healthCheck: { ...healthConfig.healthCheck, enabled: false }
+      };
+
+      await scheduler.initialize(disabledConfig);
+
+      expect(scheduler.jobs.has('healthCheck')).toBe(false);
+      expect(scheduler.healthCheckUrl).toBeNull();
+    });
+
+    test('registers a health-check job when enabled and stores the URL', async () => {
+      await scheduler.initialize(healthConfig);
+
+      expect(scheduler.jobs.has('healthCheck')).toBe(true);
+      expect(scheduler.healthCheckUrl).toBe('https://bot.example.com/health');
+    });
+
+    test('strips trailing slashes from BASE_URL when building the health URL', async () => {
+      await scheduler.initialize({
+        ...healthConfig,
+        server: { baseUrl: 'https://bot.example.com///' }
+      });
+
+      expect(scheduler.healthCheckUrl).toBe('https://bot.example.com/health');
+    });
+
+    test('does nothing when invoked before initialization', async () => {
+      await scheduler.runHealthSelfCheck();
+
+      expect(axios.get).not.toHaveBeenCalled();
+      expect(scheduler.healthState).toBe('unknown');
+    });
+
+    test('marks state healthy on a 200 response and does not alert on the first success', async () => {
+      await scheduler.initialize(healthConfig);
+      axios.get.mockResolvedValueOnce({ status: 200 });
+
+      await scheduler.runHealthSelfCheck();
+
+      expect(scheduler.healthState).toBe('healthy');
+      expect(axios.get).toHaveBeenCalledWith(
+        'https://bot.example.com/health',
+        expect.objectContaining({ timeout: 10000 })
+      );
+      expect(mockChannel.send).not.toHaveBeenCalled();
+    });
+
+    test('marks state unhealthy on failure, logs a warning, and notifies Discord on the first failure', async () => {
+      await scheduler.initialize(healthConfig);
+      const networkError = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+      axios.get.mockRejectedValueOnce(networkError);
+
+      await scheduler.runHealthSelfCheck();
+
+      expect(scheduler.healthState).toBe('unhealthy');
+      expect(mockChannel.send).toHaveBeenCalledTimes(1);
+      const sent = mockChannel.send.mock.calls[0][0];
+      expect(sent.embeds).toHaveLength(1);
+    });
+
+    test('does not re-notify Discord when the check fails again with the same state', async () => {
+      await scheduler.initialize(healthConfig);
+      axios.get.mockRejectedValue(new Error('still down'));
+
+      await scheduler.runHealthSelfCheck(); // first failure → notify
+      await scheduler.runHealthSelfCheck(); // still failing → no second notify
+
+      expect(scheduler.healthState).toBe('unhealthy');
+      expect(mockChannel.send).toHaveBeenCalledTimes(1);
+    });
+
+    test('posts a recovery notification on transition from unhealthy to healthy', async () => {
+      await scheduler.initialize(healthConfig);
+      axios.get.mockRejectedValueOnce(new Error('down')); // mark unhealthy
+      await scheduler.runHealthSelfCheck();
+      mockChannel.send.mockClear();
+
+      axios.get.mockResolvedValueOnce({ status: 200 }); // back up
+      await scheduler.runHealthSelfCheck();
+
+      expect(scheduler.healthState).toBe('healthy');
+      expect(mockChannel.send).toHaveBeenCalledTimes(1);
+    });
+
+    test('skips Discord notification when discordNotify is false but still tracks state', async () => {
+      await scheduler.initialize({
+        ...healthConfig,
+        healthCheck: { ...healthConfig.healthCheck, discordNotify: false }
+      });
+      axios.get.mockRejectedValueOnce(new Error('down'));
+
+      await scheduler.runHealthSelfCheck();
+
+      expect(scheduler.healthState).toBe('unhealthy');
+      expect(mockChannel.send).not.toHaveBeenCalled();
+    });
+
+    test('swallows errors from Discord posting so alerting can never crash the cron', async () => {
+      await scheduler.initialize(healthConfig);
+      mockChannel.send.mockRejectedValueOnce(new Error('discord boom'));
+      axios.get.mockRejectedValueOnce(new Error('down'));
+
+      await expect(scheduler.runHealthSelfCheck()).resolves.toBeUndefined();
+      expect(scheduler.healthState).toBe('unhealthy');
+    });
+
+    test('skips Discord notification when getChannel returns null', async () => {
+      mockDiscordBot.getChannel.mockResolvedValueOnce(null);
+      await scheduler.initialize(healthConfig);
+      axios.get.mockRejectedValueOnce(new Error('down'));
+
+      await scheduler.runHealthSelfCheck();
+
+      expect(scheduler.healthState).toBe('unhealthy');
+      expect(mockChannel.send).not.toHaveBeenCalled();
+    });
+
+    test('cron callback invokes runHealthSelfCheck on tick', async () => {
+      await scheduler.initialize(healthConfig);
+      // Health-check is the only cron job registered with this config
+      const cronCallback = cron.schedule.mock.calls[0][1];
+      const spy = jest.spyOn(scheduler, 'runHealthSelfCheck').mockResolvedValueOnce();
+
+      cronCallback();
+
+      expect(spy).toHaveBeenCalled();
+    });
+
+    test('validateStatus accepts 2xx and rejects everything else', async () => {
+      await scheduler.initialize(healthConfig);
+      axios.get.mockResolvedValueOnce({ status: 200 });
+
+      await scheduler.runHealthSelfCheck();
+
+      const validateStatus = axios.get.mock.calls[0][1].validateStatus;
+      expect(validateStatus(200)).toBe(true);
+      expect(validateStatus(299)).toBe(true);
+      expect(validateStatus(300)).toBe(false);
+      expect(validateStatus(404)).toBe(false);
+      expect(validateStatus(500)).toBe(false);
     });
   });
 });

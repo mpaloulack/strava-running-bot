@@ -38,13 +38,19 @@ const config = {
     // Enable/disable scheduled race announcements
     weeklyEnabled: process.env.WEEKLY_RACE_ANNOUNCEMENTS !== 'false', // Default: enabled
     monthlyEnabled: process.env.MONTHLY_RACE_ANNOUNCEMENTS !== 'false', // Default: enabled
-    
+
     // Cron schedule patterns
     weeklySchedule: process.env.WEEKLY_SCHEDULE || '0 8 * * 1', // Every Monday at 8:00 AM
     monthlySchedule: process.env.MONTHLY_SCHEDULE || '0 8 1 * *', // First day of month at 8:00 AM
-    
+
     // Timezone for scheduling (important for proper timing)
     timezone: process.env.SCHEDULER_TIMEZONE || 'UTC',
+  },
+  healthCheck: {
+    enabled: process.env.HEALTH_CHECK_ENABLED !== 'false', // Default: enabled
+    schedule: process.env.HEALTH_CHECK_SCHEDULE || '*/5 * * * *', // Every 5 minutes
+    timeoutMs: parseInt(process.env.HEALTH_CHECK_TIMEOUT_MS, 10) || 10000,
+    discordNotify: process.env.HEALTH_CHECK_DISCORD_NOTIFY !== 'false', // Default: enabled
   }
 };
 

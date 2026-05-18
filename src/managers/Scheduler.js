@@ -1,4 +1,5 @@
 const cron = require('node-cron');
+const axios = require('axios');
 const { EmbedBuilder } = require('discord.js');
 const logger = require('../utils/Logger');
 const { DATE } = require('../constants');
@@ -9,6 +10,9 @@ class Scheduler {
     this.raceManager = raceManager;
     this.jobs = new Map(); // Store active cron jobs
     this.isInitialized = false;
+    this.healthState = 'unknown'; // 'unknown' | 'healthy' | 'unhealthy'
+    this.healthCheckConfig = null;
+    this.healthCheckUrl = null;
   }
 
   /**
@@ -93,10 +97,35 @@ class Scheduler {
         });
       }
 
+      // Health self-check - periodically GET the public base URL /health
+      if (config.healthCheck?.enabled) {
+        this.healthCheckConfig = config.healthCheck;
+        const base = (config.server?.baseUrl || '').replace(/\/+$/, '');
+        this.healthCheckUrl = `${base}/health`;
+
+        const healthJob = cron.schedule(
+          config.healthCheck.schedule,
+          () => this.runHealthSelfCheck(),
+          {
+            scheduled: false,
+            timezone: config.scheduler.timezone
+          }
+        );
+
+        this.jobs.set('healthCheck', healthJob);
+        healthJob.start();
+
+        logger.scheduler.info('Health self-check scheduled', {
+          schedule: config.healthCheck.schedule,
+          url: this.healthCheckUrl
+        });
+      }
+
       this.isInitialized = true;
       logger.scheduler.info('Race scheduler initialized successfully', {
         weeklyEnabled: config.scheduler.weeklyEnabled,
         monthlyEnabled: config.scheduler.monthlyEnabled,
+        healthCheckEnabled: !!config.healthCheck?.enabled,
         activeJobs: this.jobs.size
       });
 
@@ -106,6 +135,91 @@ class Scheduler {
         stack: error.stack
       });
       throw error;
+    }
+  }
+
+  /**
+   * Self-test the bot's own public reachability.
+   *
+   * Hits BASE_URL/health via the public URL so the request traverses the
+   * same path Strava webhooks do (reverse proxy / TLS / DNS). Logs a warning
+   * and posts a Discord alert on state transitions, so a flapping check
+   * doesn't spam the channel.
+   */
+  async runHealthSelfCheck() {
+    if (!this.healthCheckConfig || !this.healthCheckUrl) return;
+
+    const url = this.healthCheckUrl;
+    const previousState = this.healthState;
+
+    try {
+      const response = await axios.get(url, {
+        timeout: this.healthCheckConfig.timeoutMs,
+        validateStatus: (status) => status >= 200 && status < 300
+      });
+
+      this.healthState = 'healthy';
+
+      if (previousState === 'unhealthy') {
+        logger.scheduler.info('Health self-check recovered', { url, status: response.status });
+        await this.notifyHealthDiscord('recovered', { url });
+      } else {
+        logger.scheduler.debug('Health self-check OK', { url, status: response.status });
+      }
+    } catch (error) {
+      this.healthState = 'unhealthy';
+
+      const failureDetail = {
+        url,
+        error: error.message,
+        code: error.code,
+        responseStatus: error.response?.status
+      };
+
+      if (previousState !== 'unhealthy') {
+        logger.scheduler.warn('Health self-check failed — bot is not reachable at its public URL', failureDetail);
+        await this.notifyHealthDiscord('failed', failureDetail);
+      } else {
+        logger.scheduler.warn('Health self-check still failing', failureDetail);
+      }
+    }
+  }
+
+  /**
+   * Post a health-state-change embed to the configured Discord channel.
+   * Silently no-ops when Discord notifications are disabled or the channel
+   * isn't available — we never want the alerting path to throw.
+   */
+  async notifyHealthDiscord(transition, details = {}) {
+    if (!this.healthCheckConfig?.discordNotify) return;
+
+    try {
+      const channel = await this.activityProcessor.discordBot.getChannel();
+      if (!channel) return;
+
+      const embed = transition === 'recovered'
+        ? new EmbedBuilder()
+          .setTitle('✅ Bot reachable again')
+          .setColor('#2ECC71')
+          .setDescription(`Health check at \`${details.url}\` is back to 200 OK.`)
+          .setTimestamp()
+        : new EmbedBuilder()
+          .setTitle('🚨 Bot not reachable')
+          .setColor('#E74C3C')
+          .setDescription(
+            `Health check at \`${details.url}\` is failing — Strava webhooks will not be delivered.\n\n` +
+            `**Error:** ${details.error || 'unknown'}` +
+            (details.code ? `\n**Code:** ${details.code}` : '') +
+            (details.responseStatus ? `\n**Status:** ${details.responseStatus}` : '')
+          )
+          .setTimestamp();
+
+      await channel.send({ embeds: [embed] });
+    } catch (error) {
+      logger.scheduler.error('Failed to post health-check notification to Discord', {
+        error: error.message,
+        transition
+      });
     }
   }
 
