@@ -627,46 +627,43 @@ class DatabaseManager {
   }
 
   // === PERSONAL BEST MANAGEMENT ===
+  // Atomic upsert: inserts a new PB row, or updates the existing row only when
+  // the incoming elapsed_time beats the stored one. The conditional
+  // ON CONFLICT ... WHERE clause is evaluated inside SQLite so two concurrent
+  // callers cannot both "win" the same (athlete, category) slot.
   async upsertPersonalBest(athleteId, pbData) {
     await this.ensureInitialized();
 
-    const existing = await this.getPersonalBest(athleteId, pbData.category);
+    const memberId = Number.parseInt(athleteId);
+    const now = new Date().toISOString();
+    const activityId = String(pbData.activityId ?? pbData.stravaActivityId);
 
-    if (existing) {
-      const result = await this.db.update(personalBests)
-        .set({
-          distance_m: pbData.distanceM,
-          elapsed_time: pbData.elapsedTime,
-          moving_time: pbData.movingTime,
-          strava_activity_id: String(pbData.activityId ?? pbData.stravaActivityId),
-          activity_name: pbData.activityName || null,
-          activity_date: pbData.activityDate,
-          updated_at: new Date().toISOString(),
-        })
-        .where(
-          and(
-            eq(personalBests.member_athlete_id, Number.parseInt(athleteId)),
-            eq(personalBests.category, pbData.category)
-          )
-        )
-        .returning();
-      return result[0] || null;
-    }
-
-    const result = await this.db.insert(personalBests).values({
-      member_athlete_id: Number.parseInt(athleteId),
+    await this.db.insert(personalBests).values({
+      member_athlete_id: memberId,
       category: pbData.category,
       distance_m: pbData.distanceM,
       elapsed_time: pbData.elapsedTime,
       moving_time: pbData.movingTime,
-      strava_activity_id: String(pbData.activityId ?? pbData.stravaActivityId),
+      strava_activity_id: activityId,
       activity_name: pbData.activityName || null,
       activity_date: pbData.activityDate,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }).returning();
+      created_at: now,
+      updated_at: now,
+    }).onConflictDoUpdate({
+      target: [personalBests.member_athlete_id, personalBests.category],
+      set: {
+        distance_m: pbData.distanceM,
+        elapsed_time: pbData.elapsedTime,
+        moving_time: pbData.movingTime,
+        strava_activity_id: activityId,
+        activity_name: pbData.activityName || null,
+        activity_date: pbData.activityDate,
+        updated_at: now,
+      },
+      setWhere: sql`${personalBests.elapsed_time} > ${pbData.elapsedTime}`,
+    });
 
-    return result[0] || null;
+    return await this.getPersonalBest(athleteId, pbData.category);
   }
 
   async getPersonalBestsByAthleteId(athleteId) {

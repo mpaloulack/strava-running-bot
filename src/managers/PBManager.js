@@ -91,11 +91,19 @@ class PBManager {
       try {
         const existing = await this.databaseManager.getPersonalBest(athleteId, effort.category);
 
+        // Fast-path: if we already have a PB at least as fast, this effort
+        // can't beat it. Safe under concurrency — a concurrent writer can only
+        // improve the PB further, which doesn't suddenly make a slower effort
+        // become a PB.
         if (existing && effort.elapsedTime >= existing.elapsed_time) {
           results.push({ isNewPB: false, category: effort.category, previousPB: existing, newPB: null });
           continue;
         }
 
+        // upsertPersonalBest is now atomic — the conditional `setWhere`
+        // inside SQLite serialises concurrent writes. So even if two callers
+        // both pass the fast-path above, only one will actually overwrite the
+        // row, and the DB ends up in a consistent "fastest wins" state.
         await this.databaseManager.upsertPersonalBest(athleteId, effort);
 
         results.push({
@@ -144,11 +152,21 @@ class PBManager {
   }
 
   /**
-   * Sync PBs from the last 12 months of Strava history for a member.
+   * Sync PBs from a window of Strava history for a member.
+   *
+   * Strava's /athlete/activities endpoint always returns results in descending
+   * chronological order (most recent first). We walk backwards through time by
+   * setting `before` to the start_date of the oldest activity on each page, until
+   * either no more activities are returned or we cross the `after` lower bound.
+   *
+   * The `before` cursor is persisted in the settings table so the sync can resume
+   * after an interruption (bot restart, rate-limit pause, transient error).
+   *
    * @param {string} discordUserId
    * @param {string} accessToken
    * @param {Object} stravaAPI - StravaAPI instance with getAthleteActivities / getActivity
    * @param {Function} [progressCb] - Called with page number every 5 pages
+   * @param {number} [afterTs] - Unix epoch lower bound (default: Jan 1 of current year)
    * @returns {{ processed: number, updated: number, errors: number }}
    */
   async syncFromHistory(discordUserId, accessToken, stravaAPI, progressCb, afterTs = null) {
@@ -159,19 +177,21 @@ class PBManager {
 
     const now = new Date();
     const after = afterTs ?? Math.floor(new Date(now.getFullYear(), 0, 1).getTime() / 1000);
-    const cursorKey = `pb_sync_cursor_${discordUserId}_${after}`;
+    // Cursor key must be stable across invocations for resume to work — derive
+    // it from the floor of `after` rounded to the day so that two invocations
+    // a few seconds apart resolve to the same key.
+    const afterDayKey = Math.floor(after / 86400);
+    const cursorKey = `pb_sync_cursor_${discordUserId}_${afterDayKey}`;
 
-    // Read checkpoint: resume from the last successfully processed batch's newest timestamp.
-    // The cursor is a forward-moving `after` value — Strava returns activities ascending
-    // (oldest-first) when only `after` is provided, so each page returns the next batch
-    // of newer activities.
+    // Read checkpoint: this is the `before` upper bound at which we stopped.
+    // On first run, start at "now" (no `before`).
     let savedCursor = null;
     try {
       savedCursor = await this.databaseManager.settingsManager.getSetting(cursorKey, null);
     } catch (cursorReadErr) {
       logger.database.warn('Failed to read PB sync cursor, starting from beginning', { discordUserId, error: cursorReadErr.message });
     }
-    let currentAfter = savedCursor ? parseInt(savedCursor, 10) : after;
+    let beforeCursor = savedCursor ? parseInt(savedCursor, 10) : null;
 
     const startTime = Date.now();
     let page = 1;
@@ -183,14 +203,11 @@ class PBManager {
       discordUserId,
       athleteId: member.athleteId,
       after: new Date(after * 1000).toISOString(),
-      resumingFromCursor: savedCursor ? new Date(currentAfter * 1000).toISOString() : null,
+      resumingFromCursor: savedCursor ? new Date(beforeCursor * 1000).toISOString() : null,
     });
 
     while (true) {
-      // Always page=1, no `before`. Strava returns activities ascending (oldest-first)
-      // when only `after` is set. Using `before` alongside `after` switches Strava to
-      // descending order and causes the same activities to be re-fetched.
-      const activities = await stravaAPI.getAthleteActivities(accessToken, 1, 100, null, currentAfter);
+      const activities = await stravaAPI.getAthleteActivities(accessToken, 1, 100, beforeCursor, after);
       if (!activities?.length) break;
 
       const runCount = activities.filter(a => SUPPORTED_PB_TYPES.includes(a.type)).length;
@@ -244,18 +261,18 @@ class PBManager {
         await new Promise(resolve => setTimeout(resolve, 100));
       }
 
-      // Advance the cursor to the newest activity on this page so the next call
-      // fetches the following batch. Since Strava returns ascending (oldest-first)
-      // with only `after`, the last element is the newest.
-      const newestDate = activities[activities.length - 1]?.start_date;
-      if (newestDate) {
-        const newestTs = Math.floor(new Date(newestDate).getTime() / 1000);
-        currentAfter = newestTs;
+      // Advance the cursor backwards: the oldest activity on this page is the
+      // LAST element (Strava returns DESC). Set `before` to its timestamp minus
+      // one second so the next page starts strictly older.
+      const oldestDate = activities[activities.length - 1]?.start_date;
+      if (oldestDate) {
+        const oldestTs = Math.floor(new Date(oldestDate).getTime() / 1000);
+        beforeCursor = oldestTs - 1;
         try {
           await this.databaseManager.settingsManager.setSetting(
             cursorKey,
-            String(newestTs),
-            'PB sync resume checkpoint'
+            String(beforeCursor),
+            'PB sync resume checkpoint (before-cursor unix seconds)'
           );
         } catch (cursorWriteErr) {
           logger.database.warn('Failed to save PB sync checkpoint', { discordUserId, error: cursorWriteErr.message });
@@ -263,8 +280,11 @@ class PBManager {
         logger.database.info('PB sync checkpoint saved', {
           discordUserId,
           page,
-          checkpoint: new Date(newestTs * 1000).toISOString(),
+          checkpoint: new Date(beforeCursor * 1000).toISOString(),
         });
+      } else {
+        // No usable start_date on the page — can't safely advance. Stop to avoid loop.
+        break;
       }
 
       if (page % 5 === 0 && typeof progressCb === 'function') {

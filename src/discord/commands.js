@@ -420,10 +420,11 @@ class DiscordCommands {
             .setDescription('Show PB sync status and stored PBs per member (admin only)')
         ),
 
-      // Sync command
+      // Sync command — gated to admins because it can fully consume the Strava
+      // rate budget for the whole bot for several minutes per invocation.
       new SlashCommandBuilder()
         .setName('sync')
-        .setDescription('Sync Strava activities and update Personal Bests')
+        .setDescription('Sync Strava activities and update Personal Bests (admin only)')
         .addStringOption(option =>
           option
             .setName('period')
@@ -433,7 +434,8 @@ class DiscordCommands {
               { name: 'Current year (Jan 1 → today)', value: 'current_year' },
               { name: 'Last 365 days', value: 'last_365_days' }
             )
-        ),
+        )
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
     ];
   }
 
@@ -2237,7 +2239,38 @@ class DiscordCommands {
         ])
         .setTimestamp();
 
-      await interaction.editReply({ content: '', embeds: [embed] });
+      // Try the interaction reply first. If we've crossed Discord's 15-min
+      // interaction window, editReply will throw — fall back to DMing the user
+      // and, if that also fails, posting in the originating channel so the
+      // user actually sees that the sync finished.
+      try {
+        await interaction.editReply({ content: '', embeds: [embed] });
+      } catch (editErr) {
+        logger.discord.warn('Sync editReply failed (likely past 15-min interaction window), falling back', {
+          user: interaction.user.tag,
+          error: editErr.message,
+        });
+        const fallbackContent = `🔄 **${periodLabel} sync complete** — ${summary.processed} scanned, ${summary.updated} PBs updated, ${summary.errors} errors.`;
+        try {
+          await interaction.user.send({ content: fallbackContent, embeds: [embed] });
+        } catch (dmErr) {
+          logger.discord.warn('Sync fallback DM failed, posting in channel', {
+            user: interaction.user.tag,
+            error: dmErr.message,
+          });
+          try {
+            await interaction.channel?.send({
+              content: `<@${interaction.user.id}> ${fallbackContent}`,
+              embeds: [embed],
+            });
+          } catch (chErr) {
+            logger.discord.error('Sync fallback channel post failed; summary not delivered to user', {
+              user: interaction.user.tag,
+              error: chErr.message,
+            });
+          }
+        }
+      }
 
     } catch (error) {
       logger.discord.error('Error syncing PBs', {

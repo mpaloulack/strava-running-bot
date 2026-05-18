@@ -471,20 +471,23 @@ describe('PBManager', () => {
       expect(Math.abs(after - jan1)).toBeLessThan(60);
     });
 
-    it('should use saved cursor as after param when resuming', async () => {
-      const cursor = 1700000000; // some past timestamp saved as forward cursor
+    it('should use saved cursor as before param when resuming', async () => {
+      const cursor = 1700000000; // saved before-cursor (unix seconds)
       DatabaseManager.settingsManager.getSetting.mockResolvedValue(String(cursor));
       mockStravaAPI.getAthleteActivities.mockResolvedValue([]);
 
       await pbManager.syncFromHistory('discord123', 'token', mockStravaAPI);
 
-      // currentAfter is initialised from the saved cursor; before is always null
-      expect(mockStravaAPI.getAthleteActivities).toHaveBeenCalledWith('token', 1, 100, null, cursor);
+      // First call uses the resumed `before` cursor; `after` is the period bound.
+      expect(mockStravaAPI.getAthleteActivities).toHaveBeenCalledWith(
+        'token', 1, 100, cursor, expect.any(Number)
+      );
     });
 
-    it('should write checkpoint after each page with oldest activity timestamp', async () => {
+    it('should write checkpoint after each page with (oldest activity timestamp - 1)', async () => {
+      // Strava returns DESC (newest first), so the LAST element is the oldest.
       const activities = [
-        { id: 1, type: 'Run', start_date: '2026-01-10T10:00:00Z' },
+        { id: 1, type: 'Run', start_date: '2026-01-10T10:00:00Z' }, // newest on page
         { id: 2, type: 'Run', start_date: '2026-01-05T10:00:00Z' }, // oldest on page
       ];
       mockStravaAPI.getAthleteActivities
@@ -495,13 +498,12 @@ describe('PBManager', () => {
 
       await pbManager.syncFromHistory('discord123', 'token', mockStravaAPI);
 
-      // Cursor is stored as the newest timestamp on the page (forward-moving after cursor).
-      // Since Strava returns ascending (oldest-first) with only `after`, the last element
-      // is the newest — that becomes the new currentAfter for the next batch.
-      const expectedTs = Math.floor(new Date('2026-01-05T10:00:00Z').getTime() / 1000);
+      // Cursor moves backward in time: saved as (oldest_ts - 1) so the next page
+      // starts strictly older than the last activity processed.
+      const oldestTs = Math.floor(new Date('2026-01-05T10:00:00Z').getTime() / 1000);
       expect(DatabaseManager.settingsManager.setSetting).toHaveBeenCalledWith(
         expect.stringMatching(/^pb_sync_cursor_discord123_\d+$/),
-        String(expectedTs),
+        String(oldestTs - 1),
         expect.any(String)
       );
     });
@@ -542,13 +544,14 @@ describe('PBManager', () => {
       expect(mockStravaAPI.getAthleteActivities).toHaveBeenCalledTimes(2);
     });
 
-    it('should always pass page=1 and null before to API (forward after-cursor pagination)', async () => {
+    it('should always pass page=1 to API (cursor-based via before, not page-based)', async () => {
+      // Strava returns DESC (newest first). We walk backwards via `before`.
       const page1 = [
-        { id: 1, type: 'Run', start_date: '2025-03-23T10:00:00Z' },
         { id: 2, type: 'Run', start_date: '2025-04-05T10:00:00Z' }, // newest on page 1
+        { id: 1, type: 'Run', start_date: '2025-03-23T10:00:00Z' }, // oldest on page 1
       ];
       const page2 = [
-        { id: 3, type: 'Run', start_date: '2025-05-20T10:00:00Z' },
+        { id: 3, type: 'Run', start_date: '2025-02-20T10:00:00Z' },
       ];
       mockStravaAPI.getAthleteActivities
         .mockResolvedValueOnce(page1)
@@ -559,19 +562,21 @@ describe('PBManager', () => {
 
       await pbManager.syncFromHistory('discord123', 'token', mockStravaAPI);
 
-      // All calls must use page=1 and before=null
+      // All calls must use page=1
       for (const call of mockStravaAPI.getAthleteActivities.mock.calls) {
         expect(call[1]).toBe(1);   // page
-        expect(call[3]).toBeNull(); // before
       }
+      // First call has no `before` (start fresh); subsequent calls advance backwards.
+      expect(mockStravaAPI.getAthleteActivities.mock.calls[0][3]).toBeNull();
+      expect(mockStravaAPI.getAthleteActivities.mock.calls[1][3]).not.toBeNull();
     });
 
-    it('should advance after cursor to newest activity on each page', async () => {
-      const newestTs = Math.floor(new Date('2026-01-10T10:00:00Z').getTime() / 1000);
-      // Strava returns ascending (oldest-first) with after filter
+    it('should advance before cursor to (oldest activity timestamp - 1) on each page', async () => {
+      // Strava returns DESC (newest first), so the LAST element is the oldest.
+      const oldestTs = Math.floor(new Date('2026-01-05T10:00:00Z').getTime() / 1000);
       const page1 = [
-        { id: 1, type: 'Run', start_date: '2026-01-05T10:00:00Z' }, // oldest
-        { id: 2, type: 'Run', start_date: '2026-01-10T10:00:00Z' }, // newest
+        { id: 1, type: 'Run', start_date: '2026-01-10T10:00:00Z' }, // newest
+        { id: 2, type: 'Run', start_date: '2026-01-05T10:00:00Z' }, // oldest
       ];
       mockStravaAPI.getAthleteActivities
         .mockResolvedValueOnce(page1)
@@ -581,9 +586,9 @@ describe('PBManager', () => {
 
       await pbManager.syncFromHistory('discord123', 'token', mockStravaAPI);
 
-      // Second call uses after = newestTs (the last element of page 1)
+      // Second call uses before = oldestTs - 1 to step strictly past the oldest activity.
       const secondCall = mockStravaAPI.getAthleteActivities.mock.calls[1];
-      expect(secondCall[4]).toBe(newestTs); // after
+      expect(secondCall[3]).toBe(oldestTs - 1); // before
     });
 
     it('should call getActivity for each Run in the list', async () => {
@@ -652,9 +657,14 @@ describe('PBManager', () => {
     });
 
     it('should call progressCallback every 5 pages', async () => {
-      // Create 5 pages of data (one activity each), then empty
+      // Create 5 pages of data (one activity each), then empty.
+      // start_date must decrease across pages — the cursor walks backwards.
       for (let i = 1; i <= 5; i++) {
-        mockStravaAPI.getAthleteActivities.mockResolvedValueOnce([{ id: i, type: 'Run' }]);
+        mockStravaAPI.getAthleteActivities.mockResolvedValueOnce([{
+          id: i,
+          type: 'Run',
+          start_date: `2025-01-${10 + i}T10:00:00Z`,
+        }]);
       }
       mockStravaAPI.getAthleteActivities.mockResolvedValueOnce([]);
       mockStravaAPI.getActivity.mockResolvedValue({ id: 1, type: 'Run', best_efforts: [] });
@@ -876,7 +886,7 @@ describe('PBManager', () => {
       expect(mockStravaAPI.getAthleteActivities).toHaveBeenCalledWith('token', 1, 100, null, afterTs);
     });
 
-    it('should include after timestamp in cursor key when afterTs is provided', async () => {
+    it('should derive a stable cursor key from afterTs rounded to the day', async () => {
       mockStravaAPI.getAthleteActivities
         .mockResolvedValueOnce([{ id: 1, type: 'Run', start_date: '2025-03-19T10:00:00Z' }])
         .mockResolvedValueOnce([]);
@@ -884,13 +894,22 @@ describe('PBManager', () => {
       DatabaseManager.settingsManager.getSetting.mockResolvedValue(null);
 
       const afterTs = 1700000000;
+      const expectedDayKey = Math.floor(afterTs / 86400);
       await pbManager.syncFromHistory('discord123', 'token', mockStravaAPI, undefined, afterTs);
 
       expect(DatabaseManager.settingsManager.setSetting).toHaveBeenCalledWith(
-        `pb_sync_cursor_discord123_${afterTs}`,
+        `pb_sync_cursor_discord123_${expectedDayKey}`,
         expect.any(String),
         expect.any(String)
       );
+    });
+
+    it('should produce the same cursor key for two invocations seconds apart (resume works)', async () => {
+      // Two distinct afterTs values within the same day should hash to the same cursor key.
+      const baseSec = Math.floor(new Date('2025-06-01T00:00:00Z').getTime() / 1000);
+      const a = baseSec;
+      const b = baseSec + 30; // 30 seconds later, same day
+      expect(Math.floor(a / 86400)).toBe(Math.floor(b / 86400));
     });
 
     it('should use separate cursor keys for current_year vs last_365_days syncs', async () => {
@@ -899,9 +918,11 @@ describe('PBManager', () => {
       const last365Ts = Math.floor((Date.now() - 365 * 24 * 60 * 60 * 1000) / 1000);
 
       expect(jan1Ts).not.toBe(last365Ts);
+      const jan1Day = Math.floor(jan1Ts / 86400);
+      const last365Day = Math.floor(last365Ts / 86400);
 
-      // Both cursor keys embed the after timestamp → they are distinct
-      expect(`pb_sync_cursor_discord123_${jan1Ts}`).not.toBe(`pb_sync_cursor_discord123_${last365Ts}`);
+      // Two distinct periods land on different day-keys → distinct cursors.
+      expect(`pb_sync_cursor_discord123_${jan1Day}`).not.toBe(`pb_sync_cursor_discord123_${last365Day}`);
     });
 
     it('should continue sync if getSetting throws', async () => {

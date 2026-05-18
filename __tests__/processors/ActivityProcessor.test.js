@@ -250,9 +250,13 @@ describe('ActivityProcessor', () => {
 
       expect(mockDiscordBot.postActivity).not.toHaveBeenCalled();
       expect(activityProcessor.processedActivities.has('12345-98765')).toBe(true);
-      expect(logger.activityProcessing).toHaveBeenCalledWith(98765, 12345, mockActivity.name, 'FILTERED', {
-        reason: 'Activity filtered by posting rules'
-      });
+      expect(logger.activityProcessing).toHaveBeenCalledWith(
+        98765,
+        12345,
+        mockActivity.name,
+        'FILTERED',
+        expect.objectContaining({ reason: 'Activity filtered by posting rules' })
+      );
     });
 
     it('should handle Discord posting errors', async () => {
@@ -343,12 +347,18 @@ describe('ActivityProcessor', () => {
       expect(activityProcessor.processedActivities.has('12345-98765')).toBe(true);
     });
 
-    it('should not call upsertActivity for filtered activities', async () => {
+    it('should still cache the activity and run PB detection for filtered activities', async () => {
+      // PB tracking is a member-private record; activity-post filtering must
+      // not prevent us from updating PBs or our local activity cache.
       mockStravaAPI.shouldPostActivity.mockReturnValue(false);
+      const pbSpy = jest.spyOn(activityProcessor.pbManager, 'checkAndUpdatePBs').mockResolvedValue([]);
 
       await activityProcessor.processNewActivity(98765, 12345);
 
-      expect(mockMemberManager.databaseManager.upsertActivity).not.toHaveBeenCalled();
+      expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(12345, mockActivity);
+      expect(pbSpy).toHaveBeenCalledWith(12345, mockActivity);
+      // But still skipped for Discord posting:
+      expect(mockDiscordBot.postActivity).not.toHaveBeenCalled();
     });
   });
 
