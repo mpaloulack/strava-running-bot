@@ -1,5 +1,6 @@
-# Use latest Node.js 24 LTS 
-FROM node:26-bullseye-slim
+# Node.js 24 LTS on Debian 12 (bookworm). Pinned to LTS — 26 is current-release,
+# not LTS until Oct 2026, and lacks better-sqlite3 prebuilds for slim images.
+FROM node:24-bookworm-slim
 
 # Set working directory
 WORKDIR /app

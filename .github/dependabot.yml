@@ -62,13 +62,19 @@ updates:
     commit-message:
       prefix: "docker"
       include: "scope"
+    # Keep the Node base image on the current LTS (24). Major bumps (e.g. to 26
+    # before it becomes LTS in Oct 2026) break native-dep prebuilds on the slim
+    # image. Minor/patch bumps within 24 still flow through.
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
     assignees:
       - "mpaloulack"
     reviewers:
       - "mpaloulack"
     labels:
       - "docker"
-      - "dependencies" 
+      - "dependencies"
       - "automated"
 
   # GitHub Actions updates
