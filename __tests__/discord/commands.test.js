@@ -292,7 +292,7 @@ describe('DiscordCommands', () => {
     it('should return array of slash commands', () => {
       const commands = discordCommands.getCommands();
 
-      expect(commands).toHaveLength(10); // members, register, botstatus, last, race, teamraces, settings, scheduler, pb, sync
+      expect(commands).toHaveLength(11); // members, register, botstatus, last, race, teamraces, settings, scheduler, pb, help, sync
       expect(commands.every(cmd => cmd instanceof SlashCommandBuilder)).toBe(true);
     });
 
@@ -349,6 +349,26 @@ describe('DiscordCommands', () => {
       expect(choiceValues).toContain('current_year');
       expect(choiceValues).toContain('last_365_days');
     });
+
+    it('sync command should be available to all registered users (no ManageGuild gate)', () => {
+      // /sync syncs the invoking user's own PBs — gating it to admins
+      // would prevent regular members from importing their history.
+      const commands = discordCommands.getCommands();
+      const syncCommand = commands.find(cmd => cmd.name === 'sync');
+
+      // Mock initialises default_member_permissions to null; setDefaultMemberPermissions
+      // would overwrite it with the stringified bitfield.
+      expect(syncCommand.default_member_permissions).toBeNull();
+    });
+
+    it('should include top-level help command with French description and no options', () => {
+      const commands = discordCommands.getCommands();
+      const helpCommand = commands.find(cmd => cmd.name === 'help');
+
+      expect(helpCommand).toBeDefined();
+      expect(helpCommand.description).toMatch(/utiliser/i);
+      expect(helpCommand.options ?? []).toHaveLength(0);
+    });
   });
 
   describe('handleCommand', () => {
@@ -397,6 +417,15 @@ describe('DiscordCommands', () => {
       await discordCommands.handleCommand(mockInteraction);
 
       expect(discordCommands.handleSyncCommand).toHaveBeenCalledWith(mockInteraction, mockInteraction.options);
+    });
+
+    it('should handle help command', async () => {
+      mockInteraction.commandName = 'help';
+      jest.spyOn(discordCommands, 'handleHelpCommand').mockResolvedValue();
+
+      await discordCommands.handleCommand(mockInteraction);
+
+      expect(discordCommands.handleHelpCommand).toHaveBeenCalledWith(mockInteraction);
     });
 
     it('should handle unknown command', async () => {
@@ -911,6 +940,69 @@ describe('DiscordCommands', () => {
       expect(mockInteraction.editReply).toHaveBeenCalledWith({
         content: '✅ You\'re already registered as **John Doe**.'
       });
+    });
+  });
+
+  describe('handleHelpCommand', () => {
+    const readFields = () => {
+      const embedInstance = EmbedBuilder.mock.results[EmbedBuilder.mock.results.length - 1].value;
+      return embedInstance.addFields.mock.calls
+        .flatMap(call => call[0])
+        .map(f => `${f.name}\n${f.value}`)
+        .join('\n');
+    };
+
+    it('non-admin user: reply contains user-facing commands in French but no admin section', async () => {
+      mockInteraction.memberPermissions = { has: jest.fn().mockReturnValue(false) };
+
+      await discordCommands.handleHelpCommand(mockInteraction);
+
+      expect(mockInteraction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        embeds: [expect.any(Object)],
+      });
+
+      const fields = readFields();
+      // User-facing commands present (including /sync, now available to all users)
+      expect(fields).toContain('/register');
+      expect(fields).toContain('/last');
+      expect(fields).toContain('/pb');
+      expect(fields).toContain('/my-races');
+      expect(fields).toContain('/sync');
+      // Admin-only commands hidden
+      expect(fields).not.toContain('/members');
+      expect(fields).not.toContain('/all-races');
+      expect(fields).not.toContain('/settings');
+      expect(fields).not.toContain('/scheduler');
+      expect(fields).not.toMatch(/Commandes admin/i);
+      // French content sanity check
+      expect(fields.toLowerCase()).toMatch(/connecter|connecte/);
+      expect(fields.toLowerCase()).toMatch(/courses?/);
+    });
+
+    it('admin user (ManageGuild): reply also includes the admin commands section', async () => {
+      mockInteraction.memberPermissions = { has: jest.fn().mockReturnValue(true) };
+
+      await discordCommands.handleHelpCommand(mockInteraction);
+
+      const fields = readFields();
+      expect(fields).toContain('/members');
+      expect(fields).toContain('/all-races');
+      expect(fields).toContain('/settings');
+      expect(fields).toContain('/scheduler');
+      expect(fields).toMatch(/Commandes admin/i);
+      // ManageGuild was the permission consulted
+      expect(mockInteraction.memberPermissions.has).toHaveBeenCalledWith(PermissionFlagsBits.ManageGuild);
+    });
+
+    it('treats missing memberPermissions (e.g. DM context) as non-admin', async () => {
+      mockInteraction.memberPermissions = null;
+
+      await discordCommands.handleHelpCommand(mockInteraction);
+
+      const fields = readFields();
+      expect(fields).not.toContain('/members');
+      expect(fields).not.toMatch(/Commandes admin/i);
     });
   });
 
@@ -1469,7 +1561,11 @@ describe('DiscordCommands', () => {
       );
     });
 
-    it('should call syncFromHistory with current_year afterTs', async () => {
+    it('should call syncFromHistory with current_year afterTs anchored to UTC Jan 1', async () => {
+      // Regression: previously used `new Date(year, 0, 1).getTime()`, which
+      // interprets Jan 1 in the *server's* timezone — a Docker host running in
+      // UTC-5 would silently drop activities recorded between 00:00 and 05:00
+      // UTC on Jan 1. afterTs must be Jan 1 00:00 UTC.
       discordCommands.pbManager.syncFromHistory.mockResolvedValue({ processed: 10, updated: 2, errors: 0 });
       syncInteraction.options.getString.mockReturnValue('current_year');
 
@@ -1483,9 +1579,8 @@ describe('DiscordCommands', () => {
         expect.any(Number)
       );
       const calledAfterTs = discordCommands.pbManager.syncFromHistory.mock.calls[0][4];
-      const now = new Date();
-      const jan1 = Math.floor(new Date(now.getFullYear(), 0, 1).getTime() / 1000);
-      expect(Math.abs(calledAfterTs - jan1)).toBeLessThan(60);
+      const jan1Utc = Math.floor(Date.UTC(new Date().getUTCFullYear(), 0, 1) / 1000);
+      expect(calledAfterTs).toBe(jan1Utc);
     });
 
     it('should call syncFromHistory with last_365_days afterTs', async () => {

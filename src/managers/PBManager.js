@@ -175,8 +175,10 @@ class PBManager {
       return { processed: 0, updated: 0, errors: 0 };
     }
 
-    const now = new Date();
-    const after = afterTs ?? Math.floor(new Date(now.getFullYear(), 0, 1).getTime() / 1000);
+    // Default lower bound: Jan 1 of the current year in UTC. Local-timezone
+    // anchoring silently drops the first N hours of Jan 1 in UTC depending on
+    // the server's TZ offset.
+    const after = afterTs ?? Math.floor(Date.UTC(new Date().getUTCFullYear(), 0, 1) / 1000);
     // Cursor key must be stable across invocations for resume to work — derive
     // it from the floor of `after` rounded to the day so that two invocations
     // a few seconds apart resolve to the same key.
@@ -184,14 +186,17 @@ class PBManager {
     const cursorKey = `pb_sync_cursor_${discordUserId}_${afterDayKey}`;
 
     // Read checkpoint: this is the `before` upper bound at which we stopped.
-    // On first run, start at "now" (no `before`).
+    // On first run we anchor at "now" — Strava's /athlete/activities returns
+    // ASC when only `after` is set and DESC when both `before` and `after` are
+    // set. We rely on DESC for the backward-walk cursor, so `before` must
+    // always be provided.
     let savedCursor = null;
     try {
       savedCursor = await this.databaseManager.settingsManager.getSetting(cursorKey, null);
     } catch (cursorReadErr) {
       logger.database.warn('Failed to read PB sync cursor, starting from beginning', { discordUserId, error: cursorReadErr.message });
     }
-    let beforeCursor = savedCursor ? parseInt(savedCursor, 10) : null;
+    let beforeCursor = savedCursor ? parseInt(savedCursor, 10) : Math.floor(Date.now() / 1000);
 
     const startTime = Date.now();
     let page = 1;
@@ -261,12 +266,15 @@ class PBManager {
         await new Promise(resolve => setTimeout(resolve, 100));
       }
 
-      // Advance the cursor backwards: the oldest activity on this page is the
-      // LAST element (Strava returns DESC). Set `before` to its timestamp minus
-      // one second so the next page starts strictly older.
-      const oldestDate = activities[activities.length - 1]?.start_date;
-      if (oldestDate) {
-        const oldestTs = Math.floor(new Date(oldestDate).getTime() / 1000);
+      // Advance the cursor backwards. Strava's documented order is DESC, but
+      // empirically it has returned ASC when `before` was omitted, and we'd
+      // rather not depend on positional assumptions. Compute the minimum
+      // start_date across the page and step strictly past it.
+      const timestamps = activities
+        .map(a => (a.start_date ? new Date(a.start_date).getTime() : null))
+        .filter(t => Number.isFinite(t));
+      if (timestamps.length > 0) {
+        const oldestTs = Math.floor(Math.min(...timestamps) / 1000);
         beforeCursor = oldestTs - 1;
         try {
           await this.databaseManager.settingsManager.setSetting(

@@ -458,17 +458,21 @@ describe('PBManager', () => {
       DatabaseManager.getMemberByDiscordId.mockResolvedValue(mockMember);
     });
 
-    it('should call getAthleteActivities with Jan 1st of current year as after timestamp', async () => {
+    it('should call getAthleteActivities with Jan 1st (UTC) of current year as after timestamp', async () => {
       mockStravaAPI.getAthleteActivities.mockResolvedValue([]);
       DatabaseManager.settingsManager.getSetting.mockResolvedValue(null);
 
       await pbManager.syncFromHistory('discord123', 'token', mockStravaAPI);
 
-      expect(mockStravaAPI.getAthleteActivities).toHaveBeenCalledWith('token', 1, 100, null, expect.any(Number));
-      const after = mockStravaAPI.getAthleteActivities.mock.calls[0][4];
-      const now = new Date();
-      const jan1 = Math.floor(new Date(now.getFullYear(), 0, 1).getTime() / 1000);
-      expect(Math.abs(after - jan1)).toBeLessThan(60);
+      // First call must pass both `before` (≈ now) and `after` (Jan 1 UTC) so that
+      // Strava returns results in DESC order — Strava switches to ASC when only
+      // `after` is passed, which breaks the backward-walk cursor algorithm.
+      expect(mockStravaAPI.getAthleteActivities).toHaveBeenCalledWith('token', 1, 100, expect.any(Number), expect.any(Number));
+      const [, , , before, after] = mockStravaAPI.getAthleteActivities.mock.calls[0];
+      const nowSec = Math.floor(Date.now() / 1000);
+      expect(Math.abs(before - nowSec)).toBeLessThan(60);
+      const jan1Utc = Math.floor(Date.UTC(new Date().getUTCFullYear(), 0, 1) / 1000);
+      expect(Math.abs(after - jan1Utc)).toBeLessThan(60);
     });
 
     it('should use saved cursor as before param when resuming', async () => {
@@ -566,9 +570,12 @@ describe('PBManager', () => {
       for (const call of mockStravaAPI.getAthleteActivities.mock.calls) {
         expect(call[1]).toBe(1);   // page
       }
-      // First call has no `before` (start fresh); subsequent calls advance backwards.
-      expect(mockStravaAPI.getAthleteActivities.mock.calls[0][3]).toBeNull();
-      expect(mockStravaAPI.getAthleteActivities.mock.calls[1][3]).not.toBeNull();
+      // Every call (including the first) must have a `before` so Strava returns DESC.
+      // The first `before` is ≈ now; subsequent calls advance strictly backwards.
+      const firstBefore = mockStravaAPI.getAthleteActivities.mock.calls[0][3];
+      const secondBefore = mockStravaAPI.getAthleteActivities.mock.calls[1][3];
+      expect(firstBefore).toEqual(expect.any(Number));
+      expect(secondBefore).toBeLessThan(firstBefore);
     });
 
     it('should advance before cursor to (oldest activity timestamp - 1) on each page', async () => {
@@ -882,8 +889,8 @@ describe('PBManager', () => {
       const afterTs = Math.floor((Date.now() - 365 * 24 * 60 * 60 * 1000) / 1000);
       await pbManager.syncFromHistory('discord123', 'token', mockStravaAPI, undefined, afterTs);
 
-      // Called with page=1, before=null, after=afterTs
-      expect(mockStravaAPI.getAthleteActivities).toHaveBeenCalledWith('token', 1, 100, null, afterTs);
+      // Called with page=1, before=≈now, after=afterTs (DESC mode requires `before`)
+      expect(mockStravaAPI.getAthleteActivities).toHaveBeenCalledWith('token', 1, 100, expect.any(Number), afterTs);
     });
 
     it('should derive a stable cursor key from afterTs rounded to the day', async () => {
@@ -945,6 +952,45 @@ describe('PBManager', () => {
       const result = await pbManager.syncFromHistory('discord123', 'token', mockStravaAPI);
 
       expect(result).toMatchObject({ processed: expect.any(Number), updated: expect.any(Number), errors: expect.any(Number) });
+    });
+
+    it('first call should pass `before` set to (≈ now) so Strava returns DESC, not ASC', async () => {
+      // Regression: previously the first call passed before=null. Strava's
+      // /athlete/activities switches to ASC when only `after` is set, breaking
+      // the algorithm that assumes the last array element is the oldest.
+      mockStravaAPI.getAthleteActivities.mockResolvedValue([]);
+      DatabaseManager.settingsManager.getSetting.mockResolvedValue(null);
+
+      await pbManager.syncFromHistory('discord123', 'token', mockStravaAPI);
+
+      const firstBefore = mockStravaAPI.getAthleteActivities.mock.calls[0][3];
+      const nowSec = Math.floor(Date.now() / 1000);
+      expect(firstBefore).toEqual(expect.any(Number));
+      expect(Math.abs(firstBefore - nowSec)).toBeLessThan(60);
+    });
+
+    it('should compute oldest from min(start_date), so ASC-ordered Strava response still advances cursor correctly', async () => {
+      // Regression: previously took activities[activities.length-1] as the
+      // oldest. That breaks if Strava returns ASC (oldest first), making the
+      // cursor jump to the newest activity and re-fetch the same window twice.
+      const ascending = [
+        { id: 1, type: 'Run', start_date: '2026-01-05T10:00:00Z' }, // oldest
+        { id: 2, type: 'Run', start_date: '2026-01-08T10:00:00Z' },
+        { id: 3, type: 'Run', start_date: '2026-01-10T10:00:00Z' }, // newest (last in array)
+      ];
+      mockStravaAPI.getAthleteActivities
+        .mockResolvedValueOnce(ascending)
+        .mockResolvedValueOnce([]);
+      mockStravaAPI.getActivity.mockResolvedValue({ id: 1, type: 'Run', best_efforts: [] });
+      DatabaseManager.settingsManager.getSetting.mockResolvedValue(null);
+
+      await pbManager.syncFromHistory('discord123', 'token', mockStravaAPI);
+
+      const minTs = Math.floor(new Date('2026-01-05T10:00:00Z').getTime() / 1000);
+      // Cursor for the NEXT call must be based on the minimum across the page,
+      // not on activities[length-1] (which would be the newest in ASC mode).
+      const secondBefore = mockStravaAPI.getAthleteActivities.mock.calls[1][3];
+      expect(secondBefore).toBe(minTs - 1);
     });
 
     it('should continue if deleteSetting throws on completion', async () => {

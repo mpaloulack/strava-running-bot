@@ -423,8 +423,12 @@ class DiscordCommands {
       // Sync command — gated to admins because it can fully consume the Strava
       // rate budget for the whole bot for several minutes per invocation.
       new SlashCommandBuilder()
+        .setName('help')
+        .setDescription('Comment utiliser ce bot Strava'),
+
+      new SlashCommandBuilder()
         .setName('sync')
-        .setDescription('Sync Strava activities and update Personal Bests (admin only)')
+        .setDescription('Sync your Strava activities and update your Personal Bests')
         .addStringOption(option =>
           option
             .setName('period')
@@ -434,8 +438,7 @@ class DiscordCommands {
               { name: 'Current year (Jan 1 → today)', value: 'current_year' },
               { name: 'Last 365 days', value: 'last_365_days' }
             )
-        )
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+        ),
     ];
   }
 
@@ -486,6 +489,9 @@ class DiscordCommands {
         break;
       case 'sync':
         await this.handleSyncCommand(interaction, options);
+        break;
+      case 'help':
+        await this.handleHelpCommand(interaction);
         break;
       default:
         await interaction.reply({ 
@@ -1007,6 +1013,71 @@ class DiscordCommands {
     await interaction.editReply({
       embeds: [embed]
     });
+  }
+
+
+  async handleHelpCommand(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+
+    const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ?? false;
+
+    const fields = [
+      {
+        name: '🔗 1. Se connecter',
+        value:
+          '`/register` — Connecte ton compte Strava pour rejoindre l\'équipe. Tu recevras un lien personnel pour autoriser l\'accès à tes activités publiques.',
+        inline: false,
+      },
+      {
+        name: '🏃 2. Activités',
+        value:
+          '`/last member:<nom>` — Affiche la dernière activité d\'un membre.\n\nUne fois inscrit, tes nouvelles courses sont publiées automatiquement dans le salon dédié.',
+        inline: false,
+      },
+      {
+        name: '🏆 3. Records personnels (PB)',
+        value:
+          '`/pb check` — Affiche tes records personnels (5K, 10K, semi, marathon…).\n`/pb check member:<nom>` — Affiche les records d\'un autre membre.\n`/pb add activity_url:<lien> distance_m:<mètres>` — Ajoute manuellement un PB depuis une activité Strava (utile pour les courses de plus d\'un an).\n`/sync period:<période>` — Synchronise ton historique Strava et met à jour tes PB (année en cours ou 365 derniers jours).',
+        inline: false,
+      },
+      {
+        name: '📅 4. Courses à venir',
+        value:
+          '`/my-races add` — Ajouter une course (date, distance, objectif, lieu…).\n`/my-races list` — Voir tes courses.\n`/my-races update race_id:<id>` — Modifier une course.\n`/my-races remove race_id:<id>` — Supprimer une course.\n`/my-races upcoming days:<n>` — Voir les courses à venir de toute l\'équipe.',
+        inline: false,
+      },
+    ];
+
+    if (isAdmin) {
+      fields.push({
+        name: '⚙️ 5. Commandes admin',
+        value:
+          '`/members list` · `/members inactive` · `/members remove` · `/members deactivate` · `/members reactivate`\n`/all-races list` · `/all-races upcoming`\n`/settings channel` · `/settings view`\n`/scheduler weekly` · `/scheduler monthly` · `/scheduler status`\n`/pb status`',
+        inline: false,
+      });
+    }
+
+    fields.push({
+      name: '💡 Astuces',
+      value:
+        '• Les réponses du bot sont souvent **éphémères** : visibles uniquement par toi.\n• Format de date : `JJ-MM-AAAA` (ex. `21-04-2026`).\n• Si ta connexion Strava expire, utilise `/register` à nouveau.',
+      inline: false,
+    });
+
+    const embed = new EmbedBuilder()
+      .setTitle('🏃 Guide d\'utilisation du bot')
+      .setColor('#FC4C02')
+      .setDescription(
+        'Ce bot relie ton compte **Strava** à Discord : tes activités de course sont publiées automatiquement, tes records personnels sont suivis, et tu peux gérer tes courses à venir.'
+      )
+      .addFields(fields)
+      .setFooter({
+        text: 'Propulsé par Strava • Bonne course ! 🏁',
+        iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg',
+      })
+      .setTimestamp();
+
+    await interaction.editReply({ embeds: [embed] });
   }
 
 
@@ -2199,8 +2270,9 @@ class DiscordCommands {
         afterTs = Math.floor((Date.now() - 365 * 24 * 60 * 60 * 1000) / 1000);
         periodLabel = 'Last 365 days';
       } else {
-        afterTs = Math.floor(new Date(new Date().getFullYear(), 0, 1).getTime() / 1000);
-        periodLabel = `Current year (${new Date().getFullYear()})`;
+        const year = new Date().getUTCFullYear();
+        afterTs = Math.floor(Date.UTC(year, 0, 1) / 1000);
+        periodLabel = `Current year (${year})`;
       }
 
       await interaction.editReply({ content: `⏳ Syncing your **${periodLabel} Strava activities**… this may take several minutes. The sync continues even if this message stops updating.` });
