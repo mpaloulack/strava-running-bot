@@ -969,6 +969,7 @@ describe('DiscordCommands', () => {
       expect(fields).toContain('/pb');
       expect(fields).toContain('/my-races');
       expect(fields).toContain('/sync');
+      expect(fields).toContain('/leaderboard');
       // Admin-only commands hidden
       expect(fields).not.toContain('/members');
       expect(fields).not.toContain('/all-races');
