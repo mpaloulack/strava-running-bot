@@ -50,7 +50,7 @@ class StravaAPI {
           response: error.response?.data,
           status: error.response?.status
         });
-        throw new Error('Failed to exchange authorization code for token');
+        throw new Error('Failed to exchange authorization code for token', { cause: error });
       }
     }, { operation: 'exchangeCodeForToken', authCode });
   }
@@ -75,7 +75,7 @@ class StravaAPI {
           response: error.response?.data,
           status: error.response?.status
         });
-        throw new Error('Failed to refresh access token');
+        throw new Error('Failed to refresh access token', { cause: error });
       }
     }, { operation: 'refreshAccessToken' });
   }
@@ -99,7 +99,7 @@ class StravaAPI {
           response: error.response?.data,
           status: error.response?.status
         });
-        throw new Error('Failed to fetch athlete information');
+        throw new Error('Failed to fetch athlete information', { cause: error });
       }
     }, { operation: 'getAthlete' });
   }
@@ -133,7 +133,7 @@ class StravaAPI {
           status: error.response?.status,
           params: { page, perPage, before, after }
         });
-        throw new Error('Failed to fetch athlete activities');
+        throw new Error('Failed to fetch athlete activities', { cause: error });
       }
     }, { operation: 'getAthleteActivities', page, perPage });
   }
@@ -158,7 +158,7 @@ class StravaAPI {
           response: error.response?.data,
           status: error.response?.status
         });
-        throw new Error(`Failed to fetch activity ${activityId}`);
+        throw new Error(`Failed to fetch activity ${activityId}`, { cause: error });
       }
     }, { operation: 'getActivity', activityId });
   }
@@ -188,7 +188,7 @@ class StravaAPI {
           response: error.response?.data,
           status: error.response?.status
         });
-        throw new Error(`Failed to fetch activity streams for ${activityId}`);
+        throw new Error(`Failed to fetch activity streams for ${activityId}`, { cause: error });
       }
     }, { operation: 'getActivityStreams', activityId, keys });
   }
