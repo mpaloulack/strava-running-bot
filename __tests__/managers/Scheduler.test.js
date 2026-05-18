@@ -52,10 +52,30 @@ jest.mock('discord.js', () => ({
   EmbedBuilder: jest.fn(() => mockEmbedBuilder)
 }));
 
+// Mock config so EmbedBuilder.js (loaded by Scheduler.js) doesn't exit on
+// missing env vars in CI environments where .env is absent.
+jest.mock('../../config/config', () => ({
+  server: { baseUrl: 'https://test.example.com' },
+}));
+
+// LeaderboardManager would otherwise require DatabaseManager → SettingsManager
+// → real DB code at module load. The Scheduler tests inject a mock instance,
+// so the real class is never used — but the Scheduler also calls the static
+// getPreviousMonth() helper, so we expose that on the mock.
+jest.mock('../../src/managers/LeaderboardManager', () => {
+  const MockLeaderboardManager = jest.fn().mockImplementation(() => ({
+    getMonthlyLeaderboard: jest.fn(),
+  }));
+  MockLeaderboardManager.getPreviousMonth = jest.fn(() => ({ year: 2026, month: 4 }));
+  MockLeaderboardManager.getCurrentMonth = jest.fn(() => ({ year: 2026, month: 5 }));
+  return MockLeaderboardManager;
+});
+
 describe('Scheduler', () => {
   let scheduler;
   let mockActivityProcessor;
   let mockRaceManager;
+  let mockLeaderboardManager;
   let mockDiscordBot;
   let mockChannel;
   let mockConfig;
@@ -101,6 +121,10 @@ describe('Scheduler', () => {
       }
     };
 
+    mockLeaderboardManager = {
+      getMonthlyLeaderboard: jest.fn(),
+    };
+
     mockConfig = {
       scheduler: {
         weeklyEnabled: true,
@@ -111,7 +135,7 @@ describe('Scheduler', () => {
       }
     };
 
-    scheduler = new Scheduler(mockActivityProcessor, mockRaceManager);
+    scheduler = new Scheduler(mockActivityProcessor, mockRaceManager, mockLeaderboardManager);
   });
 
   describe('Initialization', () => {
@@ -282,6 +306,129 @@ describe('Scheduler', () => {
       expect(mockRaceManager.getMonthlyRaces).toHaveBeenCalled();
       expect(mockDiscordBot.getChannel).not.toHaveBeenCalled();
       expect(mockChannel.send).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Monthly Leaderboard', () => {
+    test('the registered cron callback invokes postMonthlyLeaderboard', async () => {
+      const cfg = {
+        scheduler: {
+          weeklyEnabled: false,
+          monthlyEnabled: false,
+          leaderboardEnabled: true,
+          weeklySchedule: '0 8 * * 1',
+          monthlySchedule: '0 8 1 * *',
+          leaderboardSchedule: '0 9 1 * *',
+          timezone: 'UTC'
+        }
+      };
+      mockLeaderboardManager.getMonthlyLeaderboard.mockResolvedValue({
+        year: 2026, month: 4, startDate: '', endDate: '', entries: [],
+      });
+
+      await scheduler.initialize(cfg);
+      // node-cron's schedule(cronExpr, callback, opts) — invoke the captured callback
+      const cronCallback = cron.schedule.mock.calls[0][1];
+      await cronCallback();
+
+      expect(mockLeaderboardManager.getMonthlyLeaderboard).toHaveBeenCalled();
+    });
+
+    test('schedules a leaderboard cron job when enabled', async () => {
+      const cfg = {
+        scheduler: {
+          weeklyEnabled: false,
+          monthlyEnabled: false,
+          leaderboardEnabled: true,
+          weeklySchedule: '0 8 * * 1',
+          monthlySchedule: '0 8 1 * *',
+          leaderboardSchedule: '0 9 1 * *',
+          timezone: 'UTC'
+        }
+      };
+
+      await scheduler.initialize(cfg);
+
+      expect(cron.schedule).toHaveBeenCalledTimes(1);
+      expect(cron.schedule.mock.calls[0][0]).toBe('0 9 1 * *');
+      expect(scheduler.jobs.has('leaderboard')).toBe(true);
+    });
+
+    test('does not schedule a leaderboard job when disabled', async () => {
+      const cfg = {
+        scheduler: {
+          weeklyEnabled: true,
+          monthlyEnabled: false,
+          leaderboardEnabled: false,
+          weeklySchedule: '0 8 * * 1',
+          monthlySchedule: '0 8 1 * *',
+          timezone: 'UTC'
+        }
+      };
+
+      await scheduler.initialize(cfg);
+
+      expect(scheduler.jobs.has('leaderboard')).toBe(false);
+    });
+
+    test('postMonthlyLeaderboard fetches previous month by default and sends embed', async () => {
+      mockLeaderboardManager.getMonthlyLeaderboard.mockResolvedValue({
+        year: 2026, month: 4, startDate: '', endDate: '',
+        entries: [
+          { athleteId: 1, memberName: 'Alice', totalDistanceM: 50000, activityCount: 5 },
+        ],
+      });
+
+      await scheduler.postMonthlyLeaderboard();
+
+      expect(mockLeaderboardManager.getMonthlyLeaderboard).toHaveBeenCalledTimes(1);
+      const callArg = mockLeaderboardManager.getMonthlyLeaderboard.mock.calls[0][0];
+      expect(callArg).toHaveProperty('year');
+      expect(callArg).toHaveProperty('month');
+      expect(callArg.memberManager).toBe(mockActivityProcessor.memberManager);
+      expect(mockChannel.send).toHaveBeenCalledTimes(1);
+      expect(mockChannel.send.mock.calls[0][0].embeds).toHaveLength(1);
+    });
+
+    test('postMonthlyLeaderboard honors an explicit period override', async () => {
+      mockLeaderboardManager.getMonthlyLeaderboard.mockResolvedValue({
+        year: 2025, month: 12, startDate: '', endDate: '', entries: [],
+      });
+
+      await scheduler.postMonthlyLeaderboard({ year: 2025, month: 12 });
+
+      const callArg = mockLeaderboardManager.getMonthlyLeaderboard.mock.calls[0][0];
+      expect(callArg.year).toBe(2025);
+      expect(callArg.month).toBe(12);
+    });
+
+    test('postMonthlyLeaderboard does not throw when channel is missing', async () => {
+      mockLeaderboardManager.getMonthlyLeaderboard.mockResolvedValue({
+        year: 2026, month: 4, startDate: '', endDate: '', entries: [],
+      });
+      mockDiscordBot.getChannel.mockResolvedValue(null);
+
+      await expect(scheduler.postMonthlyLeaderboard()).resolves.toBeUndefined();
+      expect(mockChannel.send).not.toHaveBeenCalled();
+    });
+
+    test('postMonthlyLeaderboard swallows downstream errors', async () => {
+      mockLeaderboardManager.getMonthlyLeaderboard.mockRejectedValue(new Error('db down'));
+
+      await expect(scheduler.postMonthlyLeaderboard()).resolves.toBeUndefined();
+      expect(mockChannel.send).not.toHaveBeenCalled();
+    });
+
+    test('triggerMonthlyLeaderboard delegates to postMonthlyLeaderboard with period', async () => {
+      mockLeaderboardManager.getMonthlyLeaderboard.mockResolvedValue({
+        year: 2026, month: 2, startDate: '', endDate: '', entries: [],
+      });
+
+      await scheduler.triggerMonthlyLeaderboard({ year: 2026, month: 2 });
+
+      const callArg = mockLeaderboardManager.getMonthlyLeaderboard.mock.calls[0][0];
+      expect(callArg.year).toBe(2026);
+      expect(callArg.month).toBe(2);
     });
   });
 

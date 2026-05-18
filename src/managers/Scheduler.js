@@ -3,11 +3,14 @@ const axios = require('axios');
 const { EmbedBuilder } = require('discord.js');
 const logger = require('../utils/Logger');
 const { DATE } = require('../constants');
+const ActivityEmbedBuilder = require('../utils/EmbedBuilder');
+const LeaderboardManager = require('./LeaderboardManager');
 
 class Scheduler {
-  constructor(activityProcessor, raceManager) {
+  constructor(activityProcessor, raceManager, leaderboardManager = new LeaderboardManager()) {
     this.activityProcessor = activityProcessor;
     this.raceManager = raceManager;
+    this.leaderboardManager = leaderboardManager;
     this.jobs = new Map(); // Store active cron jobs
     this.isInitialized = false;
     this.healthState = 'unknown'; // 'unknown' | 'healthy' | 'unhealthy'
@@ -80,19 +83,39 @@ class Scheduler {
       // Monthly race announcement - First day of month at 8:00 AM
       if (config.scheduler.monthlyEnabled) {
         const monthlyJob = cron.schedule(
-          config.scheduler.monthlySchedule, 
+          config.scheduler.monthlySchedule,
           () => this.postMonthlyRaces(),
           {
             scheduled: false,
             timezone: config.scheduler.timezone
           }
         );
-        
+
         this.jobs.set('monthly', monthlyJob);
         monthlyJob.start();
-        
+
         logger.scheduler.info('Monthly race announcements scheduled', {
           schedule: config.scheduler.monthlySchedule,
+          timezone: config.scheduler.timezone
+        });
+      }
+
+      // Monthly running leaderboard - posts the *previous* month's totals
+      if (config.scheduler.leaderboardEnabled) {
+        const leaderboardJob = cron.schedule(
+          config.scheduler.leaderboardSchedule,
+          () => this.postMonthlyLeaderboard(),
+          {
+            scheduled: false,
+            timezone: config.scheduler.timezone
+          }
+        );
+
+        this.jobs.set('leaderboard', leaderboardJob);
+        leaderboardJob.start();
+
+        logger.scheduler.info('Monthly leaderboard scheduled', {
+          schedule: config.scheduler.leaderboardSchedule,
           timezone: config.scheduler.timezone
         });
       }
@@ -125,6 +148,7 @@ class Scheduler {
       logger.scheduler.info('Race scheduler initialized successfully', {
         weeklyEnabled: config.scheduler.weeklyEnabled,
         monthlyEnabled: config.scheduler.monthlyEnabled,
+        leaderboardEnabled: config.scheduler.leaderboardEnabled,
         healthCheckEnabled: !!config.healthCheck?.enabled,
         activeJobs: this.jobs.size
       });
@@ -488,6 +512,41 @@ class Scheduler {
   }
 
   /**
+   * Post the previous month's running leaderboard. Called by cron on the 1st.
+   * @param {{year: number, month: number}} [period] - Override for the slash command
+   */
+  async postMonthlyLeaderboard(period) {
+    try {
+      const { year, month } = period ?? LeaderboardManager.getPreviousMonth();
+      logger.scheduler.info('Posting monthly leaderboard', { year, month });
+
+      const result = await this.leaderboardManager.getMonthlyLeaderboard({
+        year,
+        month,
+        memberManager: this.activityProcessor.memberManager,
+      });
+
+      const embed = ActivityEmbedBuilder.buildMonthlyLeaderboardEmbed(result);
+
+      const channel = await this.activityProcessor.discordBot.getChannel();
+      if (!channel) {
+        logger.scheduler.error('Discord channel not available for leaderboard');
+        return;
+      }
+
+      await channel.send({ embeds: [embed] });
+      logger.scheduler.info('Monthly leaderboard posted', {
+        year, month, runners: result.entries.length,
+      });
+    } catch (error) {
+      logger.scheduler.error('Failed to post monthly leaderboard', {
+        error: error.message,
+        stack: error.stack
+      });
+    }
+  }
+
+  /**
    * Manually trigger weekly race announcement (for testing)
    */
   async triggerWeeklyAnnouncement() {
@@ -501,6 +560,15 @@ class Scheduler {
   async triggerMonthlyAnnouncement() {
     logger.scheduler.info('Manually triggering monthly race announcement');
     await this.postMonthlyRaces();
+  }
+
+  /**
+   * Manually trigger monthly leaderboard post (for testing)
+   * @param {{year: number, month: number}} [period]
+   */
+  async triggerMonthlyLeaderboard(period) {
+    logger.scheduler.info('Manually triggering monthly leaderboard');
+    await this.postMonthlyLeaderboard(period);
   }
 
   /**
