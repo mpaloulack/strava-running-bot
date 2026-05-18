@@ -241,6 +241,23 @@ describe('RaceManager', () => {
         .toThrow('Race date must be in DD-MM-YYYY format');
     });
 
+    it('should throw error for semantically invalid date that matches format', () => {
+      const invalidData = {
+        name: 'Boston Marathon',
+        raceDate: '32-13-2025' // Matches regex but day 32 / month 13 is invalid
+      };
+
+      expect(() => raceManager.validateRaceData(invalidData))
+        .toThrow('Invalid race date');
+
+      try {
+        raceManager.validateRaceData(invalidData);
+      } catch (error) {
+        expect(error.cause).toBeDefined();
+        expect(error.cause.message).toEqual(expect.any(String));
+      }
+    });
+
     it('should throw error for race name too long', () => {
       const invalidData = {
         name: 'A'.repeat(101), // 101 characters

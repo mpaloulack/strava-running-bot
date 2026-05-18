@@ -272,8 +272,8 @@ class RaceManager {
     // Validate by attempting conversion
     try {
       DateUtils.convertDDMMYYYYToISO(raceDate);
-    } catch (_error) {
-      throw new TypeError('Invalid race date');
+    } catch (error) {
+      throw new TypeError('Invalid race date', { cause: error });
     }
   }
 

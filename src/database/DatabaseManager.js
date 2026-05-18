@@ -425,7 +425,7 @@ class DatabaseManager {
     }
 
     // Encrypt the new tokens
-    let encryptedTokens = null;
+    let encryptedTokens;
     if (config.security.encryptionKey) {
       try {
         encryptedTokens = EncryptionUtils.encryptTokensToJSON(tokenData);

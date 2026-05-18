@@ -57,7 +57,7 @@ class EncryptionUtils {
       };
     } catch (error) {
       logger.database?.error('Failed to encrypt tokens', { error: error.message });
-      throw new Error(`Encryption failed: ${error.message}`);
+      throw new Error(`Encryption failed: ${error.message}`, { cause: error });
     }
   }
 
