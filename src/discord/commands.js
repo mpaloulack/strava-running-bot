@@ -1066,11 +1066,17 @@ class DiscordCommands {
           '`/my-races add` — Ajouter une course (date, distance, objectif, lieu…).\n`/my-races list` — Voir tes courses.\n`/my-races update race_id:<id>` — Modifier une course.\n`/my-races remove race_id:<id>` — Supprimer une course.\n`/my-races upcoming days:<n>` — Voir les courses à venir de toute l\'équipe.',
         inline: false,
       },
+      {
+        name: '🏆 5. Classement mensuel',
+        value:
+          '`/leaderboard` — Classement de l\'équipe par kilomètres courus ce mois-ci.\n`/leaderboard month:previous` — Classement du mois précédent.\n\nLe bot publie automatiquement le classement du mois écoulé le 1er de chaque mois.',
+        inline: false,
+      },
     ];
 
     if (isAdmin) {
       fields.push({
-        name: '⚙️ 5. Commandes admin',
+        name: '⚙️ 6. Commandes admin',
         value:
           '`/members list` · `/members inactive` · `/members remove` · `/members deactivate` · `/members reactivate`\n`/all-races list` · `/all-races upcoming`\n`/settings channel` · `/settings view`\n`/scheduler weekly` · `/scheduler monthly` · `/scheduler status`\n`/pb status`',
         inline: false,
