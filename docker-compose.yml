@@ -24,8 +24,8 @@ services:
     # Volume for persistent data storage
     volumes:
       # bind host folder (default ./data/bot_data) so you can inspect members.json on host
-      - ./data/data:/app/data:rw
-      - ./data/logs:/app/logs:rw
+      - ./data/data:/app/data:rw,z
+      - ./data/logs:/app/logs:rw,z
     
     # Health check (runs inside the container, use container PORT)
     healthcheck:

@@ -1,16 +1,33 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const ActivityEmbedBuilder = require('../utils/EmbedBuilder');
 const DiscordUtils = require('../utils/DiscordUtils');
+const ActivityFormatter = require('../utils/ActivityFormatter');
 const RaceManager = require('../managers/RaceManager');
+const PBManager = require('../managers/PBManager');
 const logger = require('../utils/Logger');
 const config = require('../../config/config');
-const { TIME, DISCORD } = require('../constants');
+const { TIME, DISCORD, CATEGORY_DISTANCES } = require('../constants');
 const DateUtils = require('../utils/DateUtils');
+
+function findClosestPBCategory(distanceM) {
+  let closest = null;
+  let minDiff = Infinity;
+  for (const [category, dist] of Object.entries(CATEGORY_DISTANCES)) {
+    const diff = Math.abs(dist - distanceM);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closest = category;
+    }
+  }
+  return closest;
+}
 
 class DiscordCommands {
   constructor(activityProcessor) {
     this.activityProcessor = activityProcessor;
     this.raceManager = new RaceManager();
+    this.pbManager = new PBManager();
+    this.pbSyncInProgress = new Set();
   }
 
   // Define all slash commands
@@ -362,7 +379,66 @@ class DiscordCommands {
             .setName('status')
             .setDescription('Show scheduler status')
         )
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+      // Personal Best command
+      new SlashCommandBuilder()
+        .setName('pb')
+        .setDescription('Personal Best tracking')
+        .addSubcommand(subcommand =>
+          subcommand
+            .setName('check')
+            .setDescription('View your Personal Bests (or another member\'s)')
+            .addUserOption(option =>
+              option
+                .setName('member')
+                .setDescription('View another member\'s PBs')
+                .setRequired(false)
+            )
+        )
+        .addSubcommand(subcommand =>
+          subcommand
+            .setName('add')
+            .setDescription('Manually add PBs from a Strava activity (for races older than 1 year)')
+            .addStringOption(option =>
+              option
+                .setName('activity_url')
+                .setDescription('Strava activity URL (e.g. https://www.strava.com/activities/123456)')
+                .setRequired(true)
+            )
+            .addIntegerOption(option =>
+              option
+                .setName('distance_m')
+                .setDescription('Official race distance in meters (e.g. 5000 for 5K, 10000 for 10K, 21097 for Half Marathon)')
+                .setRequired(false)
+                .setMinValue(100)
+            )
+        )
+        .addSubcommand(subcommand =>
+          subcommand
+            .setName('status')
+            .setDescription('Show PB sync status and stored PBs per member (admin only)')
+        ),
+
+      // Sync command — gated to admins because it can fully consume the Strava
+      // rate budget for the whole bot for several minutes per invocation.
+      new SlashCommandBuilder()
+        .setName('help')
+        .setDescription('Comment utiliser ce bot Strava'),
+
+      new SlashCommandBuilder()
+        .setName('sync')
+        .setDescription('Sync your Strava activities and update your Personal Bests')
+        .addStringOption(option =>
+          option
+            .setName('period')
+            .setDescription('Time period to sync')
+            .setRequired(true)
+            .addChoices(
+              { name: 'Current year (Jan 1 → today)', value: 'current_year' },
+              { name: 'Last 365 days', value: 'last_365_days' }
+            )
+        ),
     ];
   }
 
@@ -407,6 +483,15 @@ class DiscordCommands {
         break;
       case 'scheduler':
         await this.handleSchedulerCommand(interaction, options);
+        break;
+      case 'pb':
+        await this.handlePBCommand(interaction, options);
+        break;
+      case 'sync':
+        await this.handleSyncCommand(interaction, options);
+        break;
+      case 'help':
+        await this.handleHelpCommand(interaction);
         break;
       default:
         await interaction.reply({ 
@@ -928,6 +1013,71 @@ class DiscordCommands {
     await interaction.editReply({
       embeds: [embed]
     });
+  }
+
+
+  async handleHelpCommand(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+
+    const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ?? false;
+
+    const fields = [
+      {
+        name: '🔗 1. Se connecter',
+        value:
+          '`/register` — Connecte ton compte Strava pour rejoindre l\'équipe. Tu recevras un lien personnel pour autoriser l\'accès à tes activités publiques.',
+        inline: false,
+      },
+      {
+        name: '🏃 2. Activités',
+        value:
+          '`/last member:<nom>` — Affiche la dernière activité d\'un membre.\n\nUne fois inscrit, tes nouvelles courses sont publiées automatiquement dans le salon dédié.',
+        inline: false,
+      },
+      {
+        name: '🏆 3. Records personnels (PB)',
+        value:
+          '`/pb check` — Affiche tes records personnels (5K, 10K, semi, marathon…).\n`/pb check member:<nom>` — Affiche les records d\'un autre membre.\n`/pb add activity_url:<lien> distance_m:<mètres>` — Ajoute manuellement un PB depuis une activité Strava (utile pour les courses de plus d\'un an).\n`/sync period:<période>` — Synchronise ton historique Strava et met à jour tes PB (année en cours ou 365 derniers jours).',
+        inline: false,
+      },
+      {
+        name: '📅 4. Courses à venir',
+        value:
+          '`/my-races add` — Ajouter une course (date, distance, objectif, lieu…).\n`/my-races list` — Voir tes courses.\n`/my-races update race_id:<id>` — Modifier une course.\n`/my-races remove race_id:<id>` — Supprimer une course.\n`/my-races upcoming days:<n>` — Voir les courses à venir de toute l\'équipe.',
+        inline: false,
+      },
+    ];
+
+    if (isAdmin) {
+      fields.push({
+        name: '⚙️ 5. Commandes admin',
+        value:
+          '`/members list` · `/members inactive` · `/members remove` · `/members deactivate` · `/members reactivate`\n`/all-races list` · `/all-races upcoming`\n`/settings channel` · `/settings view`\n`/scheduler weekly` · `/scheduler monthly` · `/scheduler status`\n`/pb status`',
+        inline: false,
+      });
+    }
+
+    fields.push({
+      name: '💡 Astuces',
+      value:
+        '• Les réponses du bot sont souvent **éphémères** : visibles uniquement par toi.\n• Format de date : `JJ-MM-AAAA` (ex. `21-04-2026`).\n• Si ta connexion Strava expire, utilise `/register` à nouveau.',
+      inline: false,
+    });
+
+    const embed = new EmbedBuilder()
+      .setTitle('🏃 Guide d\'utilisation du bot')
+      .setColor('#FC4C02')
+      .setDescription(
+        'Ce bot relie ton compte **Strava** à Discord : tes activités de course sont publiées automatiquement, tes records personnels sont suivis, et tu peux gérer tes courses à venir.'
+      )
+      .addFields(fields)
+      .setFooter({
+        text: 'Propulsé par Strava • Bonne course ! 🏁',
+        iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg',
+      })
+      .setTimestamp();
+
+    await interaction.editReply({ embeds: [embed] });
   }
 
 
@@ -2031,6 +2181,335 @@ class DiscordCommands {
         content: '❌ Failed to load settings.',
         ephemeral: true
       });
+    }
+  }
+
+  // ─── /pb command ──────────────────────────────────────────────────────────
+
+  async handlePBCommand(interaction, options) {
+    const subcommand = options.getSubcommand();
+    switch (subcommand) {
+    case 'check':
+      await this.handlePBCheck(interaction, options);
+      break;
+    case 'add':
+      await this.handlePBAdd(interaction, options);
+      break;
+    case 'status':
+      await this.handlePBStatus(interaction, options);
+      break;
+    }
+  }
+
+  async handlePBCheck(interaction, options) {
+    await interaction.deferReply();
+
+    try {
+      const targetUser = options.getUser('member');
+      const targetDiscordId = targetUser ? targetUser.id : interaction.user.id;
+      const targetName = targetUser ? (targetUser.globalName || targetUser.username) : (interaction.member?.displayName || interaction.user.globalName || interaction.user.username);
+
+      const pbs = await this.pbManager.getMemberPBsByDiscordId(targetDiscordId);
+
+      if (!pbs.length) {
+        await interaction.editReply({
+          content: `📭 No Personal Bests recorded yet for **${targetName}**.\nUse \`/sync\` to import from Strava history.`,
+        });
+        return;
+      }
+
+      const fields = this.pbManager.formatPBsForEmbed(pbs, targetName);
+
+      const embed = new EmbedBuilder()
+        .setColor('#D4AF37')
+        .setTimestamp()
+        .addFields(fields);
+
+      await interaction.editReply({ embeds: [embed] });
+
+    } catch (error) {
+      logger.discord.error('Error checking PBs', {
+        user: interaction.user.tag,
+        error: error.message,
+        code: error.code,
+        status: error.status,
+        rawError: error.rawError,
+      });
+      await interaction.editReply({
+        content: '❌ Failed to retrieve Personal Bests.',
+      });
+    }
+  }
+
+  async handleSyncCommand(interaction, options) {
+    await interaction.deferReply({ ephemeral: true });
+
+    if (this.pbSyncInProgress.has(interaction.user.id)) {
+      await interaction.editReply({
+        content: '⏳ A sync is already in progress for your account. Please wait for it to finish.',
+      });
+      return;
+    }
+
+    this.pbSyncInProgress.add(interaction.user.id);
+
+    try {
+      const member = await this.activityProcessor.memberManager.getMemberByDiscordId(interaction.user.id);
+
+      if (!member?.isActive) {
+        await interaction.editReply({
+          content: '❌ You are not registered. Use `/register` first.',
+        });
+        return;
+      }
+
+      const period = options.getString('period');
+      let afterTs;
+      let periodLabel;
+      if (period === 'last_365_days') {
+        afterTs = Math.floor((Date.now() - 365 * 24 * 60 * 60 * 1000) / 1000);
+        periodLabel = 'Last 365 days';
+      } else {
+        const year = new Date().getUTCFullYear();
+        afterTs = Math.floor(Date.UTC(year, 0, 1) / 1000);
+        periodLabel = `Current year (${year})`;
+      }
+
+      await interaction.editReply({ content: `⏳ Syncing your **${periodLabel} Strava activities**… this may take several minutes. The sync continues even if this message stops updating.` });
+
+      const accessToken = await this.activityProcessor.memberManager.getValidAccessToken(member);
+      if (!accessToken) {
+        await interaction.editReply({
+          content: '❌ Could not retrieve your Strava access token. Please re-register.',
+        });
+        return;
+      }
+
+      const progressCb = async (page) => {
+        try {
+          await interaction.editReply({ content: `⏳ Syncing… processed page ${page}` });
+        } catch {
+          // Ignore edit errors after Discord's 15-min interaction window
+        }
+      };
+
+      const summary = await this.pbManager.syncFromHistory(
+        interaction.user.id,
+        accessToken,
+        this.activityProcessor.stravaAPI,
+        progressCb,
+        afterTs
+      );
+
+      const embed = new EmbedBuilder()
+        .setTitle(`🔄 Sync Complete — ${periodLabel}`)
+        .setColor('#D4AF37')
+        .addFields([
+          { name: 'Activities scanned', value: String(summary.processed), inline: true },
+          { name: 'PBs updated', value: String(summary.updated), inline: true },
+          { name: 'Errors', value: String(summary.errors), inline: true },
+        ])
+        .setTimestamp();
+
+      // Try the interaction reply first. If we've crossed Discord's 15-min
+      // interaction window, editReply will throw — fall back to DMing the user
+      // and, if that also fails, posting in the originating channel so the
+      // user actually sees that the sync finished.
+      try {
+        await interaction.editReply({ content: '', embeds: [embed] });
+      } catch (editErr) {
+        logger.discord.warn('Sync editReply failed (likely past 15-min interaction window), falling back', {
+          user: interaction.user.tag,
+          error: editErr.message,
+        });
+        const fallbackContent = `🔄 **${periodLabel} sync complete** — ${summary.processed} scanned, ${summary.updated} PBs updated, ${summary.errors} errors.`;
+        try {
+          await interaction.user.send({ content: fallbackContent, embeds: [embed] });
+        } catch (dmErr) {
+          logger.discord.warn('Sync fallback DM failed, posting in channel', {
+            user: interaction.user.tag,
+            error: dmErr.message,
+          });
+          try {
+            await interaction.channel?.send({
+              content: `<@${interaction.user.id}> ${fallbackContent}`,
+              embeds: [embed],
+            });
+          } catch (chErr) {
+            logger.discord.error('Sync fallback channel post failed; summary not delivered to user', {
+              user: interaction.user.tag,
+              error: chErr.message,
+            });
+          }
+        }
+      }
+
+    } catch (error) {
+      logger.discord.error('Error syncing PBs', {
+        user: interaction.user.tag,
+        error: error.message,
+      });
+      await interaction.editReply({
+        content: '❌ Failed to sync Personal Bests from Strava.',
+      });
+    } finally {
+      this.pbSyncInProgress.delete(interaction.user.id);
+    }
+  }
+
+  async handlePBAdd(interaction, options) {
+    await interaction.deferReply({ ephemeral: true });
+
+    const activityUrl = options.getString('activity_url');
+
+    // Extract activity ID from URL: https://www.strava.com/activities/12345678
+    const match = activityUrl.match(/\/activities\/(\d+)/);
+    if (!match) {
+      await interaction.editReply({
+        content: '❌ Invalid Strava activity URL. Use the format: `https://www.strava.com/activities/12345678`',
+      });
+      return;
+    }
+    const activityId = match[1];
+
+    try {
+      const member = await this.activityProcessor.memberManager.getMemberByDiscordId(interaction.user.id);
+      if (!member?.isActive) {
+        await interaction.editReply({ content: '❌ You are not registered. Use `/register` first.' });
+        return;
+      }
+
+      const accessToken = await this.activityProcessor.memberManager.getValidAccessToken(member);
+      if (!accessToken) {
+        await interaction.editReply({ content: '❌ Could not retrieve your Strava access token. Please re-register.' });
+        return;
+      }
+
+      const distanceOverrideM = options.getInteger('distance_m');
+      const activity = await this.activityProcessor.stravaAPI.getActivity(activityId, accessToken);
+
+      let distanceWarning = null;
+      let results;
+
+      if (distanceOverrideM !== null) {
+        const efforts = this.pbManager.extractBestEfforts(activity);
+
+        const MATCH_THRESHOLD = 0.15;
+        const target = efforts.length > 0
+          ? efforts.reduce((prev, curr) =>
+            Math.abs(curr.distanceM - distanceOverrideM) < Math.abs(prev.distanceM - distanceOverrideM) ? curr : prev
+          )
+          : null;
+        const isClose = target !== null &&
+          Math.abs(target.distanceM - distanceOverrideM) / distanceOverrideM <= MATCH_THRESHOLD;
+
+        if (isClose) {
+          const diffPercent = Math.abs(target.distanceM - distanceOverrideM) / target.distanceM * 100;
+          if (diffPercent >= 5) {
+            distanceWarning = `⚠️ Large distance gap: official **${distanceOverrideM}m** vs GPS **${target.distanceM}m** (${diffPercent.toFixed(1)}% difference)\n`;
+          }
+          target.distanceM = distanceOverrideM;
+        } else {
+          const category = findClosestPBCategory(distanceOverrideM);
+          const syntheticEffort = {
+            category,
+            distanceM: distanceOverrideM,
+            elapsedTime: activity.elapsed_time,
+            movingTime: activity.moving_time ?? activity.elapsed_time,
+            activityId: activity.id,
+            activityName: activity.name || null,
+            activityDate: activity.start_date
+              ? activity.start_date.substring(0, 10)
+              : new Date().toISOString().substring(0, 10),
+          };
+          efforts.push(syntheticEffort);
+          distanceWarning = `📝 No matching best effort found — using total activity time for **${category}** (GPS: ${activity.distance ? Math.round(activity.distance) : '?'}m)\n`;
+        }
+
+        results = await this.pbManager.checkAndUpdatePBsFromEfforts(member.athleteId, efforts);
+      } else {
+        results = await this.pbManager.checkAndUpdatePBs(member.athleteId, activity);
+      }
+
+      const newPBs = results.filter(r => r.isNewPB);
+      if (!newPBs.length) {
+        await interaction.editReply({
+          content: `${distanceWarning || ''}✅ Activity imported — no new Personal Bests found (existing records are faster).`,
+        });
+        return;
+      }
+
+      const lines = newPBs.map(r => `🏆 **${r.category}** — ${ActivityFormatter.formatTime(r.newPB.elapsedTime)}`);
+      await interaction.editReply({
+        content: `${distanceWarning || ''}✅ **${newPBs.length} new Personal Best(s) recorded!**\n${lines.join('\n')}`,
+      });
+
+    } catch (error) {
+      logger.discord.error('Error adding manual PB', {
+        user: interaction.user.tag,
+        error: error.message,
+      });
+      await interaction.editReply({
+        content: '❌ Failed to import activity. Make sure the URL is correct and the activity belongs to your Strava account.',
+      });
+    }
+  }
+
+  async handlePBStatus(interaction, _options) {
+    await interaction.deferReply({ ephemeral: true });
+
+    if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+      await interaction.editReply({ content: '❌ This command requires the Manage Server permission.' });
+      return;
+    }
+
+    try {
+      const activeSyncIds = [...this.pbSyncInProgress];
+      const pendingCursors = await this.pbManager.databaseManager.getPBSyncCursors();
+      const interrupted = pendingCursors.filter(c => !this.pbSyncInProgress.has(c.discordUserId));
+
+      const activeSyncLines = activeSyncIds.length
+        ? activeSyncIds.map(id => `<@${id}> — sync currently running`)
+        : ['None'];
+
+      const pendingLines = interrupted.length
+        ? await Promise.all(interrupted.map(async c => {
+          const member = await this.activityProcessor.memberManager.getMemberByDiscordId(c.discordUserId);
+          const name = member?.athlete
+            ? `${member.athlete.firstname} ${member.athlete.lastname}`
+            : `<@${c.discordUserId}>`;
+          const resumeDate = new Date(parseInt(c.cursor, 10) * 1000).toLocaleDateString('en-GB');
+          return `${name} — cursor at ${resumeDate}`;
+        }))
+        : ['None'];
+
+      const allMembers = await this.activityProcessor.memberManager.getAllMembers();
+      const memberLines = await Promise.all(
+        allMembers.slice(0, 10).map(async m => {
+          const count = await this.pbManager.databaseManager.getPBCountByAthleteId(m.athleteId);
+          const name = m.athlete ? `${m.athlete.firstname} ${m.athlete.lastname}` : `<@${m.discordUserId}>`;
+          return `${name}: ${count} PBs`;
+        })
+      );
+      if (allMembers.length > 10) memberLines.push(`… and ${allMembers.length - 10} more`);
+
+      const embed = new EmbedBuilder()
+        .setTitle('🏆 PB Sync Status')
+        .setColor('#D4AF37')
+        .addFields([
+          { name: `Active Syncs (${activeSyncIds.length})`, value: activeSyncLines.join('\n').slice(0, 1024) },
+          { name: `Interrupted Syncs (${interrupted.length})`, value: pendingLines.join('\n').slice(0, 1024) },
+          { name: `PBs per Member (${allMembers.length} active)`, value: memberLines.join('\n').slice(0, 1024) || 'No members' },
+        ])
+        .setTimestamp();
+
+      await interaction.editReply({ embeds: [embed] });
+    } catch (error) {
+      logger.discord.error('Error retrieving PB sync status', {
+        user: interaction.user.tag,
+        error: error.message,
+      });
+      await interaction.editReply({ content: '❌ Failed to retrieve PB sync status.' });
     }
   }
 

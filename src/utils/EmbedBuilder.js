@@ -35,21 +35,50 @@ class ActivityEmbedBuilder {
     this._addActivityDescription(embed, activity);
     this._addCoreActivityFields(embed, activity, displayType);
     this._addOptionalActivityFields(embed, activity);
+    this._addPBField(embed, activity);
     this._addMapImage(embed, activity);
 
     return embed;
   }
 
   /**
-   * Set embed color based on activity type and workout type (Race or not)
+   * Set embed color based on activity type, PB status, or race flag
    * @param {EmbedBuilder} embed - Discord embed builder
    * @param {Object} activity - Activity data
    * @param {string} displayType - Display type (may be VirtualRide instead of Ride)
    */
   static _setEmbedColor(embed, activity, displayType) {
-    const raceColor = '#D4AF37'; // Gold
-    const color = activity.isRace ? raceColor : ActivityFormatter.getActivityTypeColor(displayType);
+    const goldColor = '#D4AF37'; // Gold — used for races and new PBs
+    const hasPB = activity.pbResults?.some(r => r.isNewPB);
+    const color = (activity.isRace || hasPB) ? goldColor : ActivityFormatter.getActivityTypeColor(displayType);
     embed.setColor(color);
+  }
+
+  /**
+   * Add Personal Best field when at least one new PB is detected
+   * @param {EmbedBuilder} embed - Discord embed builder
+   * @param {Object} activity - Activity data
+   */
+  static _addPBField(embed, activity) {
+    const newPBs = activity.pbResults?.filter(r => r.isNewPB) ?? [];
+    if (newPBs.length === 0) return;
+
+    const PBManager = require('../managers/PBManager');
+    const pbManager = new PBManager();
+
+    const lines = newPBs.map(r => {
+      const time = ActivityFormatter.formatTime(r.newPB.elapsedTime);
+      const improvement = r.previousPB
+        ? ` (${pbManager.formatTimeImprovement(r.previousPB.elapsed_time, r.newPB.elapsedTime)})`
+        : ' (first)';
+      return `**${r.category}** — ${time}${improvement}`;
+    });
+
+    embed.addFields([{
+      name: '🏆 Personal Best',
+      value: lines.join('\n'),
+      inline: false,
+    }]);
   }
 
   /**

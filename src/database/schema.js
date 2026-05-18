@@ -1,4 +1,4 @@
-const { sqliteTable, text, integer } = require('drizzle-orm/sqlite-core');
+const { sqliteTable, text, integer, real } = require('drizzle-orm/sqlite-core');
 const { sql } = require('drizzle-orm');
 
 // Members table - complete structure with Discord user data and encrypted tokens
@@ -78,9 +78,57 @@ const settings = sqliteTable('settings', {
   updated_at: text('updated_at').default(sql`CURRENT_TIMESTAMP`),
 });
 
+// Personal bests table - one row per member × distance category
+const personalBests = sqliteTable('personal_bests', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  member_athlete_id: integer('member_athlete_id').notNull().references(() => members.athlete_id, {
+    onDelete: 'cascade',
+    onUpdate: 'cascade',
+  }),
+  category: text('category').notNull(),           // Normalized label e.g. '5K', 'Half Marathon'
+  distance_m: integer('distance_m').notNull(),    // Actual distance in meters from Strava best_effort
+  elapsed_time: integer('elapsed_time').notNull(),// Best elapsed time in seconds
+  moving_time: integer('moving_time').notNull(),  // Best moving time in seconds
+  strava_activity_id: text('strava_activity_id').notNull(),
+  activity_name: text('activity_name'),
+  activity_date: text('activity_date').notNull(), // ISO date string
+  created_at: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+  updated_at: text('updated_at').default(sql`CURRENT_TIMESTAMP`),
+});
+
+// Activities table - one row per Strava activity, upserted on every sync/webhook
+const activities = sqliteTable('activities', {
+  strava_activity_id: text('strava_activity_id').primaryKey(),
+  member_athlete_id: integer('member_athlete_id').notNull().references(() => members.athlete_id, {
+    onDelete: 'cascade',
+    onUpdate: 'cascade',
+  }),
+  name: text('name'),
+  type: text('type'),
+  sport_type: text('sport_type'),
+  distance: real('distance'),
+  moving_time: integer('moving_time'),
+  elapsed_time: integer('elapsed_time'),
+  total_elevation_gain: real('total_elevation_gain'),
+  average_speed: real('average_speed'),
+  max_speed: real('max_speed'),
+  average_heartrate: real('average_heartrate'),
+  max_heartrate: real('max_heartrate'),
+  start_date: text('start_date'),
+  start_date_local: text('start_date_local'),
+  timezone: text('timezone'),
+  map_summary_polyline: text('map_summary_polyline'),
+  has_heartrate: integer('has_heartrate'),
+  pr_categories: text('pr_categories'),
+  created_at: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+  updated_at: text('updated_at').default(sql`CURRENT_TIMESTAMP`),
+});
+
 module.exports = {
   members,
-  races, 
+  races,
   migrationLog,
   settings,
+  personalBests,
+  activities,
 };

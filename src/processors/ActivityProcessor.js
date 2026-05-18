@@ -4,6 +4,7 @@ const DatabaseMemberManager = require('../database/DatabaseMemberManager');
 const ActivityQueue = require('../managers/ActivityQueue');
 const Scheduler = require('../managers/Scheduler');
 const RaceManager = require('../managers/RaceManager');
+const PBManager = require('../managers/PBManager');
 const config = require('../../config/config');
 const dynamicConfig = require('../../config/dynamicConfig');
 const logger = require('../utils/Logger');
@@ -20,6 +21,9 @@ class ActivityProcessor {
     // Initialize race management and scheduler
     this.raceManager = new RaceManager();
     this.scheduler = new Scheduler(this, this.raceManager);
+
+    // Initialize PB manager
+    this.pbManager = new PBManager();
   }
 
   async initialize() {
@@ -109,11 +113,39 @@ class ActivityProcessor {
 
       // Fetch detailed activity data
       const activity = await this.stravaAPI.getActivity(activityId, accessToken);
-      
-      // Check if activity should be posted
+
+      // Run PB detection BEFORE the post-filter so private / hidden / old
+      // activities still update the athlete's PB records. PB tracking is a
+      // member-private record; whether to broadcast it to Discord is a
+      // separate concern handled by shouldPostActivity below.
+      let pbResults = [];
+      try {
+        pbResults = await this.pbManager.checkAndUpdatePBs(athleteId, activity);
+      } catch (pbError) {
+        logger.activity.error('PB check failed (non-blocking)', {
+          activityId,
+          athleteId,
+          error: pbError.message,
+        });
+      }
+
+      // Save activity to DB (non-blocking) — also independent of the post filter
+      // so we have a complete cached record for /sync, /pb, and stats.
+      try {
+        await this.memberManager.databaseManager.upsertActivity(athleteId, activity);
+      } catch (saveError) {
+        logger.activity.error('Failed to save activity to DB', {
+          activityId,
+          error: saveError.message,
+        });
+      }
+
+      // Now decide whether to broadcast the activity to Discord. PBs above
+      // were already recorded regardless of this decision.
       if (!this.stravaAPI.shouldPostActivity(activity)) {
         logger.activityProcessing(activityId, athleteId, activity.name, 'FILTERED', {
-          reason: 'Activity filtered by posting rules'
+          reason: 'Activity filtered by posting rules',
+          pbsRecorded: pbResults.filter(r => r.isNewPB).length,
         });
         this.processedActivities.add(activityKey);
         return;
@@ -125,6 +157,7 @@ class ActivityProcessor {
         discordUser: member.discordUser
       };
       const processedActivity = await this.stravaAPI.processActivityWithStreams(activity, athleteWithDiscordInfo, accessToken);
+      processedActivity.pbResults = pbResults;
 
       // Post to Discord
       await this.discordBot.postActivity(processedActivity);
