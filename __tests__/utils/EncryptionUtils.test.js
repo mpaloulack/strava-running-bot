@@ -53,6 +53,23 @@ describe('EncryptionUtils', () => {
       expect(encrypted).toBeNull();
     });
 
+    it('should throw with original error attached as cause when key is invalid', () => {
+      // 16-byte key (32 hex chars) — AES-256 requires 32 bytes (64 hex chars)
+      config.security.encryptionKey = 'a'.repeat(32);
+
+      const tokenData = { access_token: 'test_access_token' };
+
+      expect(() => EncryptionUtils.encryptTokens(tokenData))
+        .toThrow(/Encryption failed:/);
+
+      try {
+        EncryptionUtils.encryptTokens(tokenData);
+      } catch (error) {
+        expect(error.cause).toBeDefined();
+        expect(error.cause.message).toEqual(expect.any(String));
+      }
+    });
+
     it('should return null when tokenData is undefined', () => {
       const encrypted = EncryptionUtils.encryptTokens(undefined);
       expect(encrypted).toBeNull();
