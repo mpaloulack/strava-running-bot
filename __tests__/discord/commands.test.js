@@ -348,6 +348,12 @@ describe('DiscordCommands', () => {
       const choiceValues = periodOption.choices.map(c => c.value);
       expect(choiceValues).toContain('current_year');
       expect(choiceValues).toContain('last_365_days');
+      expect(choiceValues).toContain('current_month');
+      expect(choiceValues).toContain('previous_month');
+
+      const monthOption = syncCommand.options.find(o => o.name === 'month');
+      expect(monthOption).toBeDefined();
+      expect(monthOption.required).toBe(false);
     });
 
     it('sync command should be available to all registered users (no ManageGuild gate)', () => {
@@ -1530,7 +1536,7 @@ describe('DiscordCommands', () => {
         deferReply: jest.fn().mockResolvedValue(undefined),
         editReply: jest.fn().mockResolvedValue(undefined),
         options: {
-          getString: jest.fn().mockReturnValue('current_year'),
+          getString: jest.fn((name) => (name === 'period' ? 'current_year' : null)),
         },
       };
       mockMemberManager.getMemberByDiscordId.mockResolvedValue({
@@ -1568,7 +1574,7 @@ describe('DiscordCommands', () => {
       // UTC-5 would silently drop activities recorded between 00:00 and 05:00
       // UTC on Jan 1. afterTs must be Jan 1 00:00 UTC.
       discordCommands.pbManager.syncFromHistory.mockResolvedValue({ processed: 10, updated: 2, errors: 0 });
-      syncInteraction.options.getString.mockReturnValue('current_year');
+      syncInteraction.options.getString.mockImplementation((name) => (name === 'period' ? 'current_year' : null));
 
       await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
 
@@ -1577,7 +1583,8 @@ describe('DiscordCommands', () => {
         'valid_token',
         mockStravaAPI,
         expect.any(Function),
-        expect.any(Number)
+        expect.any(Number),
+        null
       );
       const calledAfterTs = discordCommands.pbManager.syncFromHistory.mock.calls[0][4];
       const jan1Utc = Math.floor(Date.UTC(new Date().getUTCFullYear(), 0, 1) / 1000);
@@ -1586,13 +1593,108 @@ describe('DiscordCommands', () => {
 
     it('should call syncFromHistory with last_365_days afterTs', async () => {
       discordCommands.pbManager.syncFromHistory.mockResolvedValue({ processed: 5, updated: 1, errors: 0 });
-      syncInteraction.options.getString.mockReturnValue('last_365_days');
+      syncInteraction.options.getString.mockImplementation((name) => (name === 'period' ? 'last_365_days' : null));
 
       await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
 
       const calledAfterTs = discordCommands.pbManager.syncFromHistory.mock.calls[0][4];
       const expected365 = Math.floor((Date.now() - 365 * 24 * 60 * 60 * 1000) / 1000);
       expect(Math.abs(calledAfterTs - expected365)).toBeLessThan(60);
+      // last_365_days is an open-ended window — beforeTs must be null.
+      expect(discordCommands.pbManager.syncFromHistory.mock.calls[0][5]).toBeNull();
+    });
+
+    it('should call syncFromHistory with current_month afterTs anchored to UTC 1st of this month', async () => {
+      discordCommands.pbManager.syncFromHistory.mockResolvedValue({ processed: 0, updated: 0, errors: 0 });
+      syncInteraction.options.getString.mockImplementation((name) => (name === 'period' ? 'current_month' : null));
+
+      await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
+
+      const calledAfterTs = discordCommands.pbManager.syncFromHistory.mock.calls[0][4];
+      const now = new Date();
+      const firstUtc = Math.floor(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) / 1000);
+      expect(calledAfterTs).toBe(firstUtc);
+      expect(discordCommands.pbManager.syncFromHistory.mock.calls[0][5]).toBeNull();
+    });
+
+    it('should call syncFromHistory with previous_month bounded window', async () => {
+      discordCommands.pbManager.syncFromHistory.mockResolvedValue({ processed: 0, updated: 0, errors: 0 });
+      syncInteraction.options.getString.mockImplementation((name) => (name === 'period' ? 'previous_month' : null));
+
+      await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
+
+      const now = new Date();
+      const expectedAfter = Math.floor(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1) / 1000);
+      const expectedBefore = Math.floor(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) / 1000);
+      const [, , , , calledAfter, calledBefore] = discordCommands.pbManager.syncFromHistory.mock.calls[0];
+      expect(calledAfter).toBe(expectedAfter);
+      expect(calledBefore).toBe(expectedBefore);
+    });
+
+    it('should call syncFromHistory with explicit month:YYYY-MM bounded window (overrides period)', async () => {
+      discordCommands.pbManager.syncFromHistory.mockResolvedValue({ processed: 0, updated: 0, errors: 0 });
+      syncInteraction.options.getString.mockImplementation((name) => {
+        if (name === 'period') return 'current_year';
+        if (name === 'month') return '2024-03';
+        return null;
+      });
+
+      await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
+
+      const expectedAfter = Math.floor(Date.UTC(2024, 2, 1) / 1000);
+      const expectedBefore = Math.floor(Date.UTC(2024, 3, 1) / 1000);
+      const [, , , , calledAfter, calledBefore] = discordCommands.pbManager.syncFromHistory.mock.calls[0];
+      expect(calledAfter).toBe(expectedAfter);
+      expect(calledBefore).toBe(expectedBefore);
+    });
+
+    it('should reject malformed month and not call syncFromHistory', async () => {
+      syncInteraction.options.getString.mockImplementation((name) => {
+        if (name === 'period') return 'current_year';
+        if (name === 'month') return 'March-2024';
+        return null;
+      });
+
+      await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
+
+      expect(discordCommands.pbManager.syncFromHistory).not.toHaveBeenCalled();
+      expect(syncInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('Invalid `month` format') })
+      );
+    });
+
+    it('should reject month with out-of-range month number', async () => {
+      syncInteraction.options.getString.mockImplementation((name) => {
+        if (name === 'period') return 'current_year';
+        if (name === 'month') return '2024-13';
+        return null;
+      });
+
+      await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
+
+      expect(discordCommands.pbManager.syncFromHistory).not.toHaveBeenCalled();
+      expect(syncInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('between 01 and 12') })
+      );
+    });
+
+    it('should reject month in the future', async () => {
+      const future = new Date();
+      future.setUTCFullYear(future.getUTCFullYear() + 1);
+      const yyyy = future.getUTCFullYear();
+      const mm = String(future.getUTCMonth() + 1).padStart(2, '0');
+      syncInteraction.options.getString.mockImplementation((name) => {
+        if (name === 'period') return 'current_year';
+        if (name === 'month') return `${yyyy}-${mm}`;
+        return null;
+      });
+
+      await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
+
+      expect(discordCommands.pbManager.syncFromHistory).not.toHaveBeenCalled();
+      expect(syncInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('future') })
+      );
     });
 
     it('should reply with embed showing updated count', async () => {
@@ -1607,7 +1709,7 @@ describe('DiscordCommands', () => {
 
     it('should include period label in progress message for current_year', async () => {
       discordCommands.pbManager.syncFromHistory.mockResolvedValue({ processed: 0, updated: 0, errors: 0 });
-      syncInteraction.options.getString.mockReturnValue('current_year');
+      syncInteraction.options.getString.mockImplementation((name) => (name === 'period' ? 'current_year' : null));
 
       await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
 
@@ -1618,7 +1720,7 @@ describe('DiscordCommands', () => {
 
     it('should include period label in progress message for last_365_days', async () => {
       discordCommands.pbManager.syncFromHistory.mockResolvedValue({ processed: 0, updated: 0, errors: 0 });
-      syncInteraction.options.getString.mockReturnValue('last_365_days');
+      syncInteraction.options.getString.mockImplementation((name) => (name === 'period' ? 'last_365_days' : null));
 
       await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
 
