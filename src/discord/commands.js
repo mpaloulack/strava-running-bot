@@ -438,8 +438,16 @@ class DiscordCommands {
             .setRequired(true)
             .addChoices(
               { name: 'Current year (Jan 1 → today)', value: 'current_year' },
-              { name: 'Last 365 days', value: 'last_365_days' }
+              { name: 'Last 365 days', value: 'last_365_days' },
+              { name: 'Current month (1st → today)', value: 'current_month' },
+              { name: 'Previous month (full last month)', value: 'previous_month' }
             )
+        )
+        .addStringOption(option =>
+          option
+            .setName('month')
+            .setDescription('Specific calendar month in YYYY-MM (overrides period when set)')
+            .setRequired(false)
         ),
 
       // Monthly running leaderboard (km per team member)
@@ -1057,7 +1065,7 @@ class DiscordCommands {
       {
         name: '🏆 3. Records personnels (PB)',
         value:
-          '`/pb check` — Affiche tes records personnels (5K, 10K, semi, marathon…).\n`/pb check member:<nom>` — Affiche les records d\'un autre membre.\n`/pb add activity_url:<lien> distance_m:<mètres>` — Ajoute manuellement un PB depuis une activité Strava (utile pour les courses de plus d\'un an).\n`/sync period:<période>` — Synchronise ton historique Strava et met à jour tes PB (année en cours ou 365 derniers jours).',
+          '`/pb check` — Affiche tes records personnels (5K, 10K, semi, marathon…).\n`/pb check member:<nom>` — Affiche les records d\'un autre membre.\n`/pb add activity_url:<lien> distance_m:<mètres>` — Ajoute manuellement un PB depuis une activité Strava (utile pour les courses de plus d\'un an).\n`/sync period:<période> [month:YYYY-MM]` — Synchronise ton historique Strava et met à jour tes PB (année en cours, 365 derniers jours, mois en cours, mois précédent, ou un mois précis via `month:`).',
         inline: false,
       },
       {
@@ -2303,6 +2311,69 @@ class DiscordCommands {
     }
   }
 
+  // Resolve the sync window from the `period` choice and the optional
+  // `month:YYYY-MM` override. Returns { afterTs, beforeTs, periodLabel } or
+  // { error } when the month input is malformed or in the future. `beforeTs`
+  // is null for open-ended windows (current_year, last_365_days, current_month).
+  resolveSyncWindow(period, monthInput) {
+    if (monthInput) {
+      const match = /^(\d{4})-(\d{2})$/.exec(monthInput.trim());
+      if (!match) {
+        return { error: '❌ Invalid `month` format. Use `YYYY-MM` (e.g. `2024-03`).' };
+      }
+      const year = parseInt(match[1], 10);
+      const month = parseInt(match[2], 10);
+      if (month < 1 || month > 12) {
+        return { error: '❌ Invalid `month` value: month must be between 01 and 12.' };
+      }
+      const startMs = Date.UTC(year, month - 1, 1);
+      if (startMs > Date.now()) {
+        return { error: '❌ `month` cannot be in the future.' };
+      }
+      const endMs = Date.UTC(year, month, 1);
+      const monthLabel = new Date(startMs).toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+      return {
+        afterTs: Math.floor(startMs / 1000),
+        beforeTs: Math.floor(endMs / 1000),
+        periodLabel: monthLabel,
+      };
+    }
+
+    const now = new Date();
+    if (period === 'last_365_days') {
+      return {
+        afterTs: Math.floor((Date.now() - 365 * 24 * 60 * 60 * 1000) / 1000),
+        beforeTs: null,
+        periodLabel: 'Last 365 days',
+      };
+    }
+    if (period === 'current_month') {
+      const startMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+      const monthLabel = new Date(startMs).toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+      return {
+        afterTs: Math.floor(startMs / 1000),
+        beforeTs: null,
+        periodLabel: `Current month (${monthLabel})`,
+      };
+    }
+    if (period === 'previous_month') {
+      const startMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1);
+      const endMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+      const monthLabel = new Date(startMs).toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+      return {
+        afterTs: Math.floor(startMs / 1000),
+        beforeTs: Math.floor(endMs / 1000),
+        periodLabel: `Previous month (${monthLabel})`,
+      };
+    }
+    const year = now.getUTCFullYear();
+    return {
+      afterTs: Math.floor(Date.UTC(year, 0, 1) / 1000),
+      beforeTs: null,
+      periodLabel: `Current year (${year})`,
+    };
+  }
+
   async handleSyncCommand(interaction, options) {
     await interaction.deferReply({ ephemeral: true });
 
@@ -2326,16 +2397,14 @@ class DiscordCommands {
       }
 
       const period = options.getString('period');
-      let afterTs;
-      let periodLabel;
-      if (period === 'last_365_days') {
-        afterTs = Math.floor((Date.now() - 365 * 24 * 60 * 60 * 1000) / 1000);
-        periodLabel = 'Last 365 days';
-      } else {
-        const year = new Date().getUTCFullYear();
-        afterTs = Math.floor(Date.UTC(year, 0, 1) / 1000);
-        periodLabel = `Current year (${year})`;
+      const monthInput = options.getString('month');
+
+      const window = this.resolveSyncWindow(period, monthInput);
+      if (window.error) {
+        await interaction.editReply({ content: window.error });
+        return;
       }
+      const { afterTs, beforeTs, periodLabel } = window;
 
       await interaction.editReply({ content: `⏳ Syncing your **${periodLabel} Strava activities**… this may take several minutes. The sync continues even if this message stops updating.` });
 
@@ -2360,7 +2429,8 @@ class DiscordCommands {
         accessToken,
         this.activityProcessor.stravaAPI,
         progressCb,
-        afterTs
+        afterTs,
+        beforeTs
       );
 
       const embed = new EmbedBuilder()

@@ -167,9 +167,11 @@ class PBManager {
    * @param {Object} stravaAPI - StravaAPI instance with getAthleteActivities / getActivity
    * @param {Function} [progressCb] - Called with page number every 5 pages
    * @param {number} [afterTs] - Unix epoch lower bound (default: Jan 1 of current year)
+   * @param {number} [beforeTs] - Unix epoch upper bound (default: now). Used to bound a closed
+   *   window such as a specific past calendar month.
    * @returns {{ processed: number, updated: number, errors: number }}
    */
-  async syncFromHistory(discordUserId, accessToken, stravaAPI, progressCb, afterTs = null) {
+  async syncFromHistory(discordUserId, accessToken, stravaAPI, progressCb, afterTs = null, beforeTs = null) {
     const member = await this.databaseManager.getMemberByDiscordId(discordUserId);
     if (!member?.isActive) {
       return { processed: 0, updated: 0, errors: 0 };
@@ -179,11 +181,16 @@ class PBManager {
     // anchoring silently drops the first N hours of Jan 1 in UTC depending on
     // the server's TZ offset.
     const after = afterTs ?? Math.floor(Date.UTC(new Date().getUTCFullYear(), 0, 1) / 1000);
+    const initialBefore = beforeTs ?? Math.floor(Date.now() / 1000);
     // Cursor key must be stable across invocations for resume to work — derive
     // it from the floor of `after` rounded to the day so that two invocations
-    // a few seconds apart resolve to the same key.
+    // a few seconds apart resolve to the same key. Mix in the upper bound when
+    // an explicit one was supplied so a chosen-month sync doesn't collide with
+    // an open-ended sync sharing the same `after`.
     const afterDayKey = Math.floor(after / 86400);
-    const cursorKey = `pb_sync_cursor_${discordUserId}_${afterDayKey}`;
+    const cursorKey = beforeTs !== null && beforeTs !== undefined
+      ? `pb_sync_cursor_${discordUserId}_${afterDayKey}_${Math.floor(beforeTs / 86400)}`
+      : `pb_sync_cursor_${discordUserId}_${afterDayKey}`;
 
     // Read checkpoint: this is the `before` upper bound at which we stopped.
     // On first run we anchor at "now" — Strava's /athlete/activities returns
@@ -196,7 +203,7 @@ class PBManager {
     } catch (cursorReadErr) {
       logger.database.warn('Failed to read PB sync cursor, starting from beginning', { discordUserId, error: cursorReadErr.message });
     }
-    let beforeCursor = savedCursor ? parseInt(savedCursor, 10) : Math.floor(Date.now() / 1000);
+    let beforeCursor = savedCursor ? parseInt(savedCursor, 10) : initialBefore;
 
     const startTime = Date.now();
     let page = 1;

@@ -993,6 +993,52 @@ describe('PBManager', () => {
       expect(secondBefore).toBe(minTs - 1);
     });
 
+    it('should seed beforeCursor from beforeTs when provided (chosen-month sync)', async () => {
+      // March 2024 UTC: [2024-03-01, 2024-04-01)
+      const afterTs = Math.floor(Date.UTC(2024, 2, 1) / 1000);
+      const beforeTs = Math.floor(Date.UTC(2024, 3, 1) / 1000);
+      mockStravaAPI.getAthleteActivities.mockResolvedValue([]);
+      DatabaseManager.settingsManager.getSetting.mockResolvedValue(null);
+
+      await pbManager.syncFromHistory('discord123', 'token', mockStravaAPI, undefined, afterTs, beforeTs);
+
+      // First call must pass `before` = beforeTs (April 1 UTC) and `after` = afterTs.
+      expect(mockStravaAPI.getAthleteActivities).toHaveBeenCalledWith('token', 1, 100, beforeTs, afterTs);
+    });
+
+    it('should use a distinct cursor key when beforeTs is supplied (no collision with open-ended sync)', async () => {
+      const afterTs = Math.floor(Date.UTC(2024, 2, 1) / 1000);
+      const beforeTs = Math.floor(Date.UTC(2024, 3, 1) / 1000);
+      mockStravaAPI.getAthleteActivities
+        .mockResolvedValueOnce([{ id: 1, type: 'Run', start_date: '2024-03-19T10:00:00Z' }])
+        .mockResolvedValueOnce([]);
+      mockStravaAPI.getActivity.mockResolvedValue({ id: 1, type: 'Run', best_efforts: [] });
+      DatabaseManager.settingsManager.getSetting.mockResolvedValue(null);
+
+      await pbManager.syncFromHistory('discord123', 'token', mockStravaAPI, undefined, afterTs, beforeTs);
+
+      const afterDayKey = Math.floor(afterTs / 86400);
+      const beforeDayKey = Math.floor(beforeTs / 86400);
+      expect(DatabaseManager.settingsManager.setSetting).toHaveBeenCalledWith(
+        `pb_sync_cursor_discord123_${afterDayKey}_${beforeDayKey}`,
+        expect.any(String),
+        expect.any(String)
+      );
+    });
+
+    it('should still resume from saved cursor when beforeTs is supplied', async () => {
+      const afterTs = Math.floor(Date.UTC(2024, 2, 1) / 1000);
+      const beforeTs = Math.floor(Date.UTC(2024, 3, 1) / 1000);
+      const savedCursor = Math.floor(Date.UTC(2024, 2, 15) / 1000);
+      DatabaseManager.settingsManager.getSetting.mockResolvedValue(String(savedCursor));
+      mockStravaAPI.getAthleteActivities.mockResolvedValue([]);
+
+      await pbManager.syncFromHistory('discord123', 'token', mockStravaAPI, undefined, afterTs, beforeTs);
+
+      // Resume must use the saved cursor, not the initial beforeTs.
+      expect(mockStravaAPI.getAthleteActivities).toHaveBeenCalledWith('token', 1, 100, savedCursor, afterTs);
+    });
+
     it('should continue if deleteSetting throws on completion', async () => {
       DatabaseManager.settingsManager.getSetting.mockResolvedValue(null);
       DatabaseManager.settingsManager.deleteSetting.mockRejectedValue(new Error('delete fail'));
