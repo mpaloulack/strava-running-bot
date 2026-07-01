@@ -30,6 +30,7 @@ class DiscordCommands {
     this.pbManager = new PBManager();
     this.leaderboardManager = new LeaderboardManager();
     this.pbSyncInProgress = new Set();
+    this.bulkSyncInProgress = false;
   }
 
   // Define all slash commands
@@ -447,6 +448,12 @@ class DiscordCommands {
           option
             .setName('month')
             .setDescription('Specific calendar month in YYYY-MM (overrides period when set)')
+            .setRequired(false)
+        )
+        .addBooleanOption(option =>
+          option
+            .setName('all_members')
+            .setDescription('Run the sync for every registered member (admin only)')
             .setRequired(false)
         ),
 
@@ -1065,7 +1072,7 @@ class DiscordCommands {
       {
         name: '🏆 3. Records personnels (PB)',
         value:
-          '`/pb check` — Affiche tes records personnels (5K, 10K, semi, marathon…).\n`/pb check member:<nom>` — Affiche les records d\'un autre membre.\n`/pb add activity_url:<lien> distance_m:<mètres>` — Ajoute manuellement un PB depuis une activité Strava (utile pour les courses de plus d\'un an).\n`/sync period:<période> [month:YYYY-MM]` — Synchronise ton historique Strava et met à jour tes PB (année en cours, 365 derniers jours, mois en cours, mois précédent, ou un mois précis via `month:`).',
+          '`/pb check` — Affiche tes records personnels (5K, 10K, semi, marathon…).\n`/pb check member:<nom>` — Affiche les records d\'un autre membre.\n`/pb add activity_url:<lien> distance_m:<mètres>` — Ajoute manuellement un PB depuis une activité Strava (utile pour les courses de plus d\'un an).\n`/sync period:<période> [month:YYYY-MM]` — Synchronise ton historique Strava et met à jour tes PB (année en cours, 365 derniers jours, mois en cours, mois précédent, ou un mois précis via `month:`).\n`/sync period:<période> all_members:True` — Synchronise tous les membres de l\'équipe (admin uniquement).',
         inline: false,
       },
       {
@@ -2377,6 +2384,11 @@ class DiscordCommands {
   async handleSyncCommand(interaction, options) {
     await interaction.deferReply({ ephemeral: true });
 
+    if (options.getBoolean('all_members')) {
+      await this.handleSyncAllMembers(interaction, options);
+      return;
+    }
+
     if (this.pbSyncInProgress.has(interaction.user.id)) {
       await interaction.editReply({
         content: '⏳ A sync is already in progress for your account. Please wait for it to finish.',
@@ -2486,6 +2498,117 @@ class DiscordCommands {
       });
     } finally {
       this.pbSyncInProgress.delete(interaction.user.id);
+    }
+  }
+
+  // Team-wide sync: runs the same windowed sync for every registered member.
+  // Admin-gated and sequential on purpose — the whole bot shares one Strava
+  // rate budget, so members' syncs must not run concurrently.
+  async handleSyncAllMembers(interaction, options) {
+    if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+      await interaction.editReply({
+        content: '❌ You need "Manage Server" permissions to sync all members.',
+      });
+      return;
+    }
+
+    if (this.bulkSyncInProgress) {
+      await interaction.editReply({
+        content: '⏳ A team-wide sync is already in progress. Please wait for it to finish.',
+      });
+      return;
+    }
+
+    const window = this.resolveSyncWindow(options.getString('period'), options.getString('month'));
+    if (window.error) {
+      await interaction.editReply({ content: window.error });
+      return;
+    }
+    const { afterTs, beforeTs, periodLabel } = window;
+
+    this.bulkSyncInProgress = true;
+    try {
+      const members = await this.activityProcessor.memberManager.getAllMembers();
+      const totals = { processed: 0, updated: 0, errors: 0 };
+      const skipped = [];
+      const failed = [];
+
+      for (const [index, member] of members.entries()) {
+        const memberName = member.discordUser?.displayName
+          || `${member.athlete.firstname} ${member.athlete.lastname}`.trim();
+
+        await this._editReplySafe(interaction, {
+          content: `⏳ Syncing **${periodLabel}** — **${memberName}** (${index + 1}/${members.length})…`,
+        });
+
+        const accessToken = await this.activityProcessor.memberManager.getValidAccessToken(member);
+        if (!accessToken) {
+          skipped.push(memberName);
+          continue;
+        }
+
+        try {
+          const summary = await this.pbManager.syncFromHistory(
+            member.discordUserId,
+            accessToken,
+            this.activityProcessor.stravaAPI,
+            null,
+            afterTs,
+            beforeTs
+          );
+          totals.processed += summary.processed;
+          totals.updated += summary.updated;
+          totals.errors += summary.errors;
+        } catch (memberError) {
+          failed.push(memberName);
+          logger.discord.error('Team-wide sync failed for member', {
+            memberName,
+            athleteId: member.athleteId,
+            error: memberError.message,
+          });
+        }
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle(`🔄 Team Sync Complete — ${periodLabel}`)
+        .setColor('#D4AF37')
+        .addFields([
+          { name: 'Members synced', value: String(members.length - skipped.length - failed.length), inline: true },
+          { name: 'Activities scanned', value: String(totals.processed), inline: true },
+          { name: 'PBs updated', value: String(totals.updated), inline: true },
+        ])
+        .setTimestamp();
+      if (skipped.length > 0) {
+        embed.addFields([{ name: '⚠️ Skipped (no valid token)', value: skipped.join(', ') }]);
+      }
+      if (failed.length > 0) {
+        embed.addFields([{ name: '❌ Failed', value: failed.join(', ') }]);
+      }
+
+      await this._editReplySafe(interaction, { content: '', embeds: [embed] });
+    } catch (error) {
+      logger.discord.error('Error running team-wide sync', {
+        user: interaction.user.tag,
+        error: error.message,
+      });
+      await this._editReplySafe(interaction, {
+        content: '❌ Failed to run the team-wide sync.',
+      });
+    } finally {
+      this.bulkSyncInProgress = false;
+    }
+  }
+
+  // A team-wide sync can outlive Discord's 15-minute interaction window, after
+  // which editReply throws — don't let a progress update kill the sync loop.
+  async _editReplySafe(interaction, payload) {
+    try {
+      await interaction.editReply(payload);
+    } catch (editErr) {
+      logger.discord.warn('editReply failed (likely past 15-min interaction window)', {
+        user: interaction.user.tag,
+        error: editErr.message,
+      });
     }
   }
 

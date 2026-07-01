@@ -100,6 +100,18 @@ jest.mock('discord.js', () => {
         mockCmd.options.push(option);
         return mockCmd;
       }),
+      addBooleanOption: jest.fn().mockImplementation((callback) => {
+        const option = {
+          name: '',
+          required: false,
+          setName: jest.fn().mockImplementation((name) => { option.name = name; return option; }),
+          setDescription: jest.fn().mockReturnThis(),
+          setRequired: jest.fn().mockImplementation((req) => { option.required = req; return option; })
+        };
+        callback(option);
+        mockCmd.options.push(option);
+        return mockCmd;
+      }),
       setDefaultMemberPermissions: jest.fn().mockImplementation((perms) => {
         mockCmd.default_member_permissions = String(perms);
         return mockCmd;
@@ -1537,6 +1549,7 @@ describe('DiscordCommands', () => {
         editReply: jest.fn().mockResolvedValue(undefined),
         options: {
           getString: jest.fn((name) => (name === 'period' ? 'current_year' : null)),
+          getBoolean: jest.fn().mockReturnValue(null),
         },
       };
       mockMemberManager.getMemberByDiscordId.mockResolvedValue({
@@ -1756,6 +1769,175 @@ describe('DiscordCommands', () => {
       expect(syncInteraction.editReply).toHaveBeenCalledWith(
         expect.objectContaining({ content: expect.stringContaining('Failed') })
       );
+    });
+  });
+
+  // ─── handleSyncCommand — all_members (admin bulk sync) ─────────────────────
+
+  describe('handleSyncCommand with all_members', () => {
+    let bulkInteraction;
+    const memberAlice = {
+      discordUserId: '111',
+      athleteId: 1,
+      isActive: true,
+      discordUser: { displayName: 'Alice' },
+      athlete: { firstname: 'Alice', lastname: 'Runner' },
+    };
+    const memberBob = {
+      discordUserId: '222',
+      athleteId: 2,
+      isActive: true,
+      discordUser: null,
+      athlete: { firstname: 'Bob', lastname: 'Jogger' },
+    };
+
+    beforeEach(() => {
+      bulkInteraction = {
+        user: { tag: 'Admin#1234', id: '999999999' },
+        memberPermissions: { has: jest.fn().mockReturnValue(true) },
+        deferReply: jest.fn().mockResolvedValue(undefined),
+        editReply: jest.fn().mockResolvedValue(undefined),
+        options: {
+          getString: jest.fn((name) => (name === 'period' ? 'previous_month' : null)),
+          getBoolean: jest.fn((name) => (name === 'all_members' ? true : null)),
+        },
+      };
+      mockMemberManager.getAllMembers.mockResolvedValue([memberAlice, memberBob]);
+      mockMemberManager.getValidAccessToken.mockResolvedValue('valid_token');
+      discordCommands.pbManager.syncFromHistory.mockResolvedValue({ processed: 3, updated: 1, errors: 0 });
+    });
+
+    it('rejects users without Manage Server permission', async () => {
+      bulkInteraction.memberPermissions.has.mockReturnValue(false);
+
+      await discordCommands.handleSyncCommand(bulkInteraction, bulkInteraction.options);
+
+      expect(bulkInteraction.memberPermissions.has).toHaveBeenCalledWith(PermissionFlagsBits.ManageGuild);
+      expect(bulkInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('Manage Server') })
+      );
+      expect(discordCommands.pbManager.syncFromHistory).not.toHaveBeenCalled();
+    });
+
+    it('treats missing memberPermissions (e.g. DM context) as non-admin', async () => {
+      bulkInteraction.memberPermissions = null;
+
+      await discordCommands.handleSyncCommand(bulkInteraction, bulkInteraction.options);
+
+      expect(discordCommands.pbManager.syncFromHistory).not.toHaveBeenCalled();
+    });
+
+    it('syncs every registered member with the resolved window', async () => {
+      await discordCommands.handleSyncCommand(bulkInteraction, bulkInteraction.options);
+
+      const now = new Date();
+      const expectedAfter = Math.floor(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1) / 1000);
+      const expectedBefore = Math.floor(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) / 1000);
+
+      expect(discordCommands.pbManager.syncFromHistory).toHaveBeenCalledTimes(2);
+      expect(discordCommands.pbManager.syncFromHistory).toHaveBeenCalledWith(
+        '111', 'valid_token', mockStravaAPI, null, expectedAfter, expectedBefore
+      );
+      expect(discordCommands.pbManager.syncFromHistory).toHaveBeenCalledWith(
+        '222', 'valid_token', mockStravaAPI, null, expectedAfter, expectedBefore
+      );
+      expect(bulkInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ embeds: expect.any(Array) })
+      );
+    });
+
+    it('supports an explicit month window', async () => {
+      bulkInteraction.options.getString.mockImplementation((name) => {
+        if (name === 'period') return 'current_year';
+        if (name === 'month') return '2026-06';
+        return null;
+      });
+
+      await discordCommands.handleSyncCommand(bulkInteraction, bulkInteraction.options);
+
+      const expectedAfter = Math.floor(Date.UTC(2026, 5, 1) / 1000);
+      const expectedBefore = Math.floor(Date.UTC(2026, 6, 1) / 1000);
+      const [, , , , calledAfter, calledBefore] = discordCommands.pbManager.syncFromHistory.mock.calls[0];
+      expect(calledAfter).toBe(expectedAfter);
+      expect(calledBefore).toBe(expectedBefore);
+    });
+
+    it('rejects an invalid month window without syncing', async () => {
+      bulkInteraction.options.getString.mockImplementation((name) => {
+        if (name === 'period') return 'current_year';
+        if (name === 'month') return 'June-2026';
+        return null;
+      });
+
+      await discordCommands.handleSyncCommand(bulkInteraction, bulkInteraction.options);
+
+      expect(discordCommands.pbManager.syncFromHistory).not.toHaveBeenCalled();
+      expect(bulkInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('Invalid `month` format') })
+      );
+    });
+
+    it('skips members without a valid token and still syncs the rest', async () => {
+      mockMemberManager.getValidAccessToken.mockImplementation(async (member) =>
+        member.discordUserId === '222' ? null : 'valid_token'
+      );
+
+      await discordCommands.handleSyncCommand(bulkInteraction, bulkInteraction.options);
+
+      expect(discordCommands.pbManager.syncFromHistory).toHaveBeenCalledTimes(1);
+      expect(discordCommands.pbManager.syncFromHistory.mock.calls[0][0]).toBe('111');
+      expect(bulkInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ embeds: expect.any(Array) })
+      );
+    });
+
+    it('continues with remaining members when one sync fails', async () => {
+      discordCommands.pbManager.syncFromHistory
+        .mockRejectedValueOnce(new Error('Strava 500'))
+        .mockResolvedValueOnce({ processed: 4, updated: 2, errors: 0 });
+
+      await discordCommands.handleSyncCommand(bulkInteraction, bulkInteraction.options);
+
+      expect(discordCommands.pbManager.syncFromHistory).toHaveBeenCalledTimes(2);
+      expect(bulkInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ embeds: expect.any(Array) })
+      );
+    });
+
+    it('blocks a second concurrent team-wide sync', async () => {
+      discordCommands.bulkSyncInProgress = true;
+
+      await discordCommands.handleSyncCommand(bulkInteraction, bulkInteraction.options);
+
+      expect(bulkInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('already in progress') })
+      );
+      expect(discordCommands.pbManager.syncFromHistory).not.toHaveBeenCalled();
+
+      discordCommands.bulkSyncInProgress = false;
+    });
+
+    it('releases the bulk lock after completion', async () => {
+      await discordCommands.handleSyncCommand(bulkInteraction, bulkInteraction.options);
+
+      expect(discordCommands.bulkSyncInProgress).toBe(false);
+    });
+
+    it('releases the bulk lock even when member listing fails', async () => {
+      mockMemberManager.getAllMembers.mockRejectedValue(new Error('DB down'));
+
+      await discordCommands.handleSyncCommand(bulkInteraction, bulkInteraction.options);
+
+      expect(discordCommands.bulkSyncInProgress).toBe(false);
+      expect(bulkInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.stringContaining('Failed') })
+      );
+    });
+
+    it('does not take the per-user sync lock for bulk runs', async () => {
+      await discordCommands.handleSyncCommand(bulkInteraction, bulkInteraction.options);
+
+      expect(discordCommands.pbSyncInProgress.has('999999999')).toBe(false);
     });
   });
 
