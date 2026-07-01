@@ -66,102 +66,38 @@ class ActivityQueue {
   }
 
   /**
-   * Process a queued activity (fetch latest data and post to Discord)
+   * Process a queued activity once its delay elapses. Delegates to
+   * processNewActivity — the single pipeline that also records PBs and
+   * persists the activity to the database — so delayed posts behave exactly
+   * like immediate ones. The queue must not reimplement any of that pipeline.
    */
   async processQueuedActivity(activityId) {
+    const queueItem = this.queuedActivities.get(activityId);
+    if (!queueItem) {
+      logger.activity.warn('Queued activity not found when processing', { activityId });
+      return;
+    }
+
+    logger.activity.info('Processing queued activity', {
+      activityId,
+      athleteId: queueItem.athleteId,
+      queuedAt: queueItem.queuedAt,
+      scheduledTime: queueItem.scheduledTime
+    });
+
+    queueItem.status = 'processing';
+
     try {
-      const queueItem = this.queuedActivities.get(activityId);
-      if (!queueItem) {
-        logger.activity.warn('Queued activity not found when processing', { activityId });
-        return;
-      }
-
-      logger.activity.info('Processing queued activity', {
-        activityId,
-        athleteId: queueItem.athleteId,
-        queuedAt: queueItem.queuedAt,
-        scheduledTime: queueItem.scheduledTime
-      });
-
-      // Update status
-      queueItem.status = 'processing';
-
-      // Check if athlete is still a registered member
-      const member = await this.activityProcessor.memberManager.getMemberByAthleteId(queueItem.athleteId);
-      if (!member) {
-        logger.activity.warn('Athlete no longer registered, skipping queued activity', {
-          activityId,
-          athleteId: queueItem.athleteId
-        });
-        this.removeFromQueue(activityId);
-        return;
-      }
-
-      const memberName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
-
-      // Get valid access token
-      const accessToken = await this.activityProcessor.memberManager.getValidAccessToken(member);
-      if (!accessToken) {
-        logger.activity.error('Unable to get valid access token for queued activity', {
-          activityId,
-          athleteId: queueItem.athleteId,
-          memberName
-        });
-        this.removeFromQueue(activityId);
-        return;
-      }
-
-      // Fetch the latest activity data from Strava
-      logger.activity.debug('Fetching updated activity data before posting', {
-        activityId,
-        memberName
-      });
-
-      const activity = await this.activityProcessor.stravaAPI.getActivity(activityId, accessToken);
-      
-      // Check if activity should still be posted (might have been made private, etc.)
-      if (!this.activityProcessor.stravaAPI.shouldPostActivity(activity)) {
-        logger.activity.info('Activity no longer meets posting criteria, skipping', {
-          activityId,
-          activityName: activity.name,
-          memberName
-        });
-        this.removeFromQueue(activityId);
-        return;
-      }
-
-      // Process activity data for Discord with member info
-      const athleteWithDiscordInfo = {
-        ...member.athlete,
-        discordUser: member.discordUser
-      };
-      const processedActivity = await this.activityProcessor.stravaAPI.processActivityWithStreams(activity, athleteWithDiscordInfo, accessToken);
-
-      // Post to Discord
-      await this.activityProcessor.discordBot.postActivity(processedActivity);
-
-      // Mark as processed in the main processor to prevent duplicate processing
-      const activityKey = `${queueItem.athleteId}-${activityId}`;
-      this.activityProcessor.processedActivities.add(activityKey);
-
-      logger.activity.info('Successfully posted queued activity', {
-        activityId,
-        activityName: activity.name,
-        memberName,
-        delayedBy: `${Math.round((Date.now() - queueItem.queuedAt.getTime()) / 1000 / 60)} minutes`
-      });
-
-      // Clean up
-      this.removeFromQueue(activityId);
-
+      await this.activityProcessor.processNewActivity(activityId, queueItem.athleteId);
     } catch (error) {
       logger.activity.error('Error processing queued activity', {
         activityId,
         error: error.message,
         stack: error.stack
       });
-      
-      // Remove from queue to prevent retry loops
+    } finally {
+      // Always clear the entry — success, filtered, or failed — to prevent
+      // stale timers and retry loops.
       this.removeFromQueue(activityId);
     }
   }

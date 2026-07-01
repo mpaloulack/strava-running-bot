@@ -39,8 +39,13 @@ class DatabaseConnection {
       logger.info(`Connecting to database at: ${finalDbPath}`);
       
       this.db = new Database(finalDbPath);
-      this.db.exec('PRAGMA journal_mode = WAL;');
+      // DELETE journal mode: WAL depends on mmap-based shared memory (-shm),
+      // which network/FUSE-backed volumes (the production data dir is a NAS
+      // share) don't reliably support. DELETE uses plain file I/O only.
+      this.db.exec('PRAGMA journal_mode = DELETE;');
       this.db.exec('PRAGMA synchronous = NORMAL;');
+      const journalMode = this.db.pragma('journal_mode', { simple: true });
+      logger.info(`SQLite journal mode: ${journalMode}`);
       
       // Run migrations first
       await this.runMigrations();

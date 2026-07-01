@@ -200,26 +200,25 @@ describe('ActivityQueue', () => {
       await activityQueue.queueActivity(activityId, athleteId);
     });
 
-    it('should process queued activity successfully', async () => {
+    it('should delegate to processNewActivity so queued activities get the full pipeline', async () => {
       await activityQueue.processQueuedActivity(activityId);
 
-      expect(mockMemberManager.getMemberByAthleteId).toHaveBeenCalledWith(athleteId);
-      expect(mockMemberManager.getValidAccessToken).toHaveBeenCalledWith(mockMember);
-      expect(mockStravaAPI.getActivity).toHaveBeenCalledWith(activityId, 'valid_token');
-      expect(mockStravaAPI.shouldPostActivity).toHaveBeenCalledWith(mockActivity);
-      expect(mockStravaAPI.processActivityWithStreams).toHaveBeenCalledWith(
-        mockActivity,
-        expect.objectContaining({
-          ...mockMember.athlete,
-          discordUser: mockMember.discordUser
-        }),
-        'valid_token'
-      );
-      expect(mockDiscordBot.postActivity).toHaveBeenCalledWith(mockActivity);
-      expect(mockActivityProcessor.processedActivities.has(`${athleteId}-${activityId}`)).toBe(true);
-      
-      expect(logger.activity.info).toHaveBeenCalledWith('Successfully posted queued activity', expect.any(Object));
+      expect(mockActivityProcessor.processNewActivity).toHaveBeenCalledWith(activityId, athleteId);
       expect(activityQueue.queuedActivities.size).toBe(0);
+    });
+
+    it('should not duplicate the processing pipeline in the queue', async () => {
+      // processNewActivity owns member checks, token refresh, PB detection,
+      // DB persistence, post-filtering and Discord posting. The queue must not
+      // reimplement any of it: a previous duplicated path silently skipped
+      // upsertActivity and PB checks for every delayed post.
+      await activityQueue.processQueuedActivity(activityId);
+
+      expect(mockMemberManager.getMemberByAthleteId).not.toHaveBeenCalled();
+      expect(mockMemberManager.getValidAccessToken).not.toHaveBeenCalled();
+      expect(mockStravaAPI.getActivity).not.toHaveBeenCalled();
+      expect(mockStravaAPI.shouldPostActivity).not.toHaveBeenCalled();
+      expect(mockDiscordBot.postActivity).not.toHaveBeenCalled();
     });
 
     it('should handle missing queue item gracefully', async () => {
@@ -228,123 +227,26 @@ describe('ActivityQueue', () => {
       await activityQueue.processQueuedActivity(activityId);
 
       expect(logger.activity.warn).toHaveBeenCalledWith('Queued activity not found when processing', { activityId });
-      expect(mockMemberManager.getMemberByAthleteId).not.toHaveBeenCalled();
+      expect(mockActivityProcessor.processNewActivity).not.toHaveBeenCalled();
     });
 
-    it('should skip processing if athlete is no longer registered', async () => {
-      mockMemberManager.getMemberByAthleteId.mockResolvedValue(null);
-
-      await activityQueue.processQueuedActivity(activityId);
-
-      expect(logger.activity.warn).toHaveBeenCalledWith('Athlete no longer registered, skipping queued activity', {
-        activityId,
-        athleteId
-      });
-      expect(mockStravaAPI.getActivity).not.toHaveBeenCalled();
-      expect(activityQueue.queuedActivities.size).toBe(0);
-    });
-
-    it('should skip processing if unable to get valid access token', async () => {
-      mockMemberManager.getValidAccessToken.mockResolvedValue(null);
-
-      await activityQueue.processQueuedActivity(activityId);
-
-      expect(logger.activity.error).toHaveBeenCalledWith('Unable to get valid access token for queued activity', {
-        activityId,
-        athleteId,
-        memberName: 'Test User'
-      });
-      expect(mockStravaAPI.getActivity).not.toHaveBeenCalled();
-      expect(activityQueue.queuedActivities.size).toBe(0);
-    });
-
-    it('should skip processing if activity no longer meets posting criteria', async () => {
-      mockStravaAPI.shouldPostActivity.mockReturnValue(false);
-
-      await activityQueue.processQueuedActivity(activityId);
-
-      expect(logger.activity.info).toHaveBeenCalledWith('Activity no longer meets posting criteria, skipping', {
-        activityId,
-        activityName: mockActivity.name,
-        memberName: 'Test User'
-      });
-      expect(mockDiscordBot.postActivity).not.toHaveBeenCalled();
-      expect(activityQueue.queuedActivities.size).toBe(0);
-    });
-
-    it('should update queue item status to processing', async () => {
-      // Mock a delay in processing to check status
-      mockStravaAPI.getActivity.mockImplementation(async () => {
+    it('should update queue item status to processing before delegating', async () => {
+      mockActivityProcessor.processNewActivity.mockImplementation(async () => {
         const queueItem = activityQueue.queuedActivities.get(activityId);
         expect(queueItem.status).toBe('processing');
-        return mockActivity;
       });
 
       await activityQueue.processQueuedActivity(activityId);
-    });
 
-    it('should handle member without Discord user data', async () => {
-      const memberWithoutDiscord = {
-        ...mockMember,
-        discordUser: null
-      };
-      mockMemberManager.getMemberByAthleteId.mockResolvedValue(memberWithoutDiscord);
-
-      await activityQueue.processQueuedActivity(activityId);
-
-      expect(mockStravaAPI.processActivityWithStreams).toHaveBeenCalledWith(
-        mockActivity,
-        expect.objectContaining({
-          ...mockMember.athlete,
-          discordUser: null
-        }),
-        'valid_token'
-      );
-      expect(mockDiscordBot.postActivity).toHaveBeenCalled();
-    });
-
-    it('should calculate correct delay time in logs', async () => {
-      // Set initial time when queuing
-      const queueTime = new Date('2024-01-01T12:00:00Z');
-      jest.setSystemTime(queueTime);
-      
-      // Clear and re-queue to get fresh timestamp
-      activityQueue.queuedActivities.clear();
-      await activityQueue.queueActivity(activityId, athleteId);
-      
-      // Advance time by 10 minutes
-      const processTime = new Date('2024-01-01T12:10:00Z');
-      jest.setSystemTime(processTime);
-
-      await activityQueue.processQueuedActivity(activityId);
-
-      expect(logger.activity.info).toHaveBeenCalledWith('Successfully posted queued activity', 
-        expect.objectContaining({
-          delayedBy: '10 minutes'
-        })
-      );
+      expect(mockActivityProcessor.processNewActivity).toHaveBeenCalledWith(activityId, athleteId);
     });
 
     describe('error handling', () => {
-      it('should handle Strava API errors', async () => {
-        const error = new Error('Strava API error');
-        mockStravaAPI.getActivity.mockRejectedValue(error);
+      it('should log processing errors and clear the queue entry without rethrowing', async () => {
+        const error = new Error('processing failed');
+        mockActivityProcessor.processNewActivity.mockRejectedValue(error);
 
-        await activityQueue.processQueuedActivity(activityId);
-
-        expect(logger.activity.error).toHaveBeenCalledWith('Error processing queued activity', {
-          activityId,
-          error: error.message,
-          stack: error.stack
-        });
-        expect(activityQueue.queuedActivities.size).toBe(0);
-      });
-
-      it('should handle Discord posting errors', async () => {
-        const error = new Error('Discord API error');
-        mockDiscordBot.postActivity.mockRejectedValue(error);
-
-        await activityQueue.processQueuedActivity(activityId);
+        await expect(activityQueue.processQueuedActivity(activityId)).resolves.toBeUndefined();
 
         expect(logger.activity.error).toHaveBeenCalledWith('Error processing queued activity', {
           activityId,
@@ -352,16 +254,14 @@ describe('ActivityQueue', () => {
           stack: error.stack
         });
         expect(activityQueue.queuedActivities.size).toBe(0);
+        expect(activityQueue.timers.size).toBe(0);
       });
 
-      it('should handle member manager errors', async () => {
-        const error = new Error('Database connection failed');
-        mockMemberManager.getMemberByAthleteId.mockRejectedValue(error);
-
+      it('should remove the activity from the queue after successful processing', async () => {
         await activityQueue.processQueuedActivity(activityId);
 
-        expect(logger.activity.error).toHaveBeenCalledWith('Error processing queued activity', expect.any(Object));
         expect(activityQueue.queuedActivities.size).toBe(0);
+        expect(activityQueue.timers.size).toBe(0);
       });
     });
   });
