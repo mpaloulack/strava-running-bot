@@ -2455,38 +2455,11 @@ class DiscordCommands {
         ])
         .setTimestamp();
 
-      // Try the interaction reply first. If we've crossed Discord's 15-min
-      // interaction window, editReply will throw — fall back to DMing the user
-      // and, if that also fails, posting in the originating channel so the
-      // user actually sees that the sync finished.
-      try {
-        await interaction.editReply({ content: '', embeds: [embed] });
-      } catch (editErr) {
-        logger.discord.warn('Sync editReply failed (likely past 15-min interaction window), falling back', {
-          user: interaction.user.tag,
-          error: editErr.message,
-        });
-        const fallbackContent = `🔄 **${periodLabel} sync complete** — ${summary.processed} scanned, ${summary.updated} PBs updated, ${summary.errors} errors.`;
-        try {
-          await interaction.user.send({ content: fallbackContent, embeds: [embed] });
-        } catch (dmErr) {
-          logger.discord.warn('Sync fallback DM failed, posting in channel', {
-            user: interaction.user.tag,
-            error: dmErr.message,
-          });
-          try {
-            await interaction.channel?.send({
-              content: `<@${interaction.user.id}> ${fallbackContent}`,
-              embeds: [embed],
-            });
-          } catch (chErr) {
-            logger.discord.error('Sync fallback channel post failed; summary not delivered to user', {
-              user: interaction.user.tag,
-              error: chErr.message,
-            });
-          }
-        }
-      }
+      await this._deliverSyncSummary(
+        interaction,
+        `🔄 **${periodLabel} sync complete** — ${summary.processed} scanned, ${summary.updated} PBs updated, ${summary.errors} errors.`,
+        embed
+      );
 
     } catch (error) {
       logger.discord.error('Error syncing PBs', {
@@ -2585,7 +2558,12 @@ class DiscordCommands {
         embed.addFields([{ name: '❌ Failed', value: failed.join(', ') }]);
       }
 
-      await this._editReplySafe(interaction, { content: '', embeds: [embed] });
+      const syncedCount = members.length - skipped.length - failed.length;
+      await this._deliverSyncSummary(
+        interaction,
+        `🔄 **Team sync complete — ${periodLabel}** — ${syncedCount} members synced, ${totals.processed} activities scanned, ${totals.updated} PBs updated.`,
+        embed
+      );
     } catch (error) {
       logger.discord.error('Error running team-wide sync', {
         user: interaction.user.tag,
@@ -2609,6 +2587,40 @@ class DiscordCommands {
         user: interaction.user.tag,
         error: editErr.message,
       });
+    }
+  }
+
+  // Deliver a sync summary through the interaction reply first. If we've
+  // crossed Discord's 15-min interaction window, editReply throws — fall back
+  // to DMing the user and, if that also fails, posting in the originating
+  // channel so the user actually sees that the sync finished.
+  async _deliverSyncSummary(interaction, fallbackContent, embed) {
+    try {
+      await interaction.editReply({ content: '', embeds: [embed] });
+    } catch (editErr) {
+      logger.discord.warn('Sync editReply failed (likely past 15-min interaction window), falling back', {
+        user: interaction.user.tag,
+        error: editErr.message,
+      });
+      try {
+        await interaction.user.send({ content: fallbackContent, embeds: [embed] });
+      } catch (dmErr) {
+        logger.discord.warn('Sync fallback DM failed, posting in channel', {
+          user: interaction.user.tag,
+          error: dmErr.message,
+        });
+        try {
+          await interaction.channel?.send({
+            content: `<@${interaction.user.id}> ${fallbackContent}`,
+            embeds: [embed],
+          });
+        } catch (chErr) {
+          logger.discord.error('Sync fallback channel post failed; summary not delivered to user', {
+            user: interaction.user.tag,
+            error: chErr.message,
+          });
+        }
+      }
     }
   }
 

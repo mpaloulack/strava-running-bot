@@ -1770,6 +1770,72 @@ describe('DiscordCommands', () => {
         expect.objectContaining({ content: expect.stringContaining('Failed') })
       );
     });
+
+    it('falls back to DM when the summary editReply fails (past 15-min window)', async () => {
+      discordCommands.pbManager.syncFromHistory.mockResolvedValue({ processed: 10, updated: 3, errors: 0 });
+      syncInteraction.user.send = jest.fn().mockResolvedValue(undefined);
+      syncInteraction.channel = { send: jest.fn().mockResolvedValue(undefined) };
+      // First editReply (progress message) succeeds; the summary edit fails
+      syncInteraction.editReply
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValue(new Error('Invalid Webhook Token'));
+
+      await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
+
+      expect(syncInteraction.user.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: expect.stringContaining('sync complete'),
+          embeds: expect.any(Array),
+        })
+      );
+      expect(syncInteraction.channel.send).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the channel with a mention when editReply and DM both fail', async () => {
+      discordCommands.pbManager.syncFromHistory.mockResolvedValue({ processed: 10, updated: 3, errors: 0 });
+      syncInteraction.user.send = jest.fn().mockRejectedValue(new Error('Cannot send messages to this user'));
+      syncInteraction.channel = { send: jest.fn().mockResolvedValue(undefined) };
+      syncInteraction.editReply
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValue(new Error('Invalid Webhook Token'));
+
+      await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
+
+      expect(syncInteraction.channel.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: expect.stringContaining('<@123456789>'),
+          embeds: expect.any(Array),
+        })
+      );
+    });
+
+    it('does not throw and still releases the lock when every delivery path fails', async () => {
+      discordCommands.pbManager.syncFromHistory.mockResolvedValue({ processed: 10, updated: 3, errors: 0 });
+      syncInteraction.user.send = jest.fn().mockRejectedValue(new Error('Cannot send messages to this user'));
+      syncInteraction.channel = { send: jest.fn().mockRejectedValue(new Error('Missing Permissions')) };
+      syncInteraction.editReply
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValue(new Error('Invalid Webhook Token'));
+
+      await expect(
+        discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options)
+      ).resolves.toBeUndefined();
+
+      expect(discordCommands.pbSyncInProgress.has('123456789')).toBe(false);
+    });
+
+    it('handles a missing channel (DM context) when editReply and DM fail', async () => {
+      discordCommands.pbManager.syncFromHistory.mockResolvedValue({ processed: 10, updated: 3, errors: 0 });
+      syncInteraction.user.send = jest.fn().mockRejectedValue(new Error('Cannot send messages to this user'));
+      syncInteraction.channel = null;
+      syncInteraction.editReply
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValue(new Error('Invalid Webhook Token'));
+
+      await expect(
+        discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options)
+      ).resolves.toBeUndefined();
+    });
   });
 
   // ─── handleSyncCommand — all_members (admin bulk sync) ─────────────────────
@@ -1938,6 +2004,51 @@ describe('DiscordCommands', () => {
       await discordCommands.handleSyncCommand(bulkInteraction, bulkInteraction.options);
 
       expect(discordCommands.pbSyncInProgress.has('999999999')).toBe(false);
+    });
+
+    it('falls back to DM when the summary editReply fails (past 15-min window)', async () => {
+      bulkInteraction.user.send = jest.fn().mockResolvedValue(undefined);
+      bulkInteraction.channel = { send: jest.fn().mockResolvedValue(undefined) };
+      bulkInteraction.editReply.mockRejectedValue(new Error('Invalid Webhook Token'));
+
+      await discordCommands.handleSyncCommand(bulkInteraction, bulkInteraction.options);
+
+      // The sync itself completed for every member despite editReply failing
+      expect(discordCommands.pbManager.syncFromHistory).toHaveBeenCalledTimes(2);
+      expect(bulkInteraction.user.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: expect.stringContaining('Team sync complete'),
+          embeds: expect.any(Array),
+        })
+      );
+      expect(bulkInteraction.channel.send).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the channel with a mention when editReply and DM both fail', async () => {
+      bulkInteraction.user.send = jest.fn().mockRejectedValue(new Error('Cannot send messages to this user'));
+      bulkInteraction.channel = { send: jest.fn().mockResolvedValue(undefined) };
+      bulkInteraction.editReply.mockRejectedValue(new Error('Invalid Webhook Token'));
+
+      await discordCommands.handleSyncCommand(bulkInteraction, bulkInteraction.options);
+
+      expect(bulkInteraction.channel.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: expect.stringContaining('<@999999999>'),
+          embeds: expect.any(Array),
+        })
+      );
+    });
+
+    it('releases the bulk lock even when every delivery path fails', async () => {
+      bulkInteraction.user.send = jest.fn().mockRejectedValue(new Error('Cannot send messages to this user'));
+      bulkInteraction.channel = { send: jest.fn().mockRejectedValue(new Error('Missing Permissions')) };
+      bulkInteraction.editReply.mockRejectedValue(new Error('Invalid Webhook Token'));
+
+      await expect(
+        discordCommands.handleSyncCommand(bulkInteraction, bulkInteraction.options)
+      ).resolves.toBeUndefined();
+
+      expect(discordCommands.bulkSyncInProgress).toBe(false);
     });
   });
 
