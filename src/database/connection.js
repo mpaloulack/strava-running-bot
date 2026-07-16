@@ -20,11 +20,11 @@ class DatabaseConnection {
       try {
         if (!fs.existsSync(dbDir)) {
           fs.mkdirSync(dbDir, { recursive: true });
-          logger.info(`Created database directory: ${dbDir}`);
+          logger.database.info(`Created database directory: ${dbDir}`);
         }
       } catch (error) {
         // If we can't create the directory (permission denied), use local fallback
-        logger.warn(`Cannot create directory ${dbDir}, using local fallback`, {
+        logger.database.warn(`Cannot create directory ${dbDir}, using local fallback`, {
           error: error.message,
           code: error.code
         });
@@ -33,10 +33,10 @@ class DatabaseConnection {
           fs.mkdirSync(fallbackPath, { recursive: true });
         }
         finalDbPath = path.join(fallbackPath, 'bot.db');
-        logger.info(`Using fallback database path: ${finalDbPath}`);
+        logger.database.info(`Using fallback database path: ${finalDbPath}`);
       }
       
-      logger.info(`Connecting to database at: ${finalDbPath}`);
+      logger.database.info(`Connecting to database at: ${finalDbPath}`);
       
       this.db = new Database(finalDbPath);
       // DELETE journal mode: WAL depends on mmap-based shared memory (-shm),
@@ -45,18 +45,18 @@ class DatabaseConnection {
       this.db.exec('PRAGMA journal_mode = DELETE;');
       this.db.exec('PRAGMA synchronous = NORMAL;');
       const journalMode = this.db.pragma('journal_mode', { simple: true });
-      logger.info(`SQLite journal mode: ${journalMode}`);
+      logger.database.info(`SQLite journal mode: ${journalMode}`);
       
       // Run migrations first
       await this.runMigrations();
       
       this.drizzle = drizzle(this.db);
       this.isInitialized = true;
-      logger.info('Database connection established successfully');
+      logger.database.info('Database connection established successfully');
       
       return this.drizzle;
     } catch (error) {
-      logger.error('Failed to initialize database:', error);
+      logger.database.error('Failed to initialize database', { error: error.message });
       throw error;
     }
   }
@@ -79,7 +79,7 @@ class DatabaseConnection {
     if (this.db) {
       this.db.close();
       this.isInitialized = false;
-      logger.info('Database connection closed');
+      logger.database.info('Database connection closed');
     }
   }
 
@@ -89,7 +89,7 @@ class DatabaseConnection {
       
       // Check if migrations directory exists
       if (!fs.existsSync(migrationsDir)) {
-        logger.info('No migrations directory found, skipping migrations');
+        logger.database.info('No migrations directory found, skipping migrations');
         return;
       }
 
@@ -119,11 +119,11 @@ class DatabaseConnection {
         ).get(migrationName);
 
         if (existingMigration?.success) {
-          logger.info(`Migration ${migrationName} already executed, skipping`);
+          logger.database.info(`Migration ${migrationName} already executed, skipping`);
           continue;
         }
 
-        logger.info(`Running migration: ${migrationName}`);
+        logger.database.info(`Running migration: ${migrationName}`);
         
         try {
           const migrationSql = fs.readFileSync(
@@ -140,7 +140,7 @@ class DatabaseConnection {
             VALUES (?, 1)
           `).run(migrationName);
           
-          logger.info(`Migration ${migrationName} completed successfully`);
+          logger.database.info(`Migration ${migrationName} completed successfully`);
           
         } catch (error) {
           // Log failed migration
@@ -149,15 +149,15 @@ class DatabaseConnection {
             VALUES (?, 0, ?)
           `).run(migrationName, error.message);
           
-          logger.error(`Migration ${migrationName} failed:`, error);
+          logger.database.error(`Migration ${migrationName} failed`, { error: error.message });
           throw error;
         }
       }
       
-      logger.info('All migrations completed successfully');
+      logger.database.info('All migrations completed successfully');
       
     } catch (error) {
-      logger.error('Migration failed:', error);
+      logger.database.error('Migration failed', { error: error.message });
       throw error;
     }
   }

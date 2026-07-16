@@ -3,9 +3,11 @@ const fs = require('fs').promises;
 const os = require('os');
 
 jest.mock('../../src/utils/Logger', () => ({
-  info: jest.fn(),
-  warn: jest.fn(),
-  error: jest.fn()
+  database: {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn()
+  }
 }));
 
 jest.mock('../../config/config', () => ({
