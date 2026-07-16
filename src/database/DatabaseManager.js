@@ -251,6 +251,7 @@ class DatabaseManager {
           athleteId,
           error: error.message
         });
+        throw error;
       }
     } else {
       logger.database.warn('Tokens not encrypted - missing encryption key or tokenData', {

@@ -138,7 +138,7 @@ Environment Variables:
   STRAVA_CLIENT_ID           Strava API client ID
   STRAVA_CLIENT_SECRET       Strava API client secret
   STRAVA_WEBHOOK_VERIFY_TOKEN Strava webhook verification token
-  ENCRYPTION_KEY             32-character hex key for encrypting member data
+  ENCRYPTION_KEY             64-character hex key (32 bytes) for encrypting member data
   PORT                       Server port (default: 3000)
   NODE_ENV                   Environment (development/production)
 

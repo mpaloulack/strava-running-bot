@@ -1,4 +1,5 @@
 require('dotenv').config();
+const { ENCRYPTION } = require('../src/constants');
 
 const config = {
   discord: {
@@ -81,6 +82,20 @@ if (missingEnvVars.length > 0) {
   console.error('❌ Missing required environment variables:');
   missingEnvVars.forEach(envVar => console.error(`   - ${envVar}`));
   console.error('Please check your .env file and ensure all required variables are set.');
+  process.exit(1);
+}
+
+// ENCRYPTION_KEY must be exactly KEY_LENGTH bytes, hex-encoded, for AES-256-GCM.
+// A wrong-length key throws at encrypt/decrypt time deep in EncryptionUtils,
+// which registerMember used to swallow silently — validate it up front instead.
+const expectedKeyHexLength = ENCRYPTION.KEY_LENGTH * 2;
+const encryptionKey = process.env.ENCRYPTION_KEY;
+if (!/^[0-9a-fA-F]+$/.test(encryptionKey) || encryptionKey.length !== expectedKeyHexLength) {
+  console.error(
+    `❌ ENCRYPTION_KEY must be exactly ${expectedKeyHexLength} hex characters ` +
+    `(${ENCRYPTION.KEY_LENGTH} bytes for AES-256-GCM), got ${encryptionKey.length}.`
+  );
+  console.error('   Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
   process.exit(1);
 }
 
