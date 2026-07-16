@@ -210,7 +210,7 @@ describe('DatabaseManager', () => {
         .mockResolvedValueOnce(mockMember); // getMemberByAthleteId - returns new member
 
       const result = await DatabaseManager.registerMember(discordUserId, athlete, tokenData);
-      
+
       expect(result).toBeDefined();
       expect(result.athleteId).toBe(parseInt(athlete.id));
       expect(result.discordUserId).toBe(discordUserId);
@@ -270,6 +270,28 @@ describe('DatabaseManager', () => {
       ).rejects.toThrow('Invalid key length');
 
       expect(mockDb.update).not.toHaveBeenCalled();
+
+      EncryptionUtils.encryptTokensToJSON.mockRestore();
+    });
+
+    it('should throw and not insert the member when token encryption fails', async () => {
+      const discordUserId = 'discord123';
+      const athlete = { id: 12345, firstname: 'John', lastname: 'Doe' };
+      const tokenData = { access_token: 'token', refresh_token: 'refresh' };
+
+      mockDb.get
+        .mockResolvedValueOnce(null) // getMemberByDiscordId - no existing
+        .mockResolvedValueOnce(null); // getMemberByAthleteId - no existing
+
+      jest.spyOn(EncryptionUtils, 'encryptTokensToJSON').mockImplementation(() => {
+        throw new Error('Invalid key length');
+      });
+
+      await expect(
+        DatabaseManager.registerMember(discordUserId, athlete, tokenData)
+      ).rejects.toThrow('Invalid key length');
+
+      expect(mockDb.insert).not.toHaveBeenCalled();
 
       EncryptionUtils.encryptTokensToJSON.mockRestore();
     });
