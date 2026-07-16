@@ -13,6 +13,7 @@ jest.mock('../../config/config', () => ({
 const mockDatabaseManager = {
   initialize: jest.fn().mockResolvedValue(undefined),
   registerMember: jest.fn(),
+  relinkMember: jest.fn(),
   getMemberByAthleteId: jest.fn(),
   getMemberByDiscordId: jest.fn(),
   getAllMembers: jest.fn(),
@@ -78,6 +79,43 @@ describe('DatabaseMemberManager', () => {
       await memberManager.registerMember('discord123', mockAthlete, mockTokenData);
 
       expect(mockDatabaseManager.registerMember).toHaveBeenCalledWith('discord123', mockAthlete, mockTokenData, null);
+    });
+
+    it('should relink an existing active member whose stored tokens no longer work', async () => {
+      const existingMember = { athleteId: 12345, discordUserId: 'discord123', isActive: true, tokens: { encrypted: 'data' } };
+      mockDatabaseManager.getMemberByDiscordId.mockResolvedValue(existingMember);
+      jest.spyOn(memberManager, 'getValidAccessToken').mockResolvedValue(null);
+      mockDatabaseManager.relinkMember.mockResolvedValue({ athleteId: 12345, discordUserId: 'discord123' });
+
+      const result = await memberManager.registerMember('discord123', mockAthlete, mockTokenData, mockDiscordUser);
+
+      expect(mockDatabaseManager.relinkMember).toHaveBeenCalledWith(12345, mockAthlete, mockTokenData, mockDiscordUser);
+      expect(mockDatabaseManager.registerMember).not.toHaveBeenCalled();
+      expect(result.athleteId).toBe(12345);
+    });
+
+    it('should throw already-registered when an existing active member still has valid tokens', async () => {
+      const existingMember = { athleteId: 12345, discordUserId: 'discord123', isActive: true, tokens: { encrypted: 'data' } };
+      mockDatabaseManager.getMemberByDiscordId.mockResolvedValue(existingMember);
+      jest.spyOn(memberManager, 'getValidAccessToken').mockResolvedValue('valid_access_token');
+
+      await expect(
+        memberManager.registerMember('discord123', mockAthlete, mockTokenData, mockDiscordUser)
+      ).rejects.toThrow();
+
+      expect(mockDatabaseManager.relinkMember).not.toHaveBeenCalled();
+    });
+
+    it('should not attempt a relink for an existing inactive member', async () => {
+      const existingMember = { athleteId: 12345, discordUserId: 'discord123', isActive: false, tokens: null };
+      mockDatabaseManager.getMemberByDiscordId.mockResolvedValue(existingMember);
+      mockDatabaseManager.registerMember.mockRejectedValue(new Error('Discord user discord123 is already registered'));
+
+      await expect(
+        memberManager.registerMember('discord123', mockAthlete, mockTokenData, mockDiscordUser)
+      ).rejects.toThrow('already registered');
+
+      expect(mockDatabaseManager.relinkMember).not.toHaveBeenCalled();
     });
   });
 

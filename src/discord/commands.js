@@ -1022,10 +1022,21 @@ class DiscordCommands {
 
     if (existingMember) {
       const memberName = existingMember.discordUser ? existingMember.discordUser.displayName : `${existingMember.athlete.firstname} ${existingMember.athlete.lastname}`;
-      await interaction.editReply({
-        content: `✅ You're already registered as **${memberName}**.`
-      });
-      return;
+
+      // Deactivated members stay blocked (needs admin /reactivate first). Active members
+      // only stay blocked if their stored tokens actually still work — otherwise (e.g. after
+      // an ENCRYPTION_KEY rotation, or the user revoking access on Strava) fall through and
+      // offer a fresh OAuth link so they can relink instead of being stuck.
+      const hasValidToken = existingMember.isActive
+        ? await this.activityProcessor.memberManager.getValidAccessToken(existingMember)
+        : null;
+
+      if (!existingMember.isActive || hasValidToken) {
+        await interaction.editReply({
+          content: `✅ You're already registered as **${memberName}**.`
+        });
+        return;
+      }
     }
 
     const registerUrl = `${config.server.baseUrl}/auth/strava?user_id=${userId}`;
