@@ -292,6 +292,47 @@ class DatabaseManager {
     return newMember;
   }
 
+  // Re-link an existing member to a fresh Strava OAuth grant (new tokens, refreshed
+  // athlete/Discord info) without touching athlete_id or is_active. Used when a member's
+  // stored tokens have become unusable (e.g. ENCRYPTION_KEY rotation, access revoked on
+  // Strava) so they can recover via /register instead of being stuck as "already registered".
+  async relinkMember(athleteId, athlete, tokenData, discordUser = null) {
+    await this.ensureInitialized();
+
+    let encryptedTokens = null;
+    if (tokenData && config.security.encryptionKey) {
+      try {
+        encryptedTokens = EncryptionUtils.encryptTokensToJSON(tokenData);
+      } catch (error) {
+        logger.database.error('Failed to encrypt tokens during relink', {
+          athleteId,
+          error: error.message
+        });
+        throw error;
+      }
+    }
+
+    await this.db.update(members)
+      .set({
+        athlete: JSON.stringify(athlete),
+        discord_username: discordUser?.username || null,
+        discord_display_name: discordUser?.globalName || discordUser?.displayName || null,
+        discord_discriminator: discordUser?.discriminator || '0',
+        discord_avatar: discordUser?.avatar || null,
+        encrypted_tokens: encryptedTokens,
+        updated_at: new Date().toISOString()
+      })
+      .where(eq(members.athlete_id, athleteId));
+
+    const updatedMember = await this.getMemberByAthleteId(athleteId);
+
+    logger.memberAction('RELINKED', `${athlete.firstname} ${athlete.lastname}`, updatedMember.discordUserId, athleteId, {
+      relinkedAt: updatedMember.lastTokenRefresh
+    });
+
+    return updatedMember;
+  }
+
   async getMemberByAthleteId(athleteId) {
     await this.ensureInitialized();
     

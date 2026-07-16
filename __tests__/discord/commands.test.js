@@ -934,12 +934,14 @@ describe('DiscordCommands', () => {
       });
     });
 
-    it('should handle already registered user', async () => {
+    it('should handle already registered user with a working Strava connection', async () => {
       mockMemberManager.getMemberByDiscordId.mockResolvedValue(mockMember);
+      mockMemberManager.getValidAccessToken.mockResolvedValue('valid_token');
 
       await discordCommands.handleRegisterCommand(mockInteraction);
 
       expect(mockInteraction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+      expect(mockMemberManager.getValidAccessToken).toHaveBeenCalledWith(mockMember);
       expect(mockInteraction.editReply).toHaveBeenCalledWith({
         content: '✅ You\'re already registered as **Test User**.'
       });
@@ -951,12 +953,37 @@ describe('DiscordCommands', () => {
         discordUser: null
       };
       mockMemberManager.getMemberByDiscordId.mockResolvedValue(memberWithoutDisplayName);
+      mockMemberManager.getValidAccessToken.mockResolvedValue('valid_token');
 
       await discordCommands.handleRegisterCommand(mockInteraction);
 
       expect(mockInteraction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
       expect(mockInteraction.editReply).toHaveBeenCalledWith({
         content: '✅ You\'re already registered as **John Doe**.'
+      });
+    });
+
+    it('should offer a fresh registration link when an active member has no working Strava tokens', async () => {
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue(mockMember);
+      mockMemberManager.getValidAccessToken.mockResolvedValue(null);
+
+      await discordCommands.handleRegisterCommand(mockInteraction);
+
+      expect(mockMemberManager.getValidAccessToken).toHaveBeenCalledWith(mockMember);
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        embeds: [expect.any(Object)]
+      });
+    });
+
+    it('should still block re-registration for a deactivated member, even without a token check', async () => {
+      const inactiveMember = { ...mockMember, isActive: false };
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue(inactiveMember);
+
+      await discordCommands.handleRegisterCommand(mockInteraction);
+
+      expect(mockMemberManager.getValidAccessToken).not.toHaveBeenCalled();
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        content: '✅ You\'re already registered as **Test User**.'
       });
     });
   });

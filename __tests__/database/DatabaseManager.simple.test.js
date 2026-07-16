@@ -80,6 +80,7 @@ const config = require('../../config/config');
 const logger = require('../../src/utils/Logger');
 const dbConnection = require('../../src/database/connection');
 const SettingsManager = require('../../src/managers/SettingsManager');
+const EncryptionUtils = require('../../src/utils/EncryptionUtils');
 
 // Import the real DatabaseManager to test
 const DatabaseManager = require('../../src/database/DatabaseManager');
@@ -214,6 +215,63 @@ describe('DatabaseManager', () => {
       expect(result.athleteId).toBe(parseInt(athlete.id));
       expect(result.discordUserId).toBe(discordUserId);
       expect(mockDb.insert).toHaveBeenCalled();
+    });
+
+    it('should relink an existing member with fresh tokens and athlete/discord info', async () => {
+      const existingAthleteId = 12345;
+      const athlete = { id: 12345, firstname: 'John', lastname: 'Doe' };
+      const tokenData = { access_token: 'new_token', refresh_token: 'new_refresh' };
+      const discordUser = { username: 'jdoe', displayName: 'J Doe', discriminator: '0', avatar: 'abc' };
+
+      const mockUpdateChain = {
+        set: jest.fn().mockReturnThis(),
+        where: jest.fn().mockResolvedValue(undefined)
+      };
+      mockDb.update.mockReturnValue(mockUpdateChain);
+
+      const mockSelectChain = {
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        get: jest.fn().mockResolvedValue({
+          athlete_id: existingAthleteId,
+          discord_id: 'discord123',
+          athlete: JSON.stringify(athlete),
+          is_active: 1,
+          encrypted_tokens: JSON.stringify({ iv: 'iv', encrypted: 'enc', authTag: 'tag' })
+        })
+      };
+      mockDb.select.mockReturnValue(mockSelectChain);
+
+      const result = await DatabaseManager.relinkMember(existingAthleteId, athlete, tokenData, discordUser);
+
+      expect(mockDb.update).toHaveBeenCalled();
+      expect(mockUpdateChain.set).toHaveBeenCalledWith(
+        expect.objectContaining({
+          athlete: JSON.stringify(athlete),
+          discord_username: 'jdoe',
+          encrypted_tokens: expect.any(String)
+        })
+      );
+      expect(result.athleteId).toBe(existingAthleteId);
+      expect(result.discordUserId).toBe('discord123');
+    });
+
+    it('should throw and not update the row when token encryption fails during relink', async () => {
+      const existingAthleteId = 12345;
+      const athlete = { id: 12345, firstname: 'John', lastname: 'Doe' };
+      const tokenData = { access_token: 'token' };
+
+      jest.spyOn(EncryptionUtils, 'encryptTokensToJSON').mockImplementation(() => {
+        throw new Error('Invalid key length');
+      });
+
+      await expect(
+        DatabaseManager.relinkMember(existingAthleteId, athlete, tokenData)
+      ).rejects.toThrow('Invalid key length');
+
+      expect(mockDb.update).not.toHaveBeenCalled();
+
+      EncryptionUtils.encryptTokensToJSON.mockRestore();
     });
 
     it('should get member by athlete ID', async () => {

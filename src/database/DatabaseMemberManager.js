@@ -23,6 +23,24 @@ class DatabaseMemberManager {
   
   async registerMember(discordUserId, athlete, tokenData, discordUser = null) {
     await this.ensureInitialized();
+
+    const existingMember = await this.getMemberByDiscordId(discordUserId);
+    if (existingMember) {
+      const validToken = existingMember.isActive
+        ? await this.getValidAccessToken(existingMember)
+        : null;
+
+      if (!existingMember.isActive || validToken) {
+        throw new Error(`Discord user ${discordUserId} is already registered`);
+      }
+
+      logger.database.warn('Relinking member with unusable stored tokens', {
+        discordUserId,
+        athleteId: existingMember.athleteId
+      });
+      return await this.databaseManager.relinkMember(existingMember.athleteId, athlete, tokenData, discordUser);
+    }
+
     return await this.databaseManager.registerMember(discordUserId, athlete, tokenData, discordUser);
   }
 
