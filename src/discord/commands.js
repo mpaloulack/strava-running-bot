@@ -1363,7 +1363,7 @@ class DiscordCommands {
       {
         name: '🏆 3. Records personnels (PB)',
         value:
-          '`/pb check` — Affiche tes records personnels (5K, 10K, semi, marathon…).\n`/pb check member:<nom>` — Affiche les records d\'un autre membre.\n`/pb add activity_url:<lien> distance_m:<mètres>` — Ajoute manuellement un PB depuis une activité Strava (utile pour les courses de plus d\'un an).\n`/sync period:<période> [month:YYYY-MM]` — Synchronise ton historique Strava et met à jour tes PB (année en cours, 365 derniers jours, mois en cours, mois précédent, ou un mois précis via `month:`).\n`/sync period:<période> all_members:True` — Synchronise tous les membres de l\'équipe (admin uniquement).',
+          '`/pb check` — Affiche tes records personnels (5K, 10K, semi, marathon…).\n`/pb check member:<nom>` — Affiche les records d\'un autre membre.\n`/pb add activity_url:<lien> distance_m:<mètres>` — Ajoute manuellement un PB depuis une activité Strava (utile pour les courses de plus d\'un an).\n`/sync period:<période> [month:YYYY-MM]` — Synchronise ton historique (Strava ou intervals.icu) et met à jour tes PB (année en cours, 365 derniers jours, mois en cours, mois précédent, ou un mois précis via `month:`).\n`/sync period:<période> all_members:True` — Synchronise tous les membres de l\'équipe (admin uniquement).',
         inline: false,
       },
       {
@@ -2613,7 +2613,7 @@ class DiscordCommands {
 
       if (!pbs.length) {
         await interaction.editReply({
-          content: `📭 No Personal Bests recorded yet for **${targetName}**.\nUse \`/sync\` to import from Strava history.`,
+          content: `📭 No Personal Bests recorded yet for **${targetName}**.\nUse \`/sync\` to import from your activity history.`,
         });
         return;
       }
@@ -2731,12 +2731,8 @@ class DiscordCommands {
         return;
       }
 
-      if (member.provider === 'intervals') {
-        await interaction.editReply({
-          content: '❌ /sync uses Strava best-effort data and is only available for Strava-connected members.',
-        });
-        return;
-      }
+      const isIntervals = member.provider === 'intervals';
+      const providerLabel = isIntervals ? 'intervals.icu' : 'Strava';
 
       const period = options.getString('period');
       const monthInput = options.getString('month');
@@ -2748,32 +2744,45 @@ class DiscordCommands {
       }
       const { afterTs, beforeTs, periodLabel } = window;
 
-      await interaction.editReply({ content: `⏳ Syncing your **${periodLabel} Strava activities**… this may take several minutes. The sync continues even if this message stops updating.` });
+      await interaction.editReply({ content: `⏳ Syncing your **${periodLabel} ${providerLabel} activities**… this may take several minutes. The sync continues even if this message stops updating.` });
 
       const accessToken = await this.activityProcessor.memberManager.getValidAccessToken(member);
       if (!accessToken) {
         await interaction.editReply({
-          content: '❌ Could not retrieve your Strava access token. Please re-register.',
+          content: `❌ Could not retrieve your ${providerLabel} access token. Please re-register.`,
         });
         return;
       }
 
-      const progressCb = async (page) => {
+      const progressCb = async (count) => {
         try {
-          await interaction.editReply({ content: `⏳ Syncing… processed page ${page}` });
+          await interaction.editReply({
+            content: isIntervals
+              ? `⏳ Syncing… processed ${count} activities`
+              : `⏳ Syncing… processed page ${count}`,
+          });
         } catch {
           // Ignore edit errors after Discord's 15-min interaction window
         }
       };
 
-      const summary = await this.pbManager.syncFromHistory(
-        interaction.user.id,
-        accessToken,
-        this.activityProcessor.stravaAPI,
-        progressCb,
-        afterTs,
-        beforeTs
-      );
+      const summary = isIntervals
+        ? await this.pbManager.syncFromIntervalsHistory(
+          interaction.user.id,
+          accessToken,
+          this.activityProcessor.intervalsAPI,
+          progressCb,
+          afterTs,
+          beforeTs
+        )
+        : await this.pbManager.syncFromHistory(
+          interaction.user.id,
+          accessToken,
+          this.activityProcessor.stravaAPI,
+          progressCb,
+          afterTs,
+          beforeTs
+        );
 
       const embed = new EmbedBuilder()
         .setTitle(`🔄 Sync Complete — ${periodLabel}`)
@@ -2797,16 +2806,17 @@ class DiscordCommands {
         error: error.message,
       });
       await interaction.editReply({
-        content: '❌ Failed to sync Personal Bests from Strava.',
+        content: '❌ Failed to sync Personal Bests.',
       });
     } finally {
       this.pbSyncInProgress.delete(interaction.user.id);
     }
   }
 
-  // Team-wide sync: runs the same windowed sync for every registered member.
-  // Admin-gated and sequential on purpose — the whole bot shares one Strava
-  // rate budget, so members' syncs must not run concurrently.
+  // Team-wide sync: runs the same windowed sync for every registered member,
+  // routed through each member's own provider (Strava or intervals.icu).
+  // Admin-gated and sequential on purpose — the whole bot shares one rate
+  // budget per provider, so members' syncs must not run concurrently.
   async handleSyncAllMembers(interaction, options) {
     if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
       await interaction.editReply({
@@ -2835,21 +2845,11 @@ class DiscordCommands {
       const totals = { processed: 0, updated: 0, errors: 0 };
       const skipped = [];
       const failed = [];
-      const intervalsSkipped = [];
 
       for (const [index, member] of members.entries()) {
         const memberName = member.discordUser?.displayName
           || `${member.athlete.firstname} ${member.athlete.lastname}`.trim();
-
-        // PB sync relies on Strava best_efforts — intervals.icu members can't be synced this way.
-        if (member.provider === 'intervals') {
-          logger.discord.info('Skipping intervals.icu member in team-wide Strava PB sync', {
-            memberName,
-            athleteId: member.athleteId,
-          });
-          intervalsSkipped.push(memberName);
-          continue;
-        }
+        const isIntervals = member.provider === 'intervals';
 
         await this._editReplySafe(interaction, {
           content: `⏳ Syncing **${periodLabel}** — **${memberName}** (${index + 1}/${members.length})…`,
@@ -2862,14 +2862,23 @@ class DiscordCommands {
         }
 
         try {
-          const summary = await this.pbManager.syncFromHistory(
-            member.discordUserId,
-            accessToken,
-            this.activityProcessor.stravaAPI,
-            null,
-            afterTs,
-            beforeTs
-          );
+          const summary = isIntervals
+            ? await this.pbManager.syncFromIntervalsHistory(
+              member.discordUserId,
+              accessToken,
+              this.activityProcessor.intervalsAPI,
+              null,
+              afterTs,
+              beforeTs
+            )
+            : await this.pbManager.syncFromHistory(
+              member.discordUserId,
+              accessToken,
+              this.activityProcessor.stravaAPI,
+              null,
+              afterTs,
+              beforeTs
+            );
           totals.processed += summary.processed;
           totals.updated += summary.updated;
           totals.errors += summary.errors;
@@ -2887,7 +2896,7 @@ class DiscordCommands {
         .setTitle(`🔄 Team Sync Complete — ${periodLabel}`)
         .setColor('#D4AF37')
         .addFields([
-          { name: 'Members synced', value: String(members.length - skipped.length - failed.length - intervalsSkipped.length), inline: true },
+          { name: 'Members synced', value: String(members.length - skipped.length - failed.length), inline: true },
           { name: 'Activities scanned', value: String(totals.processed), inline: true },
           { name: 'PBs updated', value: String(totals.updated), inline: true },
         ])
@@ -2895,14 +2904,11 @@ class DiscordCommands {
       if (skipped.length > 0) {
         embed.addFields([{ name: '⚠️ Skipped (no valid token)', value: skipped.join(', ') }]);
       }
-      if (intervalsSkipped.length > 0) {
-        embed.addFields([{ name: 'ℹ️ Skipped (intervals.icu — Strava-only sync)', value: intervalsSkipped.join(', ') }]);
-      }
       if (failed.length > 0) {
         embed.addFields([{ name: '❌ Failed', value: failed.join(', ') }]);
       }
 
-      const syncedCount = members.length - skipped.length - failed.length - intervalsSkipped.length;
+      const syncedCount = members.length - skipped.length - failed.length;
       await this._deliverSyncSummary(
         interaction,
         `🔄 **Team sync complete — ${periodLabel}** — ${syncedCount} members synced, ${totals.processed} activities scanned, ${totals.updated} PBs updated.`,

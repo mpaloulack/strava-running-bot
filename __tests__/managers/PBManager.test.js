@@ -8,6 +8,7 @@ jest.mock('../../src/database/DatabaseManager', () => ({
   getPersonalBestsByAthleteId: jest.fn(),
   getPersonalBest: jest.fn(),
   upsertActivity: jest.fn().mockResolvedValue(undefined),
+  findDuplicateActivity: jest.fn().mockResolvedValue(null),
   settingsManager: {
     getSetting: jest.fn().mockResolvedValue(null),
     setSetting: jest.fn().mockResolvedValue(undefined),
@@ -1047,6 +1048,231 @@ describe('PBManager', () => {
       const result = await pbManager.syncFromHistory('discord123', 'token', mockStravaAPI);
 
       expect(result).toMatchObject({ processed: expect.any(Number), updated: expect.any(Number), errors: expect.any(Number) });
+    });
+  });
+
+  // ─── syncFromIntervalsHistory ─────────────────────────────────────────────
+
+  describe('syncFromIntervalsHistory', () => {
+    let mockIntervalsAPI;
+
+    const runActivity = (overrides = {}) => ({
+      id: 'i1',
+      name: 'Morning Run',
+      type: 'Run',
+      start_date_local: '2026-03-18T07:00:00',
+      distance: 5000,
+      moving_time: 1200,
+      ...overrides,
+    });
+
+    const streamsWith5k = { time: [0, 1400], distance: [0, 5100] };
+
+    beforeEach(() => {
+      mockIntervalsAPI = {
+        getAthleteActivities: jest.fn(),
+        getActivityStreams: jest.fn(),
+      };
+      DatabaseManager.getMemberByDiscordId.mockResolvedValue(mockMember);
+      DatabaseManager.findDuplicateActivity.mockResolvedValue(null);
+      DatabaseManager.upsertActivity.mockResolvedValue(undefined);
+    });
+
+    it('should return zeros if member not found', async () => {
+      DatabaseManager.getMemberByDiscordId.mockResolvedValue(null);
+
+      const result = await pbManager.syncFromIntervalsHistory('unknown', 'apiKey', mockIntervalsAPI);
+
+      expect(result).toEqual({ processed: 0, updated: 0, errors: 0 });
+      expect(mockIntervalsAPI.getAthleteActivities).not.toHaveBeenCalled();
+    });
+
+    it('should return zeros if member is inactive', async () => {
+      DatabaseManager.getMemberByDiscordId.mockResolvedValue({ ...mockMember, isActive: false });
+
+      const result = await pbManager.syncFromIntervalsHistory('discord123', 'apiKey', mockIntervalsAPI);
+
+      expect(result).toEqual({ processed: 0, updated: 0, errors: 0 });
+    });
+
+    it('should convert the epoch-second window to ISO strings for the intervals client', async () => {
+      mockIntervalsAPI.getAthleteActivities.mockResolvedValue([]);
+
+      const afterTs = Math.floor(Date.UTC(2025, 5, 1) / 1000);
+      const beforeTs = Math.floor(Date.UTC(2025, 6, 1) / 1000);
+
+      await pbManager.syncFromIntervalsHistory('discord123', 'apiKey', mockIntervalsAPI, undefined, afterTs, beforeTs);
+
+      expect(mockIntervalsAPI.getAthleteActivities).toHaveBeenCalledWith(
+        'apiKey',
+        new Date(afterTs * 1000).toISOString(),
+        new Date(beforeTs * 1000).toISOString()
+      );
+    });
+
+    it('should default the lower bound to Jan 1 (UTC) of the current year and leave newest undefined when beforeTs is not given', async () => {
+      mockIntervalsAPI.getAthleteActivities.mockResolvedValue([]);
+
+      await pbManager.syncFromIntervalsHistory('discord123', 'apiKey', mockIntervalsAPI);
+
+      const jan1Utc = new Date(Date.UTC(new Date().getUTCFullYear(), 0, 1)).toISOString();
+      expect(mockIntervalsAPI.getAthleteActivities).toHaveBeenCalledWith('apiKey', jan1Utc, undefined);
+    });
+
+    it('should make exactly one getAthleteActivities call regardless of result size (no paging)', async () => {
+      mockIntervalsAPI.getAthleteActivities.mockResolvedValue([runActivity()]);
+      mockIntervalsAPI.getActivityStreams.mockResolvedValue({});
+
+      await pbManager.syncFromIntervalsHistory('discord123', 'apiKey', mockIntervalsAPI);
+
+      expect(mockIntervalsAPI.getAthleteActivities).toHaveBeenCalledTimes(1);
+    });
+
+    it('should skip non-run activity types entirely — no streams call, no PB check, no upsert', async () => {
+      mockIntervalsAPI.getAthleteActivities.mockResolvedValue([runActivity({ id: 'i2', type: 'Ride' })]);
+
+      const result = await pbManager.syncFromIntervalsHistory('discord123', 'apiKey', mockIntervalsAPI);
+
+      expect(mockIntervalsAPI.getActivityStreams).not.toHaveBeenCalled();
+      expect(DatabaseManager.upsertActivity).not.toHaveBeenCalled();
+      expect(result).toEqual({ processed: 0, updated: 0, errors: 0 });
+    });
+
+    it('should fetch minimal time/distance streams for a Run activity', async () => {
+      mockIntervalsAPI.getAthleteActivities.mockResolvedValue([runActivity()]);
+      mockIntervalsAPI.getActivityStreams.mockResolvedValue({});
+
+      await pbManager.syncFromIntervalsHistory('discord123', 'apiKey', mockIntervalsAPI);
+
+      expect(mockIntervalsAPI.getActivityStreams).toHaveBeenCalledWith('i1', 'apiKey', ['time', 'distance']);
+    });
+
+    it('should synthesize efforts from streams and check/update PBs', async () => {
+      mockIntervalsAPI.getAthleteActivities.mockResolvedValue([runActivity()]);
+      mockIntervalsAPI.getActivityStreams.mockResolvedValue(streamsWith5k);
+      DatabaseManager.getPersonalBest.mockResolvedValue(null);
+      DatabaseManager.upsertPersonalBest.mockResolvedValue({ id: 1 });
+
+      const result = await pbManager.syncFromIntervalsHistory('discord123', 'apiKey', mockIntervalsAPI);
+
+      expect(DatabaseManager.upsertPersonalBest).toHaveBeenCalledWith(
+        mockMember.athleteId,
+        expect.objectContaining({ category: '5K' })
+      );
+      expect(result.processed).toBe(1);
+      expect(result.updated).toBeGreaterThan(0);
+      expect(result.errors).toBe(0);
+    });
+
+    it('should not PB-check when synthesized efforts are empty (streams too short for any distance)', async () => {
+      mockIntervalsAPI.getAthleteActivities.mockResolvedValue([runActivity()]);
+      mockIntervalsAPI.getActivityStreams.mockResolvedValue({ time: [0, 10], distance: [0, 50] });
+
+      await pbManager.syncFromIntervalsHistory('discord123', 'apiKey', mockIntervalsAPI);
+
+      expect(DatabaseManager.getPersonalBest).not.toHaveBeenCalled();
+    });
+
+    it('should continue the sync (and still process the activity) when a single activity streams fetch fails', async () => {
+      mockIntervalsAPI.getAthleteActivities.mockResolvedValue([
+        runActivity({ id: 'i1' }),
+        runActivity({ id: 'i2', start_date_local: '2026-03-19T07:00:00' }),
+      ]);
+      mockIntervalsAPI.getActivityStreams
+        .mockRejectedValueOnce(new Error('404 no streams'))
+        .mockResolvedValueOnce(streamsWith5k);
+      DatabaseManager.getPersonalBest.mockResolvedValue(null);
+      DatabaseManager.upsertPersonalBest.mockResolvedValue({ id: 1 });
+
+      const result = await pbManager.syncFromIntervalsHistory('discord123', 'apiKey', mockIntervalsAPI);
+
+      expect(result.processed).toBe(2);
+      expect(result.errors).toBe(0);
+      expect(DatabaseManager.upsertActivity).toHaveBeenCalledTimes(2);
+    });
+
+    it('should skip upsertActivity when a cross-provider duplicate exists, but still PB-check', async () => {
+      mockIntervalsAPI.getAthleteActivities.mockResolvedValue([runActivity()]);
+      mockIntervalsAPI.getActivityStreams.mockResolvedValue(streamsWith5k);
+      DatabaseManager.findDuplicateActivity.mockResolvedValue({ strava_activity_id: '999' });
+      DatabaseManager.getPersonalBest.mockResolvedValue(null);
+      DatabaseManager.upsertPersonalBest.mockResolvedValue({ id: 1 });
+
+      const result = await pbManager.syncFromIntervalsHistory('discord123', 'apiKey', mockIntervalsAPI);
+
+      expect(DatabaseManager.findDuplicateActivity).toHaveBeenCalledWith(
+        mockMember.athleteId, '2026-03-18T07:00:00', 'i1', 'intervals'
+      );
+      expect(DatabaseManager.upsertActivity).not.toHaveBeenCalled();
+      expect(DatabaseManager.upsertPersonalBest).toHaveBeenCalled();
+      expect(result.processed).toBe(1);
+    });
+
+    it('should call upsertActivity with the raw activity and provider "intervals" when no duplicate exists', async () => {
+      const activity = runActivity();
+      mockIntervalsAPI.getAthleteActivities.mockResolvedValue([activity]);
+      mockIntervalsAPI.getActivityStreams.mockResolvedValue({});
+
+      await pbManager.syncFromIntervalsHistory('discord123', 'apiKey', mockIntervalsAPI);
+
+      expect(DatabaseManager.upsertActivity).toHaveBeenCalledWith(
+        mockMember.athleteId,
+        expect.objectContaining({ id: 'i1', type: 'Run' }),
+        'intervals'
+      );
+    });
+
+    it('should return correct summary shape { processed, updated, errors }', async () => {
+      mockIntervalsAPI.getAthleteActivities.mockResolvedValue([runActivity()]);
+      mockIntervalsAPI.getActivityStreams.mockResolvedValue(streamsWith5k);
+      DatabaseManager.getPersonalBest.mockResolvedValue(null);
+      DatabaseManager.upsertPersonalBest.mockResolvedValue({ id: 1 });
+
+      const result = await pbManager.syncFromIntervalsHistory('discord123', 'apiKey', mockIntervalsAPI);
+
+      expect(result).toEqual({ processed: expect.any(Number), updated: expect.any(Number), errors: expect.any(Number) });
+    });
+
+    it('should invoke progressCallback every 5 processed run activities', async () => {
+      const activities = Array.from({ length: 5 }, (_, i) => runActivity({
+        id: `i${i}`,
+        start_date_local: `2026-03-${10 + i}T07:00:00`,
+      }));
+      mockIntervalsAPI.getAthleteActivities.mockResolvedValue(activities);
+      mockIntervalsAPI.getActivityStreams.mockResolvedValue({});
+
+      const progressCb = jest.fn();
+      await pbManager.syncFromIntervalsHistory('discord123', 'apiKey', mockIntervalsAPI, progressCb);
+
+      expect(progressCb).toHaveBeenCalledWith(5);
+    });
+
+    it('should not call progressCallback when fewer than 5 run activities are processed', async () => {
+      mockIntervalsAPI.getAthleteActivities.mockResolvedValue([runActivity()]);
+      mockIntervalsAPI.getActivityStreams.mockResolvedValue({});
+
+      const progressCb = jest.fn();
+      await pbManager.syncFromIntervalsHistory('discord123', 'apiKey', mockIntervalsAPI, progressCb);
+
+      expect(progressCb).not.toHaveBeenCalled();
+    });
+
+    it('should not maintain pb_sync_cursor_* settings (no paging to checkpoint)', async () => {
+      mockIntervalsAPI.getAthleteActivities.mockResolvedValue([]);
+
+      await pbManager.syncFromIntervalsHistory('discord123', 'apiKey', mockIntervalsAPI);
+
+      expect(DatabaseManager.settingsManager.getSetting).not.toHaveBeenCalled();
+      expect(DatabaseManager.settingsManager.setSetting).not.toHaveBeenCalled();
+      expect(DatabaseManager.settingsManager.deleteSetting).not.toHaveBeenCalled();
+    });
+
+    it('should propagate an error thrown by getAthleteActivities', async () => {
+      mockIntervalsAPI.getAthleteActivities.mockRejectedValue(new Error('intervals down'));
+
+      await expect(
+        pbManager.syncFromIntervalsHistory('discord123', 'apiKey', mockIntervalsAPI)
+      ).rejects.toThrow('intervals down');
     });
   });
 

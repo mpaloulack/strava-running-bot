@@ -180,6 +180,7 @@ jest.mock('../../src/utils/DiscordUtils');
 jest.mock('../../src/managers/PBManager', () => jest.fn().mockImplementation(() => ({
   getMemberPBsByDiscordId: jest.fn().mockResolvedValue([]),
   syncFromHistory: jest.fn().mockResolvedValue({ processed: 0, updated: 0, errors: 0 }),
+  syncFromIntervalsHistory: jest.fn().mockResolvedValue({ processed: 0, updated: 0, errors: 0 }),
   formatPBsForEmbed: jest.fn().mockReturnValue([]),
   extractBestEfforts: jest.fn().mockReturnValue([]),
   checkAndUpdatePBsFromEfforts: jest.fn().mockResolvedValue([]),
@@ -2161,21 +2162,45 @@ describe('DiscordCommands', () => {
       expect(discordCommands.pbManager.syncFromHistory).not.toHaveBeenCalled();
     });
 
-    it('should refuse to sync a single intervals.icu member (Strava-only feature)', async () => {
+    it('should sync a single intervals.icu member through syncFromIntervalsHistory with the intervals API key', async () => {
       mockMemberManager.getMemberByDiscordId.mockResolvedValue({
         discordUserId: '123456789',
         athleteId: 12345,
         isActive: true,
         provider: 'intervals',
       });
+      mockMemberManager.getValidAccessToken.mockResolvedValue('intervals_api_key');
+      discordCommands.pbManager.syncFromIntervalsHistory.mockResolvedValue({ processed: 7, updated: 2, errors: 0 });
 
       await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
 
-      expect(syncInteraction.editReply).toHaveBeenCalledWith({
-        content: '❌ /sync uses Strava best-effort data and is only available for Strava-connected members.',
-      });
+      expect(discordCommands.pbManager.syncFromIntervalsHistory).toHaveBeenCalledWith(
+        '123456789',
+        'intervals_api_key',
+        mockIntervalsAPI,
+        expect.any(Function),
+        expect.any(Number),
+        null
+      );
       expect(discordCommands.pbManager.syncFromHistory).not.toHaveBeenCalled();
-      expect(mockMemberManager.getValidAccessToken).not.toHaveBeenCalled();
+      expect(syncInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ embeds: expect.any(Array) })
+      );
+    });
+
+    it('should render an intervals.icu-labeled progress message for a single intervals.icu member sync', async () => {
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue({
+        discordUserId: '123456789',
+        athleteId: 12345,
+        isActive: true,
+        provider: 'intervals',
+      });
+      mockMemberManager.getValidAccessToken.mockResolvedValue('intervals_api_key');
+
+      await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
+
+      const progressMessage = syncInteraction.editReply.mock.calls[0][0].content;
+      expect(progressMessage).toContain('intervals.icu');
     });
 
     it('should reply with error when access token cannot be retrieved', async () => {
@@ -2564,7 +2589,7 @@ describe('DiscordCommands', () => {
       );
     });
 
-    it('skips intervals.icu members without calling the Strava API for them', async () => {
+    it('syncs a mixed strava+intervals roster through their respective provider paths', async () => {
       const memberCarol = {
         discordUserId: '333',
         athleteId: 3,
@@ -2574,21 +2599,57 @@ describe('DiscordCommands', () => {
         athlete: { firstname: 'Carol', lastname: 'Cyclist' },
       };
       mockMemberManager.getAllMembers.mockResolvedValue([memberAlice, memberCarol, memberBob]);
+      mockMemberManager.getValidAccessToken.mockImplementation(async (member) =>
+        member.provider === 'intervals' ? 'intervals_api_key' : 'valid_token'
+      );
+      discordCommands.pbManager.syncFromIntervalsHistory.mockResolvedValue({ processed: 5, updated: 1, errors: 0 });
 
       await discordCommands.handleSyncCommand(bulkInteraction, bulkInteraction.options);
 
+      const now = new Date();
+      const expectedAfter = Math.floor(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1) / 1000);
+      const expectedBefore = Math.floor(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) / 1000);
+
+      // Alice and Bob (Strava) go through syncFromHistory
       expect(discordCommands.pbManager.syncFromHistory).toHaveBeenCalledTimes(2);
-      expect(discordCommands.pbManager.syncFromHistory).not.toHaveBeenCalledWith(
-        '333', expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything()
+      expect(discordCommands.pbManager.syncFromHistory).toHaveBeenCalledWith(
+        '111', 'valid_token', mockStravaAPI, null, expectedAfter, expectedBefore
       );
-      expect(mockMemberManager.getValidAccessToken).not.toHaveBeenCalledWith(memberCarol);
-      expect(logger.discord.info).toHaveBeenCalledWith(
-        'Skipping intervals.icu member in team-wide Strava PB sync',
-        expect.objectContaining({ memberName: 'Carol Cyclist' })
+      expect(discordCommands.pbManager.syncFromHistory).toHaveBeenCalledWith(
+        '222', 'valid_token', mockStravaAPI, null, expectedAfter, expectedBefore
       );
+
+      // Carol (intervals.icu) goes through syncFromIntervalsHistory instead
+      expect(discordCommands.pbManager.syncFromIntervalsHistory).toHaveBeenCalledTimes(1);
+      expect(discordCommands.pbManager.syncFromIntervalsHistory).toHaveBeenCalledWith(
+        '333', 'intervals_api_key', mockIntervalsAPI, null, expectedAfter, expectedBefore
+      );
+
       expect(bulkInteraction.editReply).toHaveBeenCalledWith(
-        expect.objectContaining({ embeds: expect.any(Array) })
+        expect.objectContaining({
+          embeds: expect.any(Array),
+        })
       );
+    });
+
+    it('skips an intervals.icu member without a valid API key and still syncs the rest', async () => {
+      const memberCarol = {
+        discordUserId: '333',
+        athleteId: 3,
+        isActive: true,
+        provider: 'intervals',
+        discordUser: null,
+        athlete: { firstname: 'Carol', lastname: 'Cyclist' },
+      };
+      mockMemberManager.getAllMembers.mockResolvedValue([memberAlice, memberCarol, memberBob]);
+      mockMemberManager.getValidAccessToken.mockImplementation(async (member) =>
+        member.discordUserId === '333' ? null : 'valid_token'
+      );
+
+      await discordCommands.handleSyncCommand(bulkInteraction, bulkInteraction.options);
+
+      expect(discordCommands.pbManager.syncFromIntervalsHistory).not.toHaveBeenCalled();
+      expect(discordCommands.pbManager.syncFromHistory).toHaveBeenCalledTimes(2);
     });
 
     it('continues with remaining members when one sync fails', async () => {
