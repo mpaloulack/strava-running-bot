@@ -13,6 +13,8 @@ class ActivityFormatter {
   static getActivityTypeColor(activityType) {
     const colors = {
       'Run': '#FC4C02',      // Strava orange
+      'TrailRun': '#D2691E', // Trail brown-orange
+      'VirtualRun': '#FC4C02', // Same as regular runs
       'Ride': '#0074D9',     // Blue
       'VirtualRide': '#0074D9', // Blue (same as regular rides)
       'Swim': '#39CCCC',     // Aqua
@@ -33,6 +35,8 @@ class ActivityFormatter {
   static getActivityTypeIcon(activityType) {
     const icon = {
       'Run': '🏃',
+      'TrailRun': '🏞️',
+      'VirtualRun': '🎮',
       'Ride': '🚴',
       'VirtualRide': '🎮', // Game controller for virtual rides
       'Swim': '🏊',

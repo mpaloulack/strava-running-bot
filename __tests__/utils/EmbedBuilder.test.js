@@ -192,12 +192,26 @@ describe('ActivityEmbedBuilder', () => {
         { name: '⏱️ Time', value: '30:00', inline: true }
       ]);
 
-      expect(mockEmbedBuilder.addFields).toHaveBeenNthCalledWith(2, [ 
-        { name: '🏃 Pace', value: '6:00/km', inline: true } 
+      expect(mockEmbedBuilder.addFields).toHaveBeenNthCalledWith(2, [
+        { name: '🏃 Pace', value: '6:00/km', inline: true }
       ]);
       expect(ActivityFormatter.formatDistance).toHaveBeenCalledWith(5000);
       expect(ActivityFormatter.formatTime).toHaveBeenCalledWith(1800);
       expect(ActivityFormatter.formatPace).toHaveBeenCalledWith(5000, 1800);
+    });
+
+    it('should add a pace field for TrailRun and VirtualRun activities', () => {
+      // intervals.icu reports trail/virtual runs literally (Strava's legacy
+      // `type` folds them into 'Run') — they must still get a pace field.
+      for (const type of ['TrailRun', 'VirtualRun']) {
+        jest.clearAllMocks();
+        ActivityFormatter.formatPace.mockReturnValue('6:00/km');
+        ActivityEmbedBuilder.createActivityEmbed({ ...mockActivity, type });
+
+        expect(mockEmbedBuilder.addFields).toHaveBeenNthCalledWith(2, [
+          { name: '🏃 Pace', value: '6:00/km', inline: true }
+        ]);
+      }
     });
 
     it('should add optional elevation field when present', () => {

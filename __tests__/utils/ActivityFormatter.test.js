@@ -21,6 +21,11 @@ describe('ActivityFormatter', () => {
       const color = ActivityFormatter.getActivityTypeColor('UnknownActivity');
       expect(color).toBe('#FC4C02');
     });
+
+    it('should return distinct colors for TrailRun and VirtualRun', () => {
+      expect(ActivityFormatter.getActivityTypeColor('TrailRun')).toBe('#D2691E');
+      expect(ActivityFormatter.getActivityTypeColor('VirtualRun')).toBe('#FC4C02');
+    });
   });
 
   describe('getActivityTypeIcon', () => {
@@ -37,6 +42,11 @@ describe('ActivityFormatter', () => {
     it('should return correct icon for VirtualRide activity', () => {
       const icon = ActivityFormatter.getActivityTypeIcon('VirtualRide');
       expect(icon).toBe('🎮');
+    });
+
+    it('should return correct icons for TrailRun and VirtualRun', () => {
+      expect(ActivityFormatter.getActivityTypeIcon('TrailRun')).toBe('🏞️');
+      expect(ActivityFormatter.getActivityTypeIcon('VirtualRun')).toBe('🎮');
     });
 
     it('should return correct icon for Swim activity', () => {

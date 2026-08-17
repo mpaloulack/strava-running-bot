@@ -169,7 +169,10 @@ class ActivityEmbedBuilder {
         inline: true,
       }
     ]);
-    if (activity.type === 'Run' || activity.type === 'Walk') {
+    // Strava's legacy `type` reports trail runs as plain 'Run', but
+    // intervals.icu sends 'TrailRun'/'VirtualRun' literally — all run-like
+    // types get a pace field.
+    if (['Run', 'TrailRun', 'VirtualRun', 'Walk'].includes(activity.type)) {
       embed.addFields([
         {
           name: '🏃 Pace',
