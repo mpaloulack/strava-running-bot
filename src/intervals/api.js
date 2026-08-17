@@ -2,7 +2,12 @@ const axios = require('axios');
 const config = require('../../config/config');
 const logger = require('../utils/Logger');
 const RateLimiter = require('../utils/RateLimiter');
+const PolylineUtils = require('../utils/PolylineUtils');
 const { TIME } = require('../constants');
+
+// Activity types intervals.icu streams give us a usable altitude+distance
+// profile for (running gait, not cycling/swimming).
+const RUN_LIKE_TYPES = ['Run', 'TrailRun', 'VirtualRun', 'Walk', 'Hike'];
 
 class IntervalsAPI {
   constructor() {
@@ -111,6 +116,148 @@ class IntervalsAPI {
     }, { operation: 'getActivity', activityId });
   }
 
+  // Fetch an activity's time-series streams (time/distance/altitude/latlng, by default).
+  // Normalizes the intervals.icu response — the exact wrapper shape is
+  // unverified, so tolerate array-of-objects (type or name keyed) and
+  // object-keyed-by-type payloads alike. Manual entries have no streams and
+  // 404 — that's not an error condition, just "no streams available".
+  async getActivityStreams(activityId, apiKey, types = ['time', 'distance', 'altitude', 'latlng']) {
+    logger.intervals.debug('Fetching intervals.icu activity streams', { activityId, types });
+
+    return this.rateLimiter.executeRequest(async () => {
+      try {
+        const response = await axios.get(`${this.baseURL}/api/v1/activity/${activityId}/streams`, {
+          headers: this._authHeaders(apiKey),
+          params: { types: types.join(',') }
+        });
+
+        return this._normalizeStreams(response.data);
+      } catch (error) {
+        if (error.response?.status === 404) {
+          logger.intervals.debug('No streams available for intervals.icu activity', { activityId });
+          return {};
+        }
+
+        logger.intervals.error('Error fetching intervals.icu activity streams', {
+          activityId,
+          error: error.message,
+          response: error.response?.data,
+          status: error.response?.status
+        });
+        throw new Error(`Failed to fetch intervals.icu activity streams ${activityId}`, { cause: error });
+      }
+    }, { operation: 'getActivityStreams', activityId });
+  }
+
+  // Normalize a streams response into a plain { type: data[] } map, tolerating:
+  //  - array of { type, data }
+  //  - array of { name, data }   (name used instead of type)
+  //  - object keyed by type -> data[]
+  //  - object keyed by type -> { data: [] }
+  _normalizeStreams(data) {
+    const result = {};
+    if (!data) return result;
+
+    if (Array.isArray(data)) {
+      for (const item of data) {
+        if (!item || typeof item !== 'object') continue;
+        const type = item.type || item.name;
+        if (!type || !Array.isArray(item.data)) continue;
+        result[type] = item.data;
+      }
+      return result;
+    }
+
+    if (typeof data === 'object') {
+      for (const [key, value] of Object.entries(data)) {
+        if (Array.isArray(value)) {
+          result[key] = value;
+        } else if (value && Array.isArray(value.data)) {
+          result[key] = value.data;
+        }
+      }
+    }
+
+    return result;
+  }
+
+  // Best-effort streams fetch + process — never lets a streams failure block
+  // posting/displaying the activity itself.
+  async processActivityWithStreams(activity, athlete, apiKey) {
+    let streams;
+    try {
+      streams = await this.getActivityStreams(activity.id, apiKey);
+    } catch (error) {
+      logger.intervals.debug('Failed to fetch intervals.icu streams, continuing without them', {
+        activityId: activity.id,
+        error: error.message
+      });
+      streams = null;
+    }
+
+    return this.processActivityData(activity, athlete, streams);
+  }
+
+  _hasUsableGapStreams(streams) {
+    if (!streams) return false;
+    const { time, distance, altitude } = streams;
+    if (!Array.isArray(time) || !Array.isArray(distance) || !Array.isArray(altitude)) return false;
+    if (time.length < 2 || distance.length !== time.length || altitude.length !== time.length) return false;
+    return true;
+  }
+
+  // Grade-adjusted pace computed directly from time/distance/altitude streams,
+  // using Minetti's (2002) energy-cost-of-running-on-gradients polynomial
+  // instead of the coarse +3%-per-1%-grade estimate used when streams aren't
+  // available.
+  calculateStreamGradeAdjustedPace(activity, streams) {
+    if (!this._hasUsableGapStreams(streams) || !activity?.moving_time) return '-';
+
+    const { time, distance, altitude } = streams;
+    const n = time.length;
+
+    // Clamp distance to be non-decreasing to absorb GPS jitter.
+    const dist = new Array(n);
+    dist[0] = distance[0];
+    for (let i = 1; i < n; i++) {
+      dist[i] = Math.max(distance[i], dist[i - 1]);
+    }
+
+    const MIN_SEGMENT_METERS = 10;
+    let adjustedDistance = 0;
+    let segStart = 0;
+
+    for (let i = 1; i < n; i++) {
+      const segLen = dist[i] - dist[segStart];
+      const isLastSample = i === n - 1;
+      if (segLen < MIN_SEGMENT_METERS && !isLastSample) continue;
+      if (segLen <= 0) {
+        segStart = i;
+        continue;
+      }
+
+      const deltaAltitude = altitude[i] - altitude[segStart];
+      const grade = Math.max(-0.30, Math.min(0.30, deltaAltitude / segLen));
+
+      // Minetti (2002) energy cost of running on gradients (J/kg/m):
+      // C(g) = 155.4g⁵ − 30.4g⁴ − 43.3g³ + 46.3g² + 19.5g + 3.6
+      const cost = 155.4 * grade ** 5 - 30.4 * grade ** 4 - 43.3 * grade ** 3 +
+        46.3 * grade ** 2 + 19.5 * grade + 3.6;
+      const factor = Math.max(0.5, Math.min(3, cost / 3.6));
+
+      adjustedDistance += segLen * factor;
+      segStart = i;
+    }
+
+    if (!(adjustedDistance > 0)) return '-';
+
+    const gapSecondsPerKm = activity.moving_time / (adjustedDistance / 1000);
+    const minutes = Math.floor(gapSecondsPerKm / 60);
+    const seconds = Math.round(gapSecondsPerKm % 60);
+
+    return `${minutes}:${seconds.toString().padStart(2, '0')}/km`;
+  }
+
   // Map an intervals.icu athlete payload to the shape used across the bot
   mapAthlete(intervalsAthlete) {
     const id = Number.parseInt(String(intervalsAthlete.id).replace(/^i/i, ''), 10);
@@ -152,8 +299,10 @@ class IntervalsAPI {
     return `${minutes}:${seconds.toString().padStart(2, '0')}/km`;
   }
 
-  // Process activity data for Discord display
-  processActivityData(activity, athlete = null) {
+  // Process activity data for Discord display. `streams`, when provided,
+  // enables a route map (via latlng) and stream-based grade-adjusted pace
+  // for run-like activities — otherwise falls back to the elevation estimate.
+  processActivityData(activity, athlete = null, streams = null) {
     const processedActivity = {
       id: activity.id,
       name: activity.name,
@@ -174,16 +323,27 @@ class IntervalsAPI {
       elev_low: activity.elev_low,
       upload_id: activity.upload_id,
       external_id: activity.external_id,
-      map: null,
+      map: this._buildMap(streams),
       athlete: athlete || activity.athlete,
       provider: 'intervals',
       url: this.activityUrl(activity.id)
     };
 
-    processedActivity.gap_pace = this.calculateGradeAdjustedPace(activity);
+    processedActivity.gap_pace = RUN_LIKE_TYPES.includes(activity.type) && this._hasUsableGapStreams(streams)
+      ? this.calculateStreamGradeAdjustedPace(activity, streams)
+      : this.calculateGradeAdjustedPace(activity);
     processedActivity.isRace = false;
 
     return processedActivity;
+  }
+
+  _buildMap(streams) {
+    if (!streams?.latlng) return null;
+
+    const points = PolylineUtils.filterAndDownsampleLatLng(streams.latlng);
+    if (points.length < 2) return null;
+
+    return { summary_polyline: PolylineUtils.encodePolyline(points) };
   }
 
   /**

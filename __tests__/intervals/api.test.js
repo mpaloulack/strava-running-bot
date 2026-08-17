@@ -226,6 +226,233 @@ describe('IntervalsAPI', () => {
     });
   });
 
+  describe('getActivityStreams', () => {
+    it('should request the streams endpoint with comma-joined types and Basic auth', async () => {
+      mockAxios.get.mockResolvedValue({ data: [] });
+
+      await intervalsAPI.getActivityStreams('i98765', 'test_api_key');
+
+      expect(mockAxios.get).toHaveBeenCalledWith(`${config.intervals.baseUrl}/api/v1/activity/i98765/streams`, {
+        headers: {
+          Authorization: 'Basic ' + Buffer.from('API_KEY:test_api_key').toString('base64')
+        },
+        params: { types: 'time,distance,altitude,latlng' }
+      });
+    });
+
+    it('should use custom types when provided', async () => {
+      mockAxios.get.mockResolvedValue({ data: [] });
+
+      await intervalsAPI.getActivityStreams('i98765', 'key', ['time', 'heartrate']);
+
+      expect(mockAxios.get).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ params: { types: 'time,heartrate' } })
+      );
+    });
+
+    it('should normalize an array-of-objects response using `type`', async () => {
+      mockAxios.get.mockResolvedValue({
+        data: [
+          { type: 'time', data: [0, 1, 2] },
+          { type: 'distance', data: [0, 5, 10] }
+        ]
+      });
+
+      const result = await intervalsAPI.getActivityStreams('i1', 'key');
+
+      expect(result).toEqual({ time: [0, 1, 2], distance: [0, 5, 10] });
+    });
+
+    it('should normalize an array-of-objects response using `name` instead of `type`', async () => {
+      mockAxios.get.mockResolvedValue({
+        data: [
+          { name: 'time', data: [0, 1, 2] },
+          { name: 'altitude', data: [10, 11, 12] }
+        ]
+      });
+
+      const result = await intervalsAPI.getActivityStreams('i1', 'key');
+
+      expect(result).toEqual({ time: [0, 1, 2], altitude: [10, 11, 12] });
+    });
+
+    it('should normalize a keyed-object response with plain array values', async () => {
+      mockAxios.get.mockResolvedValue({
+        data: { time: [0, 1, 2], distance: [0, 5, 10] }
+      });
+
+      const result = await intervalsAPI.getActivityStreams('i1', 'key');
+
+      expect(result).toEqual({ time: [0, 1, 2], distance: [0, 5, 10] });
+    });
+
+    it('should normalize a keyed-object response with nested {data: []} values', async () => {
+      mockAxios.get.mockResolvedValue({
+        data: { time: { data: [0, 1, 2] }, distance: { data: [0, 5, 10] } }
+      });
+
+      const result = await intervalsAPI.getActivityStreams('i1', 'key');
+
+      expect(result).toEqual({ time: [0, 1, 2], distance: [0, 5, 10] });
+    });
+
+    it('should skip malformed entries while normalizing', async () => {
+      mockAxios.get.mockResolvedValue({
+        data: [
+          { type: 'time', data: [0, 1, 2] },
+          { type: 'bogus' }, // no data array
+          null,
+          { data: [1, 2, 3] } // no type/name
+        ]
+      });
+
+      const result = await intervalsAPI.getActivityStreams('i1', 'key');
+
+      expect(result).toEqual({ time: [0, 1, 2] });
+    });
+
+    it('should return {} when the response has no usable data', async () => {
+      mockAxios.get.mockResolvedValue({ data: null });
+
+      const result = await intervalsAPI.getActivityStreams('i1', 'key');
+
+      expect(result).toEqual({});
+    });
+
+    it('should return {} on a 404 (manual entries have no streams)', async () => {
+      const error = new Error('Not found');
+      error.response = { status: 404, data: { message: 'not found' } };
+      mockAxios.get.mockRejectedValue(error);
+
+      const result = await intervalsAPI.getActivityStreams('i1', 'key');
+
+      expect(result).toEqual({});
+    });
+
+    it('should wrap and rethrow non-404 errors', async () => {
+      const error = new Error('Server error');
+      error.response = { status: 500, data: { message: 'boom' } };
+      mockAxios.get.mockRejectedValue(error);
+
+      await expect(intervalsAPI.getActivityStreams('i1', 'key')).rejects.toThrow('Failed to fetch intervals.icu activity streams i1');
+      expect(logger.intervals.error).toHaveBeenCalled();
+    });
+  });
+
+  describe('processActivityWithStreams', () => {
+    const activity = { id: 'i1', type: 'Run', moving_time: 100 };
+    const athlete = { id: 1 };
+
+    it('should fetch streams and pass them into processActivityData', async () => {
+      const streams = { time: [0, 1], distance: [0, 10], altitude: [0, 0] };
+      jest.spyOn(intervalsAPI, 'getActivityStreams').mockResolvedValue(streams);
+      const processSpy = jest.spyOn(intervalsAPI, 'processActivityData').mockReturnValue({ processed: true });
+
+      const result = await intervalsAPI.processActivityWithStreams(activity, athlete, 'key');
+
+      expect(intervalsAPI.getActivityStreams).toHaveBeenCalledWith('i1', 'key');
+      expect(processSpy).toHaveBeenCalledWith(activity, athlete, streams);
+      expect(result).toEqual({ processed: true });
+    });
+
+    it('should pass null streams through and still process the activity when the streams fetch fails', async () => {
+      jest.spyOn(intervalsAPI, 'getActivityStreams').mockRejectedValue(new Error('boom'));
+      const processSpy = jest.spyOn(intervalsAPI, 'processActivityData').mockReturnValue({ processed: true });
+
+      const result = await intervalsAPI.processActivityWithStreams(activity, athlete, 'key');
+
+      expect(processSpy).toHaveBeenCalledWith(activity, athlete, null);
+      expect(result).toEqual({ processed: true });
+      expect(logger.intervals.debug).toHaveBeenCalledWith(
+        'Failed to fetch intervals.icu streams, continuing without them',
+        expect.objectContaining({ activityId: 'i1' })
+      );
+    });
+  });
+
+  describe('calculateStreamGradeAdjustedPace', () => {
+    const buildFlatStream = (n, speed) => {
+      const time = [];
+      const distance = [];
+      const altitude = [];
+      for (let t = 0; t <= n; t++) {
+        time.push(t);
+        distance.push(t * speed);
+        altitude.push(0);
+      }
+      return { time, distance, altitude };
+    };
+
+    const buildGradeStream = (n, speed, gradeSlope) => {
+      const time = [];
+      const distance = [];
+      const altitude = [];
+      for (let t = 0; t <= n; t++) {
+        time.push(t);
+        distance.push(t * speed);
+        altitude.push(t * speed * gradeSlope);
+      }
+      return { time, distance, altitude };
+    };
+
+    it('should return a GAP approximately equal to raw pace on flat terrain', () => {
+      const streams = buildFlatStream(100, 10); // 1000m in 100s
+      const activity = { moving_time: 100, type: 'Run' };
+
+      const gap = intervalsAPI.calculateStreamGradeAdjustedPace(activity, streams);
+
+      expect(gap).toBe('1:40/km'); // 100 s/km, same as raw pace
+    });
+
+    it('should return a faster GAP than raw pace on an uphill grade', () => {
+      const flat = buildFlatStream(100, 10);
+      const uphill = buildGradeStream(100, 10, 0.1); // 10% grade
+      const activity = { moving_time: 100, type: 'Run' };
+
+      const flatGap = intervalsAPI.calculateStreamGradeAdjustedPace(activity, flat);
+      const uphillGap = intervalsAPI.calculateStreamGradeAdjustedPace(activity, uphill);
+
+      const toSeconds = (pace) => {
+        const [min, sec] = pace.replace('/km', '').split(':').map(Number);
+        return min * 60 + sec;
+      };
+
+      expect(toSeconds(uphillGap)).toBeLessThan(toSeconds(flatGap));
+    });
+
+    it('should clamp grade to +/-30% for extreme gradients', () => {
+      const activity = { moving_time: 100, type: 'Run' };
+      const steep = buildGradeStream(100, 10, 0.6); // 60% grade — well beyond clamp
+      const exactly30 = buildGradeStream(100, 10, 0.3);
+
+      const steepGap = intervalsAPI.calculateStreamGradeAdjustedPace(activity, steep);
+      const exactly30Gap = intervalsAPI.calculateStreamGradeAdjustedPace(activity, exactly30);
+
+      expect(steepGap).toBe(exactly30Gap);
+    });
+
+    it('should return "-" when streams are missing', () => {
+      expect(intervalsAPI.calculateStreamGradeAdjustedPace({ moving_time: 100 }, null)).toBe('-');
+    });
+
+    it('should return "-" when streams have fewer than 2 samples', () => {
+      const streams = { time: [0], distance: [0], altitude: [0] };
+      expect(intervalsAPI.calculateStreamGradeAdjustedPace({ moving_time: 100 }, streams)).toBe('-');
+    });
+
+    it('should return "-" when stream lengths are mismatched', () => {
+      const streams = { time: [0, 1, 2], distance: [0, 1], altitude: [0, 0, 0] };
+      expect(intervalsAPI.calculateStreamGradeAdjustedPace({ moving_time: 100 }, streams)).toBe('-');
+    });
+
+    it('should return "-" when moving_time is missing or zero', () => {
+      const streams = buildFlatStream(100, 10);
+      expect(intervalsAPI.calculateStreamGradeAdjustedPace({ moving_time: 0 }, streams)).toBe('-');
+      expect(intervalsAPI.calculateStreamGradeAdjustedPace({}, streams)).toBe('-');
+    });
+  });
+
   describe('mapAthlete', () => {
     it('should map an intervals athlete with a two-part name and i-prefixed id', () => {
       const result = intervalsAPI.mapAthlete({ id: 'i12345', name: 'John Doe', profile_medium: 'https://example.com/p.jpg' });
@@ -378,6 +605,87 @@ describe('IntervalsAPI', () => {
       expect(result.gap_pace).toBe('5:30/km');
 
       spy.mockRestore();
+    });
+
+    describe('map', () => {
+      it('should build a map when streams have >=2 valid latlng points', () => {
+        const streams = { latlng: [[1, 2], [3, 4]] };
+
+        const result = intervalsAPI.processActivityData(mockActivity, mockAthlete, streams);
+
+        expect(result.map).toEqual({ summary_polyline: expect.any(String) });
+      });
+
+      it('should return null map when streams have no latlng', () => {
+        const streams = { time: [0, 1], distance: [0, 1] };
+
+        const result = intervalsAPI.processActivityData(mockActivity, mockAthlete, streams);
+
+        expect(result.map).toBeNull();
+      });
+
+      it('should return null map when latlng has fewer than 2 valid points', () => {
+        const streams = { latlng: [null, [1, 2]] };
+
+        const result = intervalsAPI.processActivityData(mockActivity, mockAthlete, streams);
+
+        expect(result.map).toBeNull();
+      });
+
+      it('should return null map when streams are absent', () => {
+        const result = intervalsAPI.processActivityData(mockActivity, mockAthlete, null);
+
+        expect(result.map).toBeNull();
+      });
+    });
+
+    describe('gap_pace stream vs fallback selection', () => {
+      const usableStreams = { time: [0, 1, 2], distance: [0, 5, 10], altitude: [0, 0, 0] };
+
+      it('should use calculateStreamGradeAdjustedPace for Run-like types with usable streams', () => {
+        const streamSpy = jest.spyOn(intervalsAPI, 'calculateStreamGradeAdjustedPace').mockReturnValue('4:00/km');
+        const fallbackSpy = jest.spyOn(intervalsAPI, 'calculateGradeAdjustedPace');
+
+        const runActivity = { ...mockActivity, type: 'Run' };
+        const result = intervalsAPI.processActivityData(runActivity, mockAthlete, usableStreams);
+
+        expect(streamSpy).toHaveBeenCalledWith(runActivity, usableStreams);
+        expect(fallbackSpy).not.toHaveBeenCalled();
+        expect(result.gap_pace).toBe('4:00/km');
+
+        streamSpy.mockRestore();
+        fallbackSpy.mockRestore();
+      });
+
+      it('should fall back to calculateGradeAdjustedPace for non-run-like types even with usable streams', () => {
+        const streamSpy = jest.spyOn(intervalsAPI, 'calculateStreamGradeAdjustedPace');
+        const fallbackSpy = jest.spyOn(intervalsAPI, 'calculateGradeAdjustedPace').mockReturnValue('3:00/km');
+
+        const rideActivity = { ...mockActivity, type: 'Ride' };
+        const result = intervalsAPI.processActivityData(rideActivity, mockAthlete, usableStreams);
+
+        expect(streamSpy).not.toHaveBeenCalled();
+        expect(fallbackSpy).toHaveBeenCalledWith(rideActivity);
+        expect(result.gap_pace).toBe('3:00/km');
+
+        streamSpy.mockRestore();
+        fallbackSpy.mockRestore();
+      });
+
+      it('should fall back to calculateGradeAdjustedPace for Run-like types when streams are absent', () => {
+        const streamSpy = jest.spyOn(intervalsAPI, 'calculateStreamGradeAdjustedPace');
+        const fallbackSpy = jest.spyOn(intervalsAPI, 'calculateGradeAdjustedPace').mockReturnValue('3:00/km');
+
+        const runActivity = { ...mockActivity, type: 'Run' };
+        const result = intervalsAPI.processActivityData(runActivity, mockAthlete, null);
+
+        expect(streamSpy).not.toHaveBeenCalled();
+        expect(fallbackSpy).toHaveBeenCalledWith(runActivity);
+        expect(result.gap_pace).toBe('3:00/km');
+
+        streamSpy.mockRestore();
+        fallbackSpy.mockRestore();
+      });
     });
   });
 

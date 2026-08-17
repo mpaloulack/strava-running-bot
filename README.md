@@ -450,11 +450,13 @@ strava-running-bot/
 │   │   └── api.js                    # Strava API wrapper + OAuth + refresh
 │   ├── utils/
 │   │   ├── ActivityFormatter.js      # Activity data formatting
+│   │   ├── BestEffortCalculator.js   # Best-effort (PB) computation from streams
 │   │   ├── DateUtils.js              # Date/time helpers
 │   │   ├── DiscordUtils.js           # Discord helpers
 │   │   ├── EmbedBuilder.js           # Discord embed creation
 │   │   ├── EncryptionUtils.js        # AES-256 token encryption
 │   │   ├── Logger.js                 # Logging utilities
+│   │   ├── PolylineUtils.js          # GPS → encoded polyline for static maps
 │   │   └── RateLimiter.js            # Sliding-window API rate limiting
 │   └── index.js                      # Application entry point
 ├── config/

@@ -280,7 +280,8 @@ describe('DiscordCommands', () => {
       getAthlete: jest.fn(),
       mapAthlete: jest.fn(),
       getAthleteActivities: jest.fn(),
-      processActivityData: jest.fn()
+      processActivityData: jest.fn(),
+      processActivityWithStreams: jest.fn()
     };
 
     // Mock ActivityProcessor
@@ -1714,7 +1715,7 @@ describe('DiscordCommands', () => {
         findMemberSpy.mockResolvedValue(intervalsMember);
         mockMemberManager.getValidAccessToken.mockResolvedValue('intervals_api_key');
         mockIntervalsAPI.getAthleteActivities.mockResolvedValue([olderActivity, newerActivity]);
-        mockIntervalsAPI.processActivityData.mockReturnValue(processedIntervalsActivity);
+        mockIntervalsAPI.processActivityWithStreams.mockResolvedValue(processedIntervalsActivity);
       });
 
       it('should use the intervals API and render the most recent activity by start_date_local', async () => {
@@ -1723,9 +1724,10 @@ describe('DiscordCommands', () => {
         expect(mockIntervalsAPI.getAthleteActivities).toHaveBeenCalledWith('intervals_api_key', expect.any(String));
         expect(mockStravaAPI.getAthleteActivities).not.toHaveBeenCalled();
 
-        expect(mockIntervalsAPI.processActivityData).toHaveBeenCalledWith(
+        expect(mockIntervalsAPI.processActivityWithStreams).toHaveBeenCalledWith(
           newerActivity,
-          { ...intervalsMember.athlete, discordUser: intervalsMember.discordUser }
+          { ...intervalsMember.athlete, discordUser: intervalsMember.discordUser },
+          'intervals_api_key'
         );
 
         expect(ActivityEmbedBuilder.createActivityEmbed).toHaveBeenCalledWith(processedIntervalsActivity, { type: 'latest' });
@@ -1742,7 +1744,7 @@ describe('DiscordCommands', () => {
         expect(mockInteraction.editReply).toHaveBeenCalledWith({
           content: '📭 No recent activities found for **Test User**.'
         });
-        expect(mockIntervalsAPI.processActivityData).not.toHaveBeenCalled();
+        expect(mockIntervalsAPI.processActivityWithStreams).not.toHaveBeenCalled();
       });
     });
   });

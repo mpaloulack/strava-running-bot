@@ -1,6 +1,12 @@
 const path = require('path');
 const fs = require('fs').promises;
 const os = require('os');
+const { SQLiteSyncDialect } = require('drizzle-orm/sqlite-core');
+
+// Used to render a drizzle-orm `where` condition object back into SQL text/params
+// so tests can assert on which columns/values a query actually filters by,
+// without depending on drizzle's internal object shape.
+const sqlDialect = new SQLiteSyncDialect();
 
 // Mock external dependencies but test the real DatabaseManager
 jest.mock('../../src/utils/Logger', () => ({
@@ -1472,6 +1478,34 @@ describe('DatabaseManager', () => {
         })
       );
     });
+
+    it('should default provider to strava when not specified', async () => {
+      const mockInsertChain = {
+        values: jest.fn().mockReturnThis(),
+        onConflictDoUpdate: jest.fn().mockResolvedValue(undefined),
+      };
+      mockDb.insert.mockReturnValue(mockInsertChain);
+
+      await DatabaseManager.upsertActivity(12345, mockActivity);
+
+      expect(mockInsertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: 'strava' })
+      );
+    });
+
+    it('should persist an explicitly supplied provider', async () => {
+      const mockInsertChain = {
+        values: jest.fn().mockReturnThis(),
+        onConflictDoUpdate: jest.fn().mockResolvedValue(undefined),
+      };
+      mockDb.insert.mockReturnValue(mockInsertChain);
+
+      await DatabaseManager.upsertActivity(12345, mockActivity, 'intervals');
+
+      expect(mockInsertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: 'intervals' })
+      );
+    });
   });
 
   describe('getActivityById', () => {
@@ -1593,6 +1627,39 @@ describe('DatabaseManager', () => {
       const result = await DatabaseManager.findDuplicateActivity(12345, '2026-08-17T07:00:00Z', 'i176829341');
 
       expect(result).toEqual(candidates[2]);
+    });
+
+    it('should not scope the query by provider when no provider argument is given (backward compatible)', async () => {
+      const mockWhereChain = jest.fn().mockResolvedValue([]);
+      mockDb.select.mockReturnValue({ from: jest.fn().mockReturnThis(), where: mockWhereChain });
+
+      await DatabaseManager.findDuplicateActivity(12345, '2026-08-17T07:00:00Z', 'i176829341');
+
+      const whereCondition = mockWhereChain.mock.calls[0][0];
+      const { sql } = sqlDialect.sqlToQuery(whereCondition);
+      expect(sql).not.toContain('provider');
+    });
+
+    it('should scope the query to rows from a DIFFERENT provider when a provider argument is given', async () => {
+      const mockWhereChain = jest.fn().mockResolvedValue([]);
+      mockDb.select.mockReturnValue({ from: jest.fn().mockReturnThis(), where: mockWhereChain });
+
+      await DatabaseManager.findDuplicateActivity(12345, '2026-08-17T07:00:00Z', 'i176829341', 'strava');
+
+      const whereCondition = mockWhereChain.mock.calls[0][0];
+      const { sql, params } = sqlDialect.sqlToQuery(whereCondition);
+      expect(sql).toContain('"provider" <>');
+      expect(params).toContain('strava');
+    });
+
+    it('should still match a same-time candidate from a different provider when scoped', async () => {
+      const candidate = { strava_activity_id: '98765', start_date_local: '2026-08-17T07:05:00' };
+      const mockWhereChain = jest.fn().mockResolvedValue([candidate]);
+      mockDb.select.mockReturnValue({ from: jest.fn().mockReturnThis(), where: mockWhereChain });
+
+      const result = await DatabaseManager.findDuplicateActivity(12345, '2026-08-17T07:00:00Z', 'i176829341', 'intervals');
+
+      expect(result).toEqual(candidate);
     });
   });
 

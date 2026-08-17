@@ -4,6 +4,7 @@ const IntervalsAPI = require('../../src/intervals/api');
 const DiscordBot = require('../../src/discord/bot');
 const DatabaseMemberManager = require('../../src/database/DatabaseMemberManager');
 const ActivityQueue = require('../../src/managers/ActivityQueue');
+const BestEffortCalculator = require('../../src/utils/BestEffortCalculator');
 const config = require('../../config/config');
 const logger = require('../../src/utils/Logger');
 
@@ -16,6 +17,7 @@ jest.mock('../../src/database/DatabaseMemberManager');
 jest.mock('../../src/managers/ActivityQueue');
 jest.mock('../../src/managers/Scheduler');
 jest.mock('../../src/managers/RaceManager');
+jest.mock('../../src/utils/BestEffortCalculator');
 jest.mock('../../config/dynamicConfig', () => ({
   getDiscordChannelId: jest.fn(),
   setSettingsManager: jest.fn()
@@ -94,8 +96,11 @@ describe('ActivityProcessor', () => {
       processActivityData: jest.fn(),
       getAthlete: jest.fn(),
       mapAthlete: jest.fn(),
-      getActivity: jest.fn()
+      getActivity: jest.fn(),
+      getActivityStreams: jest.fn().mockResolvedValue({})
     };
+
+    BestEffortCalculator.synthesizeBestEfforts = jest.fn().mockReturnValue([]);
 
     mockDiscordBot = {
       start: jest.fn(),
@@ -295,7 +300,7 @@ describe('ActivityProcessor', () => {
 
       expect(pbSpy).toHaveBeenCalledWith(12345, mockActivity);
       expect(mockMemberManager.databaseManager.findDuplicateActivity).toHaveBeenCalledWith(
-        12345, mockActivity.start_date_local, 98765
+        12345, mockActivity.start_date_local, 98765, 'strava'
       );
       expect(mockMemberManager.databaseManager.upsertActivity).not.toHaveBeenCalled();
       expect(mockDiscordBot.postActivity).not.toHaveBeenCalled();
@@ -396,7 +401,8 @@ describe('ActivityProcessor', () => {
 
       expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(
         12345,
-        mockActivity
+        mockActivity,
+        'strava'
       );
     });
 
@@ -417,7 +423,7 @@ describe('ActivityProcessor', () => {
 
       await activityProcessor.processNewActivity(98765, 12345);
 
-      expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(12345, mockActivity);
+      expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(12345, mockActivity, 'strava');
       expect(pbSpy).toHaveBeenCalledWith(12345, mockActivity);
       // But still skipped for Discord posting:
       expect(mockDiscordBot.postActivity).not.toHaveBeenCalled();
@@ -707,6 +713,16 @@ describe('ActivityProcessor', () => {
       expect(mockIntervalsAPI.getAthleteActivities).toHaveBeenCalledTimes(1);
     });
 
+    it('passes the resolved API key through to processIntervalsActivity', async () => {
+      const spy = jest.spyOn(activityProcessor, 'processIntervalsActivity').mockResolvedValue();
+
+      const promise = activityProcessor.pollIntervalsActivities();
+      await jest.runAllTimersAsync();
+      await promise;
+
+      expect(spy).toHaveBeenCalledWith(intervalsActivity, intervalsMember, 'intervals_api_key');
+    });
+
     it('always uses a fixed 40-hour lookback window, independent of any prior poll', async () => {
       const now = Date.now();
       jest.spyOn(Date, 'now').mockReturnValue(now);
@@ -808,17 +824,17 @@ describe('ActivityProcessor', () => {
       start_date_local: '2026-08-17T07:00:00'
     };
 
-    const processedIntervalsActivity = {
-      ...intervalsActivity,
-      provider: 'intervals',
-      url: 'https://intervals.icu/activities/i176829341'
-    };
+    const apiKey = 'intervals_api_key';
 
     beforeEach(() => {
       mockMemberManager.databaseManager.getActivityById.mockResolvedValue(null);
       mockMemberManager.databaseManager.upsertActivity.mockResolvedValue(undefined);
       mockIntervalsAPI.shouldPostActivity.mockReturnValue(true);
-      mockIntervalsAPI.processActivityData.mockReturnValue(processedIntervalsActivity);
+      mockIntervalsAPI.processActivityData.mockImplementation(() => ({
+        ...intervalsActivity,
+        provider: 'intervals',
+        url: 'https://intervals.icu/activities/i176829341'
+      }));
       mockDiscordBot.postActivity.mockResolvedValue();
     });
 
@@ -827,14 +843,19 @@ describe('ActivityProcessor', () => {
       mockDiscordBot.postActivity.mockImplementation(async () => { callOrder.push('post'); });
       mockMemberManager.databaseManager.upsertActivity.mockImplementation(async () => { callOrder.push('upsert'); });
 
-      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember);
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember, apiKey);
 
-      expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(54321, intervalsActivity);
+      expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(54321, intervalsActivity, 'intervals');
       expect(mockIntervalsAPI.processActivityData).toHaveBeenCalledWith(
         intervalsActivity,
-        expect.objectContaining({ ...intervalsMember.athlete, discordUser: intervalsMember.discordUser })
+        expect.objectContaining({ ...intervalsMember.athlete, discordUser: intervalsMember.discordUser }),
+        {}
       );
-      expect(mockDiscordBot.postActivity).toHaveBeenCalledWith(processedIntervalsActivity);
+      expect(mockDiscordBot.postActivity).toHaveBeenCalledWith(expect.objectContaining({
+        id: intervalsActivity.id,
+        provider: 'intervals',
+        url: 'https://intervals.icu/activities/i176829341'
+      }));
       // Persist only happens after a successful post, so a post failure can never
       // leave a DB row that permanently blocks a retry.
       expect(callOrder).toEqual(['post', 'upsert']);
@@ -844,62 +865,171 @@ describe('ActivityProcessor', () => {
       );
     });
 
-    it('skips already-processed activities (in-memory dedup)', async () => {
-      activityProcessor.processedActivities.add('54321-i176829341');
+    it('fetches streams once and passes them to processActivityData', async () => {
+      const streams = { time: [0, 1, 2], distance: [0, 5, 10], altitude: [10, 11, 12] };
+      mockIntervalsAPI.getActivityStreams.mockResolvedValue(streams);
 
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember, apiKey);
+
+      expect(mockIntervalsAPI.getActivityStreams).toHaveBeenCalledTimes(1);
+      expect(mockIntervalsAPI.getActivityStreams).toHaveBeenCalledWith(intervalsActivity.id, apiKey);
+      expect(mockIntervalsAPI.processActivityData).toHaveBeenCalledWith(
+        intervalsActivity,
+        expect.objectContaining({ ...intervalsMember.athlete, discordUser: intervalsMember.discordUser }),
+        streams
+      );
+    });
+
+    it('does not fetch streams when no apiKey is provided, and processes with null streams', async () => {
       await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember);
 
+      expect(mockIntervalsAPI.getActivityStreams).not.toHaveBeenCalled();
+      expect(BestEffortCalculator.synthesizeBestEfforts).not.toHaveBeenCalled();
+      expect(mockIntervalsAPI.processActivityData).toHaveBeenCalledWith(
+        intervalsActivity,
+        expect.objectContaining({ ...intervalsMember.athlete, discordUser: intervalsMember.discordUser }),
+        null
+      );
+      expect(mockDiscordBot.postActivity).toHaveBeenCalled();
+    });
+
+    it('processes the activity with null streams and skips PB check when the stream fetch fails', async () => {
+      mockIntervalsAPI.getActivityStreams.mockRejectedValue(new Error('streams unavailable'));
+      const pbSpy = jest.spyOn(activityProcessor.pbManager, 'checkAndUpdatePBs');
+
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember, apiKey);
+
+      expect(logger.activity.debug).toHaveBeenCalledWith(
+        'Failed to fetch intervals.icu activity streams (non-blocking)',
+        expect.objectContaining({
+          activityId: intervalsActivity.id,
+          athleteId: 54321,
+          error: 'streams unavailable'
+        })
+      );
+      expect(BestEffortCalculator.synthesizeBestEfforts).not.toHaveBeenCalled();
+      expect(pbSpy).not.toHaveBeenCalled();
+      expect(mockIntervalsAPI.processActivityData).toHaveBeenCalledWith(
+        intervalsActivity,
+        expect.objectContaining({ ...intervalsMember.athlete, discordUser: intervalsMember.discordUser }),
+        null
+      );
+      expect(mockDiscordBot.postActivity).toHaveBeenCalled();
+    });
+
+    it('does not call checkAndUpdatePBs when no best efforts are synthesized from streams', async () => {
+      mockIntervalsAPI.getActivityStreams.mockResolvedValue({ time: [0, 1] });
+      BestEffortCalculator.synthesizeBestEfforts.mockReturnValue([]);
+      const pbSpy = jest.spyOn(activityProcessor.pbManager, 'checkAndUpdatePBs');
+
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember, apiKey);
+
+      expect(pbSpy).not.toHaveBeenCalled();
+    });
+
+    it('runs PB detection with synthesized best_efforts, attaches pbResults, and posts', async () => {
+      const streams = { time: [0, 1, 2], distance: [0, 5, 10] };
+      mockIntervalsAPI.getActivityStreams.mockResolvedValue(streams);
+      const efforts = [{ name: '1/2 mile', distance: 805, elapsed_time: 200, moving_time: 200 }];
+      BestEffortCalculator.synthesizeBestEfforts.mockReturnValue(efforts);
+      const pbResults = [{ isNewPB: true, category: 'Half Mile', previousPB: null, newPB: efforts[0] }];
+      const pbSpy = jest.spyOn(activityProcessor.pbManager, 'checkAndUpdatePBs').mockResolvedValue(pbResults);
+
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember, apiKey);
+
+      expect(BestEffortCalculator.synthesizeBestEfforts).toHaveBeenCalledWith(streams);
+      expect(pbSpy).toHaveBeenCalledWith(54321, { ...intervalsActivity, best_efforts: efforts });
+      // PB check must run before the post-filter is evaluated.
+      const pbCallOrder = pbSpy.mock.invocationCallOrder[0];
+      const shouldPostCallOrder = mockIntervalsAPI.shouldPostActivity.mock.invocationCallOrder[0];
+      expect(pbCallOrder).toBeLessThan(shouldPostCallOrder);
+      expect(mockDiscordBot.postActivity).toHaveBeenCalledWith(expect.objectContaining({ pbResults }));
+    });
+
+    it('does not block posting when the PB check fails (non-blocking)', async () => {
+      mockIntervalsAPI.getActivityStreams.mockResolvedValue({ time: [0, 1, 2], distance: [0, 5, 10] });
+      BestEffortCalculator.synthesizeBestEfforts.mockReturnValue([{ name: '1K' }]);
+      jest.spyOn(activityProcessor.pbManager, 'checkAndUpdatePBs').mockRejectedValue(new Error('pb db error'));
+
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember, apiKey);
+
+      expect(logger.activity.error).toHaveBeenCalledWith('PB check failed (non-blocking)', expect.objectContaining({
+        activityId: intervalsActivity.id,
+        athleteId: 54321,
+        error: 'pb db error'
+      }));
+      expect(mockDiscordBot.postActivity).toHaveBeenCalled();
+      expect(activityProcessor.processedActivities.has('54321-i176829341')).toBe(true);
+    });
+
+    it('skips already-processed activities (in-memory dedup) without fetching streams or running PB checks', async () => {
+      activityProcessor.processedActivities.add('54321-i176829341');
+
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember, apiKey);
+
       expect(mockMemberManager.databaseManager.getActivityById).not.toHaveBeenCalled();
+      expect(mockIntervalsAPI.getActivityStreams).not.toHaveBeenCalled();
+      expect(BestEffortCalculator.synthesizeBestEfforts).not.toHaveBeenCalled();
       expect(logger.activityProcessing).toHaveBeenCalledWith(
         'i176829341', 54321, 'DUPLICATE', 'SKIPPED', { reason: 'Already processed' }
       );
     });
 
-    it('skips activities already present in the database (restart-safe dedup)', async () => {
+    it('skips activities already present in the database (restart-safe dedup) without fetching streams or running PB checks', async () => {
       mockMemberManager.databaseManager.getActivityById.mockResolvedValue({ strava_activity_id: 'i176829341' });
 
-      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember);
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember, apiKey);
 
       expect(mockMemberManager.databaseManager.upsertActivity).not.toHaveBeenCalled();
       expect(mockDiscordBot.postActivity).not.toHaveBeenCalled();
+      expect(mockIntervalsAPI.getActivityStreams).not.toHaveBeenCalled();
+      expect(BestEffortCalculator.synthesizeBestEfforts).not.toHaveBeenCalled();
       expect(activityProcessor.processedActivities.has('54321-i176829341')).toBe(true);
     });
 
-    it('skips a cross-provider duplicate (found via findDuplicateActivity) without upserting', async () => {
+    it('skips a cross-provider duplicate (found via findDuplicateActivity) without upserting, fetching streams, or running PB checks', async () => {
       mockMemberManager.databaseManager.findDuplicateActivity.mockResolvedValue({
         strava_activity_id: '98765'
       });
 
-      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember);
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember, apiKey);
 
       expect(mockMemberManager.databaseManager.findDuplicateActivity).toHaveBeenCalledWith(
-        54321, intervalsActivity.start_date_local, intervalsActivity.id
+        54321, intervalsActivity.start_date_local, intervalsActivity.id, 'intervals'
       );
       expect(mockMemberManager.databaseManager.upsertActivity).not.toHaveBeenCalled();
       expect(mockDiscordBot.postActivity).not.toHaveBeenCalled();
+      expect(mockIntervalsAPI.getActivityStreams).not.toHaveBeenCalled();
+      expect(BestEffortCalculator.synthesizeBestEfforts).not.toHaveBeenCalled();
       expect(activityProcessor.processedActivities.has('54321-i176829341')).toBe(true);
       expect(logger.activityProcessing).toHaveBeenCalledWith(
         'i176829341', 54321, 'CROSS_PROVIDER_DUPLICATE', 'SKIPPED', { duplicateOf: '98765' }
       );
     });
 
-    it('caches and skips activities filtered by shouldPostActivity', async () => {
+    it('caches and skips activities filtered by shouldPostActivity, but still records PBs found via streams', async () => {
       mockIntervalsAPI.shouldPostActivity.mockReturnValue(false);
+      const streams = { time: [0, 1, 2], distance: [0, 5, 10] };
+      mockIntervalsAPI.getActivityStreams.mockResolvedValue(streams);
+      const efforts = [{ name: '1K' }];
+      BestEffortCalculator.synthesizeBestEfforts.mockReturnValue(efforts);
+      const pbSpy = jest.spyOn(activityProcessor.pbManager, 'checkAndUpdatePBs').mockResolvedValue([{ isNewPB: true }]);
 
-      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember);
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember, apiKey);
 
+      expect(pbSpy).toHaveBeenCalledWith(54321, { ...intervalsActivity, best_efforts: efforts });
       expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalled();
       expect(mockDiscordBot.postActivity).not.toHaveBeenCalled();
       expect(activityProcessor.processedActivities.has('54321-i176829341')).toBe(true);
       expect(logger.activityProcessing).toHaveBeenCalledWith(
-        'i176829341', 54321, intervalsActivity.name, 'FILTERED', expect.any(Object)
+        'i176829341', 54321, intervalsActivity.name, 'FILTERED', expect.objectContaining({ pbsRecorded: 1 })
       );
     });
 
     it('does not persist or mark as processed when Discord posting fails, so a later poll retries it', async () => {
       mockDiscordBot.postActivity.mockRejectedValue(new Error('discord error'));
 
-      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember);
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember, apiKey);
 
       expect(mockMemberManager.databaseManager.upsertActivity).not.toHaveBeenCalled();
       expect(activityProcessor.processedActivities.has('54321-i176829341')).toBe(false);
@@ -911,10 +1041,10 @@ describe('ActivityProcessor', () => {
       // no entry for this activity, so dedup lets it through and a retry can
       // succeed.
       mockDiscordBot.postActivity.mockResolvedValue();
-      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember);
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember, apiKey);
 
       expect(mockDiscordBot.postActivity).toHaveBeenCalledTimes(2);
-      expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(54321, intervalsActivity);
+      expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(54321, intervalsActivity, 'intervals');
       expect(activityProcessor.processedActivities.has('54321-i176829341')).toBe(true);
     });
   });

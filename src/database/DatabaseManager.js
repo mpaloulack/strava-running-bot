@@ -1,6 +1,6 @@
 const fs = require('node:fs').promises;
 const path = require('node:path');
-const { eq, and, desc, asc, gte, lte, lt, inArray, sql, like } = require('drizzle-orm');
+const { eq, ne, and, desc, asc, gte, lte, lt, inArray, sql, like } = require('drizzle-orm');
 const dbConnection = require('./connection');
 const { members, races, migrationLog, settings, personalBests, activities } = require('./schema');
 const logger = require('../utils/Logger');
@@ -869,12 +869,13 @@ class DatabaseManager {
   }
 
   // === ACTIVITY MANAGEMENT ===
-  async upsertActivity(athleteId, activity) {
+  async upsertActivity(athleteId, activity, provider = 'strava') {
     await this.ensureInitialized();
 
     const record = {
       strava_activity_id: String(activity.id),
       member_athlete_id: Number.parseInt(athleteId),
+      provider,
       name: activity.name || null,
       type: activity.type || null,
       sport_type: activity.sport_type || null,
@@ -923,7 +924,7 @@ class DatabaseManager {
   // it's actually local wall-clock time; intervals.icu's carries none.
   // Stripping the 'Z' from both sides before comparing lets the two
   // representations of the same run line up.
-  async findDuplicateActivity(athleteId, startDateLocal, excludeActivityId) {
+  async findDuplicateActivity(athleteId, startDateLocal, excludeActivityId, provider = null) {
     await this.ensureInitialized();
 
     if (!startDateLocal) return null;
@@ -937,14 +938,23 @@ class DatabaseManager {
     const rangeEnd = new Date(target.getTime() + TIME.MS_PER_DAY).toISOString();
     const excludeId = String(excludeActivityId);
 
+    // When a provider is supplied, only rows from a DIFFERENT provider count
+    // as a duplicate — this is a cross-provider dedup check, so two
+    // legitimate same-provider activities that happen to start close
+    // together must never falsely match each other.
+    const conditions = [
+      eq(activities.member_athlete_id, Number.parseInt(athleteId)),
+      sql`${activities.strava_activity_id} != ${excludeId}`,
+      gte(activities.start_date_local, rangeStart),
+      lte(activities.start_date_local, rangeEnd)
+    ];
+    if (provider !== null) {
+      conditions.push(ne(activities.provider, provider));
+    }
+
     const candidates = await this.db.select()
       .from(activities)
-      .where(and(
-        eq(activities.member_athlete_id, Number.parseInt(athleteId)),
-        sql`${activities.strava_activity_id} != ${excludeId}`,
-        gte(activities.start_date_local, rangeStart),
-        lte(activities.start_date_local, rangeEnd)
-      ));
+      .where(and(...conditions));
 
     const TEN_MINUTES_MS = 10 * TIME.MS_PER_MINUTE;
 

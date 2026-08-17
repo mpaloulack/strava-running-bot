@@ -7,6 +7,7 @@ const Scheduler = require('../managers/Scheduler');
 const RaceManager = require('../managers/RaceManager');
 const PBManager = require('../managers/PBManager');
 const LeaderboardManager = require('../managers/LeaderboardManager');
+const BestEffortCalculator = require('../utils/BestEffortCalculator');
 const config = require('../../config/config');
 const dynamicConfig = require('../../config/dynamicConfig');
 const logger = require('../utils/Logger');
@@ -151,7 +152,7 @@ class ActivityProcessor {
       // PB detection above still runs — best_efforts are worth recording even
       // for a duplicate.
       const duplicate = await this.memberManager.databaseManager.findDuplicateActivity(
-        athleteId, activity?.start_date_local, activityId
+        athleteId, activity?.start_date_local, activityId, 'strava'
       );
       if (duplicate) {
         logger.activityProcessing(activityId, athleteId, 'CROSS_PROVIDER_DUPLICATE', 'SKIPPED', {
@@ -164,7 +165,7 @@ class ActivityProcessor {
       // Save activity to DB (non-blocking) — also independent of the post filter
       // so we have a complete cached record for /sync, /pb, and stats.
       try {
-        await this.memberManager.databaseManager.upsertActivity(athleteId, activity);
+        await this.memberManager.databaseManager.upsertActivity(athleteId, activity, 'strava');
       } catch (saveError) {
         logger.activity.error('Failed to save activity to DB', {
           activityId,
@@ -411,7 +412,7 @@ class ActivityProcessor {
 
           for (const activity of activities) {
             await new Promise(resolve => setTimeout(resolve, 200));
-            await this.processIntervalsActivity(activity, member);
+            await this.processIntervalsActivity(activity, member, apiKey);
           }
         } catch (error) {
           logger.activity.error('Error polling intervals.icu activities for member', {
@@ -429,7 +430,7 @@ class ActivityProcessor {
     }
   }
 
-  async processIntervalsActivity(activity, member) {
+  async processIntervalsActivity(activity, member, apiKey) {
     const athleteId = member.athleteId;
     const activityKey = `${athleteId}-${activity.id}`;
 
@@ -456,7 +457,7 @@ class ActivityProcessor {
       // switched to intervals.icu, or vice versa on a later switch-back).
       // Skip entirely — no upsert — so the leaderboard doesn't double-count it.
       const duplicate = await this.memberManager.databaseManager.findDuplicateActivity(
-        athleteId, activity.start_date_local, activity.id
+        athleteId, activity.start_date_local, activity.id, 'intervals'
       );
       if (duplicate) {
         this.processedActivities.add(activityKey);
@@ -466,11 +467,45 @@ class ActivityProcessor {
         return;
       }
 
+      // Fetch streams once, best-effort. intervals.icu has no per-activity
+      // best_efforts like Strava, so we synthesize them from the raw
+      // time/distance/altitude/latlng streams instead. Streams also feed the
+      // embed's map/elevation rendering downstream in processActivityData.
+      let streams = null;
+      if (apiKey) {
+        try {
+          streams = await this.intervalsAPI.getActivityStreams(activity.id, apiKey);
+        } catch (streamsError) {
+          logger.activity.debug('Failed to fetch intervals.icu activity streams (non-blocking)', {
+            activityId: activity.id,
+            athleteId,
+            error: streamsError.message
+          });
+        }
+      }
+
+      // Run PB detection BEFORE the post-filter, mirroring the Strava path:
+      // private/hidden/old activities still update the athlete's PB records.
+      let pbResults = [];
+      const efforts = streams ? BestEffortCalculator.synthesizeBestEfforts(streams) : [];
+      if (efforts.length > 0) {
+        try {
+          pbResults = await this.pbManager.checkAndUpdatePBs(athleteId, { ...activity, best_efforts: efforts });
+        } catch (pbError) {
+          logger.activity.error('PB check failed (non-blocking)', {
+            activityId: activity.id,
+            athleteId,
+            error: pbError.message,
+          });
+        }
+      }
+
       if (!this.intervalsAPI.shouldPostActivity(activity)) {
-        await this.memberManager.databaseManager.upsertActivity(athleteId, activity);
+        await this.memberManager.databaseManager.upsertActivity(athleteId, activity, 'intervals');
         this.processedActivities.add(activityKey);
         logger.activityProcessing(activity.id, athleteId, activity.name, 'FILTERED', {
-          reason: 'Activity filtered by posting rules'
+          reason: 'Activity filtered by posting rules',
+          pbsRecorded: pbResults.filter(r => r.isNewPB).length,
         });
         return;
       }
@@ -478,7 +513,8 @@ class ActivityProcessor {
       const processedActivity = this.intervalsAPI.processActivityData(activity, {
         ...member.athlete,
         discordUser: member.discordUser
-      });
+      }, streams);
+      processedActivity.pbResults = pbResults;
 
       // Post before persisting: if postActivity throws, we must NOT upsert
       // or mark as processed, so the next poll retries it instead of
@@ -486,7 +522,7 @@ class ActivityProcessor {
       await this.discordBot.postActivity(processedActivity);
 
       try {
-        await this.memberManager.databaseManager.upsertActivity(athleteId, activity);
+        await this.memberManager.databaseManager.upsertActivity(athleteId, activity, 'intervals');
       } catch (saveError) {
         logger.activity.error('Failed to save intervals.icu activity to DB', {
           activityId: activity.id,

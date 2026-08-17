@@ -99,9 +99,11 @@ const personalBests = sqliteTable('personal_bests', {
   updated_at: text('updated_at').default(sql`CURRENT_TIMESTAMP`),
 });
 
-// Activities table - one row per Strava activity, upserted on every sync/webhook
+// Activities table - one row per activity (any provider), upserted on every sync/webhook/poll
 const activities = sqliteTable('activities', {
   strava_activity_id: text('strava_activity_id').primaryKey(),
+  // Source provider: 'strava' or 'intervals' — scopes cross-provider dedup
+  provider: text('provider').notNull().default('strava'),
   member_athlete_id: integer('member_athlete_id').notNull().references(() => members.athlete_id, {
     onDelete: 'cascade',
     onUpdate: 'cascade',

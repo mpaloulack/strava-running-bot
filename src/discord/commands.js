@@ -1590,9 +1590,10 @@ class DiscordCommands {
           new Date(activity.start_date_local) > new Date(latest.start_date_local) ? activity : latest
         );
 
-        const processedActivity = this.activityProcessor.intervalsAPI.processActivityData(
+        const processedActivity = await this.activityProcessor.intervalsAPI.processActivityWithStreams(
           latestActivity,
-          { ...member.athlete, discordUser: member.discordUser }
+          { ...member.athlete, discordUser: member.discordUser },
+          accessToken
         );
 
         const embed = ActivityEmbedBuilder.createActivityEmbed(processedActivity, { type: 'latest' });
