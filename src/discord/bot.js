@@ -42,6 +42,10 @@ class DiscordBot {
           await this.commands.handleCommand(interaction);
         } else if (interaction.isAutocomplete()) {
           await this.commands.handleAutocomplete(interaction);
+        } else if (interaction.isModalSubmit()) {
+          await this.commands.handleModalSubmit(interaction);
+        } else if (interaction.isButton()) {
+          await this.commands.handleButtonInteraction(interaction);
         }
       } catch (err) {
         logger.discord.error('Error handling interaction', err);

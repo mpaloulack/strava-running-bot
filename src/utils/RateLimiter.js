@@ -17,13 +17,14 @@ function isTransientError(error) {
 }
 
 /**
- * Rate limiter for Strava API compliance
- * Strava limits: ~100 requests/15min, ~1000 requests/day
+ * Sliding-window rate limiter for external API compliance.
+ * Defaults to Strava's read limits; pass custom limits/log for other providers.
  */
 class RateLimiter {
-  constructor() {
-    // Strava read rate limits: 300/15min, 3000/day — using 80% as safety margin
-    this.limits = {
+  constructor(limits = null, log = logger.strava) {
+    // Default: Strava read rate limits: 300/15min, 3000/day — using 80% as safety margin
+    this.log = log;
+    this.limits = limits || {
       short: {
         requests: 240,   // 80% of Strava's read limit (300/15min)
         window: 15 * TIME.MS_PER_MINUTE
@@ -65,7 +66,7 @@ class RateLimiter {
     this.requests.short.push(now);
     this.requests.daily.push(now);
     
-    logger.strava.debug('API request recorded', {
+    this.log.debug('API request recorded', {
       shortTermCount: this.requests.short.length,
       dailyCount: this.requests.daily.length,
       shortTermLimit: this.limits.short.requests,
@@ -147,7 +148,7 @@ class RateLimiter {
         if (!this.canMakeRequest()) {
           const waitTime = this.getWaitTime();
           
-          logger.strava.warn('Rate limit reached, waiting before next request', {
+          this.log.warn('Rate limit reached, waiting before next request', {
             waitTimeMs: waitTime,
             waitTimeMin: Math.round(waitTime / 1000 / 60),
             queueLength: this.requestQueue.length,
@@ -173,7 +174,7 @@ class RateLimiter {
             const status = error.response?.status;
 
             if (status && NON_RETRIABLE_STATUSES.has(status)) {
-              logger.strava.error('Rate-limited request failed (non-retriable)', { error: error.message, context });
+              this.log.error('Rate-limited request failed (non-retriable)', { error: error.message, context });
               reject(error);
               break;
             }
@@ -183,7 +184,7 @@ class RateLimiter {
             const canRetry = (isRateLimit || isTransient) && attempt < MAX_RETRIES;
 
             if (!canRetry) {
-              logger.strava.error('Rate-limited request failed', { error: error.message, context, attempts: attempt + 1 });
+              this.log.error('Rate-limited request failed', { error: error.message, context, attempts: attempt + 1 });
               reject(error);
               break;
             }
@@ -193,7 +194,7 @@ class RateLimiter {
               ? (retryAfterHeader ? parseInt(retryAfterHeader, 10) * 1000 : RETRY_BASE_MS * Math.pow(2, attempt))
               : RETRY_BASE_MS * Math.pow(2, attempt);
 
-            logger.strava.warn('Request failed, retrying', {
+            this.log.warn('Request failed, retrying', {
               attempt: attempt + 1,
               maxRetries: MAX_RETRIES,
               waitMs,
@@ -246,7 +247,7 @@ class RateLimiter {
     this.requestQueue = [];
     this.processing = false;
     
-    logger.strava.info('Rate limiter reset');
+    this.log.info('Rate limiter reset');
   }
 }
 

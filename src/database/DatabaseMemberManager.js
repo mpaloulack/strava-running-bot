@@ -1,6 +1,7 @@
 const databaseManager = require('../database/DatabaseManager');
 const logger = require('../utils/Logger');
 const EncryptionUtils = require('../utils/EncryptionUtils');
+const { normalizeTokenBlob } = require('./tokenBlob');
 
 /**
  * Database-backed MemberManager - Drop-in replacement for the JSON-based MemberManager
@@ -21,11 +22,27 @@ class DatabaseMemberManager {
 
   // === Member Registration & Management ===
   
-  async registerMember(discordUserId, athlete, tokenData, discordUser = null) {
+  async registerMember(discordUserId, athlete, tokenData, discordUser = null, provider = 'strava') {
     await this.ensureInitialized();
 
     const existingMember = await this.getMemberByDiscordId(discordUserId);
     if (existingMember) {
+      const existingProvider = existingMember.provider || 'strava';
+      const isProviderSwitch = existingMember.isActive && provider !== existingProvider;
+
+      // An explicit provider switch (e.g. /register provider:intervals.icu on a
+      // member currently linked to Strava) is always honored for active members,
+      // regardless of whether their current tokens still work.
+      if (isProviderSwitch) {
+        logger.database.info('Explicit provider switch on registration - relinking member', {
+          discordUserId,
+          athleteId: existingMember.athleteId,
+          fromProvider: existingProvider,
+          toProvider: provider
+        });
+        return await this.databaseManager.relinkMember(existingMember.athleteId, athlete, tokenData, discordUser, provider);
+      }
+
       const validToken = existingMember.isActive
         ? await this.getValidAccessToken(existingMember)
         : null;
@@ -38,10 +55,10 @@ class DatabaseMemberManager {
         discordUserId,
         athleteId: existingMember.athleteId
       });
-      return await this.databaseManager.relinkMember(existingMember.athleteId, athlete, tokenData, discordUser);
+      return await this.databaseManager.relinkMember(existingMember.athleteId, athlete, tokenData, discordUser, provider);
     }
 
-    return await this.databaseManager.registerMember(discordUserId, athlete, tokenData, discordUser);
+    return await this.databaseManager.registerMember(discordUserId, athlete, tokenData, discordUser, provider);
   }
 
   async getMemberByAthleteId(athleteId) {
@@ -101,9 +118,9 @@ class DatabaseMemberManager {
 
   // === Token Management ===
 
-  async updateTokens(athleteId, tokenData) {
+  async updateTokens(athleteId, tokenData, provider = 'strava') {
     await this.ensureInitialized();
-    return await this.databaseManager.updateTokens(athleteId, tokenData);
+    return await this.databaseManager.updateTokens(athleteId, tokenData, provider);
   }
 
   // Helper: Decrypt tokens using AES-256-GCM
@@ -134,7 +151,16 @@ class DatabaseMemberManager {
 
     try {
       logger.database.info('Attempting token decryption from database', { athleteId: member.athleteId });
-      const tokenData = this._decryptTokenData(member.tokens, member.athleteId);
+      const decryptedBlob = this._decryptTokenData(member.tokens, member.athleteId);
+
+      if (!decryptedBlob) {
+        return null;
+      }
+
+      // Normalize legacy flat blobs (which ARE the Strava credentials) and new
+      // namespaced blobs (which may also hold intervals.icu credentials) the
+      // same way, then operate on the Strava namespace only.
+      const tokenData = normalizeTokenBlob(decryptedBlob).strava;
 
       if (!tokenData) {
         return null;
@@ -168,8 +194,9 @@ class DatabaseMemberManager {
             newExpiresAt: new Date(newTokens.expires_at * 1000).toISOString()
           });
 
-          // Update database with new tokens
-          await this.updateTokens(member.athleteId, newTokens);
+          // Update database with new tokens (merged with any other provider's
+          // preserved credentials — see DatabaseManager.updateTokens)
+          await this.updateTokens(member.athleteId, newTokens, 'strava');
 
           logger.database.info('Successfully updated database with refreshed tokens', {
             athleteId: member.athleteId
@@ -247,7 +274,13 @@ class DatabaseMemberManager {
   }
 
   async getValidAccessToken(member) {
-    logger.database.info('Getting valid access token', { 
+    if (member.provider === 'intervals') {
+      const decryptedBlob = this._decryptTokenData(member.tokens, member.athleteId);
+      const blob = normalizeTokenBlob(decryptedBlob);
+      return blob.intervals?.api_key || null;
+    }
+
+    logger.database.info('Getting valid access token', {
       athleteId: member.athleteId,
       discordUserId: member.discordUserId,
       hasTokens: !!member.tokens
@@ -262,8 +295,21 @@ class DatabaseMemberManager {
     // Fallback: Try to get tokens from legacy JSON file
     logger.database.info('No valid tokens in database, trying JSON fallback', { athleteId: member.athleteId });
     const jsonToken = await this._getTokensFromJsonFallback(member);
-    
+
     return jsonToken;
+  }
+
+  // Return the raw, decrypted credentials this member has stored for the given
+  // provider (e.g. 'strava' or 'intervals'), or null if none are stored. Unlike
+  // getValidAccessToken, this does no expiry checking, refreshing, or JSON
+  // fallback — callers are responsible for validating what they get back. Used
+  // for an instant provider switch-back: if a member switches from Strava to
+  // intervals.icu and later back, their still-preserved Strava tokens can be
+  // read here without asking them to re-authenticate.
+  async getStoredProviderTokens(member, provider) {
+    const decryptedBlob = this._decryptTokenData(member.tokens, member.athleteId);
+    const blob = normalizeTokenBlob(decryptedBlob);
+    return blob[provider] || null;
   }
 
   // === Statistics & Health ===

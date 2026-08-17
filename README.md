@@ -16,6 +16,9 @@ A comprehensive bot that automatically posts Strava activities from your running
 ### 🏃 **Real-time Activity Posting**
 
 - Automatically posts new activities from team members via Strava webhooks
+- Alternative provider: members can connect **intervals.icu** with a personal API key
+  (activities ingested by polling — works with any watch brand synced to intervals.icu,
+  and doesn't count against Strava's 10-athlete Standard API tier)
 - Rich Discord embeds with comprehensive activity information
 - Supports all activity types (running, cycling, swimming, etc.)
 - Posts both public and private activities from registered members
@@ -296,7 +299,7 @@ node utils/setup.js validate-webhook
 
 | Command | Description | Usage |
 |---------|-------------|-------|
-| `/register` | Register yourself with Strava | `/register` |
+| `/register` | Register yourself with Strava (OAuth) or intervals.icu (personal API key) | `/register` or `/register provider: intervals.icu` |
 | `/last` | Show last activity from a member | `/last member: John` |
 | `/sync` | Sync recent Strava activities and update Personal Bests | `/sync` or `/sync from: 2025-01-01` |
 | `/pb check` | View your personal bests (or another member's) | `/pb check` or `/pb check member: @user` |
@@ -419,11 +422,13 @@ strava-running-bot/
 │   │   ├── migrate.js                # Migration runner
 │   │   ├── native-sqlite-adapter.js  # better-sqlite3 adapter
 │   │   ├── schema.js                 # Drizzle schema definitions
+│   │   ├── tokenBlob.js              # Per-provider credential blob normalizer
 │   │   └── migrations/               # Generated SQL migrations
 │   │       ├── 001_complete_initial_schema.sql
 │   │       ├── 002_add_elevation_field.sql
 │   │       ├── 003_add_personal_bests_table.sql
-│   │       └── 004_add_activities_table.sql
+│   │       ├── 004_add_activities_table.sql
+│   │       └── 005_add_provider_column.sql
 │   ├── discord/
 │   │   ├── bot.js                    # Discord client + command registration
 │   │   └── commands.js               # Slash command handlers
@@ -435,20 +440,24 @@ strava-running-bot/
 │   │   ├── RaceManager.js            # Race management system
 │   │   ├── Scheduler.js              # Cron jobs for race announcements
 │   │   └── SettingsManager.js        # Runtime-mutable settings
+│   ├── intervals/
+│   │   └── api.js                    # intervals.icu API wrapper (API-key auth)
 │   ├── processors/
-│   │   └── ActivityProcessor.js      # Webhook → fetch → format → post
+│   │   └── ActivityProcessor.js      # Webhook/poll → fetch → format → post
 │   ├── server/
 │   │   └── webhook.js                # Express webhook + OAuth callback
 │   ├── strava/
 │   │   └── api.js                    # Strava API wrapper + OAuth + refresh
 │   ├── utils/
 │   │   ├── ActivityFormatter.js      # Activity data formatting
+│   │   ├── BestEffortCalculator.js   # Best-effort (PB) computation from streams
 │   │   ├── DateUtils.js              # Date/time helpers
 │   │   ├── DiscordUtils.js           # Discord helpers
 │   │   ├── EmbedBuilder.js           # Discord embed creation
 │   │   ├── EncryptionUtils.js        # AES-256 token encryption
 │   │   ├── Logger.js                 # Logging utilities
-│   │   └── RateLimiter.js            # Strava API rate limiting
+│   │   ├── PolylineUtils.js          # GPS → encoded polyline for static maps
+│   │   └── RateLimiter.js            # Sliding-window API rate limiting
 │   └── index.js                      # Application entry point
 ├── config/
 │   ├── config.js                     # env → config object

@@ -120,6 +120,27 @@ class Scheduler {
         });
       }
 
+      // intervals.icu activity poll - there are no webhooks for intervals.icu,
+      // so we poll on a schedule instead.
+      if (config.scheduler.intervalsPollEnabled) {
+        const intervalsPollJob = cron.schedule(
+          config.scheduler.intervalsPollSchedule,
+          () => this.runIntervalsPoll(),
+          {
+            scheduled: false,
+            timezone: config.scheduler.timezone
+          }
+        );
+
+        this.jobs.set('intervalsPoll', intervalsPollJob);
+        intervalsPollJob.start();
+
+        logger.scheduler.info('intervals.icu activity poll scheduled', {
+          schedule: config.scheduler.intervalsPollSchedule,
+          timezone: config.scheduler.timezone
+        });
+      }
+
       // Health self-check - periodically GET the public base URL /health
       if (config.healthCheck?.enabled) {
         this.healthCheckConfig = config.healthCheck;
@@ -149,6 +170,7 @@ class Scheduler {
         weeklyEnabled: config.scheduler.weeklyEnabled,
         monthlyEnabled: config.scheduler.monthlyEnabled,
         leaderboardEnabled: config.scheduler.leaderboardEnabled,
+        intervalsPollEnabled: config.scheduler.intervalsPollEnabled,
         healthCheckEnabled: !!config.healthCheck?.enabled,
         activeJobs: this.jobs.size
       });
@@ -569,6 +591,17 @@ class Scheduler {
   async triggerMonthlyLeaderboard(period) {
     logger.scheduler.info('Manually triggering monthly leaderboard');
     await this.postMonthlyLeaderboard(period);
+  }
+
+  /**
+   * Poll intervals.icu for new activities (no webhooks available for that provider).
+   */
+  async runIntervalsPoll() {
+    try {
+      await this.activityProcessor.pollIntervalsActivities();
+    } catch (error) {
+      logger.scheduler.error('intervals.icu activity poll failed', { error: error.message });
+    }
   }
 
   /**

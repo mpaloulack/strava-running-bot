@@ -1,6 +1,7 @@
 const databaseManager = require('../database/DatabaseManager');
 const logger = require('../utils/Logger');
 const ActivityFormatter = require('../utils/ActivityFormatter');
+const BestEffortCalculator = require('../utils/BestEffortCalculator');
 const { PB_EFFORT_LABELS, SUPPORTED_PB_TYPES, CATEGORY_DISTANCES, PB_DISTANCE_TOLERANCE_PERCENT } = require('../constants');
 
 class PBManager {
@@ -320,6 +321,147 @@ class PBManager {
       discordUserId,
       athleteId: member.athleteId,
       pages: page - 1,
+      processed,
+      updated,
+      errors,
+      durationMs: Date.now() - startTime,
+    });
+
+    return { processed, updated, errors };
+  }
+
+  /**
+   * Sync PBs from a window of intervals.icu history for a member.
+   *
+   * Unlike Strava's paged /athlete/activities, intervals.icu's
+   * /athlete/0/activities endpoint returns the ENTIRE oldest..newest window in
+   * a single call — there's no page-by-page cursor state to persist, so this
+   * method intentionally does not touch the pb_sync_cursor_* settings that
+   * syncFromHistory uses to resume an interrupted Strava backward-walk.
+   *
+   * intervals.icu doesn't expose Strava-style `best_efforts` on activities, so
+   * PBs are derived by fetching minimal time/distance streams per Run activity
+   * and synthesizing efforts via BestEffortCalculator — the same technique the
+   * live intervals.icu poll path (ActivityProcessor) uses.
+   *
+   * @param {string} discordUserId
+   * @param {string} apiKey - intervals.icu personal API key
+   * @param {Object} intervalsAPI - IntervalsAPI instance with getAthleteActivities / getActivityStreams
+   * @param {Function} [progressCb] - Called with the count of Run activities processed so far, every 5
+   * @param {number} [afterTs] - Unix epoch lower bound (default: Jan 1 of current year)
+   * @param {number} [beforeTs] - Unix epoch upper bound (default: open-ended / now)
+   * @returns {{ processed: number, updated: number, errors: number }}
+   */
+  async syncFromIntervalsHistory(discordUserId, apiKey, intervalsAPI, progressCb, afterTs = null, beforeTs = null) {
+    const member = await this.databaseManager.getMemberByDiscordId(discordUserId);
+    if (!member?.isActive) {
+      return { processed: 0, updated: 0, errors: 0 };
+    }
+
+    // Same default lower bound as the Strava path: Jan 1 of the current year, UTC.
+    const after = afterTs ?? Math.floor(Date.UTC(new Date().getUTCFullYear(), 0, 1) / 1000);
+    const oldest = new Date(after * 1000).toISOString();
+    // No upper bound means "up to now" — leave `newest` undefined so the
+    // intervals.icu client omits the param rather than guessing a "now" ISO string.
+    const newest = beforeTs ? new Date(beforeTs * 1000).toISOString() : undefined;
+
+    const startTime = Date.now();
+    let processed = 0;
+    let updated = 0;
+    let errors = 0;
+
+    logger.database.info('Intervals PB sync started', {
+      discordUserId,
+      athleteId: member.athleteId,
+      oldest,
+      newest: newest ?? null,
+    });
+
+    const activities = await intervalsAPI.getAthleteActivities(apiKey, oldest, newest);
+
+    if (activities?.length) {
+      const runCount = activities.filter(a => SUPPORTED_PB_TYPES.includes(a.type)).length;
+      logger.database.info('Intervals PB sync activities fetched', {
+        discordUserId,
+        total: activities.length,
+        runs: runCount,
+      });
+
+      let runIndex = 0;
+      for (const activity of activities) {
+        if (!SUPPORTED_PB_TYPES.includes(activity.type)) continue;
+        runIndex++;
+
+        logger.database.info('Intervals PB sync processing activity', {
+          discordUserId,
+          activityId: activity.id,
+          name: activity.name,
+          date: activity.start_date_local,
+        });
+
+        try {
+          // Streams are best-effort — a single activity's streams failing to
+          // fetch (e.g. a manual entry with no streams) must not abort the sync.
+          let streams = null;
+          try {
+            streams = await intervalsAPI.getActivityStreams(activity.id, apiKey, ['time', 'distance']);
+          } catch (streamsError) {
+            logger.database.warn('Intervals PB sync failed to fetch streams for activity', {
+              discordUserId,
+              activityId: activity.id,
+              error: streamsError.message,
+            });
+          }
+
+          const efforts = streams ? BestEffortCalculator.synthesizeBestEfforts(streams) : [];
+          if (efforts.length > 0) {
+            const results = await this.checkAndUpdatePBs(member.athleteId, { ...activity, best_efforts: efforts });
+            updated += results.filter(r => r.isNewPB).length;
+          } else {
+            logger.database.info('Intervals PB sync activity has no synthesized best efforts', {
+              discordUserId,
+              activityId: activity.id,
+            });
+          }
+
+          // Cross-provider dedup: skip the upsert if this same physical run
+          // already exists under a Strava id (e.g. the member switched
+          // providers) — but PB-checking above still ran unconditionally.
+          try {
+            const duplicate = await this.databaseManager.findDuplicateActivity(
+              member.athleteId, activity.start_date_local, activity.id, 'intervals'
+            );
+            if (!duplicate) {
+              await this.databaseManager.upsertActivity(member.athleteId, activity, 'intervals');
+            }
+          } catch (saveError) {
+            logger.database.error('Failed to save intervals activity to DB', {
+              activityId: activity.id,
+              error: saveError.message,
+            });
+          }
+
+          processed++;
+        } catch (error) {
+          errors++;
+          logger.database.error('Error syncing intervals activity PBs', {
+            activityId: activity.id,
+            error: error.message,
+          });
+        }
+
+        // Small delay between requests to be polite — the rate limiter also protects us.
+        await new Promise(resolve => setTimeout(resolve, 150));
+
+        if (runIndex % 5 === 0 && typeof progressCb === 'function') {
+          progressCb(runIndex);
+        }
+      }
+    }
+
+    logger.database.info('Intervals PB sync complete', {
+      discordUserId,
+      athleteId: member.athleteId,
       processed,
       updated,
       errors,

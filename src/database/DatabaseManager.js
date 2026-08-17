@@ -1,6 +1,6 @@
 const fs = require('node:fs').promises;
 const path = require('node:path');
-const { eq, and, desc, asc, gte, lte, lt, inArray, sql, like } = require('drizzle-orm');
+const { eq, ne, and, desc, asc, gte, lte, lt, inArray, sql, like } = require('drizzle-orm');
 const dbConnection = require('./connection');
 const { members, races, migrationLog, settings, personalBests, activities } = require('./schema');
 const logger = require('../utils/Logger');
@@ -9,6 +9,7 @@ const SettingsManager = require('../managers/SettingsManager');
 const EncryptionUtils = require('../utils/EncryptionUtils');
 const { TIME } = require('../constants');
 const DateUtils = require('../utils/DateUtils');
+const { normalizeTokenBlob } = require('./tokenBlob');
 
 class DatabaseManager {
   db = null;
@@ -208,7 +209,7 @@ class DatabaseManager {
   }
 
   // === MEMBER MANAGEMENT ===
-  async registerMember(discordUserId, athlete, tokenData, discordUser = null) {
+  async registerMember(discordUserId, athlete, tokenData, discordUser = null, provider = 'strava') {
     await this.ensureInitialized();
 
     const athleteId = Number.parseInt(athlete.id);
@@ -235,11 +236,14 @@ class DatabaseManager {
       throw new Error(`Athlete ${athleteId} is already registered and active`);
     }
 
-    // Encrypt tokens if encryption key is available
+    // Encrypt tokens if encryption key is available. Tokens are namespaced by
+    // provider inside the blob ({ strava?: {...}, intervals?: {...} }) so a
+    // later provider switch can preserve this provider's credentials for an
+    // instant switch-back — see relinkMember/updateTokens.
     let encryptedTokens = null;
     if (tokenData && config.security.encryptionKey) {
       try {
-        encryptedTokens = EncryptionUtils.encryptTokensToJSON(tokenData);
+        encryptedTokens = EncryptionUtils.encryptTokensToJSON({ [provider]: tokenData });
 
         logger.database.info('Tokens encrypted successfully for new member', {
           athleteId,
@@ -267,6 +271,7 @@ class DatabaseManager {
       discord_id: discordUserId,
       athlete: JSON.stringify(athlete), // Store as JSON string
       is_active: 1,
+      provider,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       // Save Discord user information for proper name display
@@ -293,17 +298,51 @@ class DatabaseManager {
     return newMember;
   }
 
-  // Re-link an existing member to a fresh Strava OAuth grant (new tokens, refreshed
-  // athlete/Discord info) without touching athlete_id or is_active. Used when a member's
-  // stored tokens have become unusable (e.g. ENCRYPTION_KEY rotation, access revoked on
-  // Strava) so they can recover via /register instead of being stuck as "already registered".
-  async relinkMember(athleteId, athlete, tokenData, discordUser = null) {
+  // Re-link an existing member to a fresh OAuth/API-key grant (new tokens, refreshed
+  // athlete/Discord info, optionally a new provider) without touching is_active. Used
+  // when a member's stored tokens have become unusable (e.g. ENCRYPTION_KEY rotation,
+  // access revoked) so they can recover via /register instead of being stuck as
+  // "already registered", and also when a member explicitly switches provider
+  // (e.g. Strava -> intervals.icu) via /register.
+  //
+  // athlete_id is the identity anchor for races/personal_bests/activities, and it's
+  // how Strava webhooks route (getMemberByAthleteId(owner_id)). A provider switch
+  // brings a different canonical id (e.g. a Strava numeric id vs. an intervals.icu
+  // numeric id) — if we left the old athlete_id in place, a later switch back to
+  // Strava would leave webhook events unroutable. So when the incoming athlete's id
+  // differs from the stored one, we renumber the member row and every child row
+  // (races, personal_bests, activities) inside one transaction. The schema declares
+  // onUpdate: 'cascade' FKs, but connection.js never enables SQLite's foreign_keys
+  // pragma, so those cascades never fire — the renumbering must be done explicitly.
+  async relinkMember(athleteId, athlete, tokenData, discordUser = null, provider = 'strava') {
     await this.ensureInitialized();
+
+    const oldAthleteId = Number.parseInt(athleteId);
+
+    // Preserve the member's OTHER provider's credentials across a switch: decrypt
+    // the member's current blob (if any) outside the sync transaction below,
+    // normalize it to the namespaced shape, and merge the incoming tokenData in
+    // under this provider's key. This is what lets a member switch back to a
+    // provider they used before without needing to re-authenticate.
+    let existingNamespaces = {};
+    if (config.security.encryptionKey) {
+      try {
+        const currentMember = await this.getMemberByAthleteId(oldAthleteId);
+        if (currentMember?.tokens) {
+          existingNamespaces = normalizeTokenBlob(EncryptionUtils.decryptTokens(currentMember.tokens));
+        }
+      } catch (error) {
+        logger.database.warn('Could not decrypt existing tokens during relink - not preserving them', {
+          athleteId: oldAthleteId,
+          error: error.message
+        });
+      }
+    }
 
     let encryptedTokens = null;
     if (tokenData && config.security.encryptionKey) {
       try {
-        encryptedTokens = EncryptionUtils.encryptTokensToJSON(tokenData);
+        encryptedTokens = EncryptionUtils.encryptTokensToJSON({ ...existingNamespaces, [provider]: tokenData });
       } catch (error) {
         logger.database.error('Failed to encrypt tokens during relink', {
           athleteId,
@@ -313,22 +352,71 @@ class DatabaseManager {
       }
     }
 
-    await this.db.update(members)
-      .set({
-        athlete: JSON.stringify(athlete),
-        discord_username: discordUser?.username || null,
-        discord_display_name: discordUser?.globalName || discordUser?.displayName || null,
-        discord_discriminator: discordUser?.discriminator || '0',
-        discord_avatar: discordUser?.avatar || null,
-        encrypted_tokens: encryptedTokens,
-        updated_at: new Date().toISOString()
-      })
-      .where(eq(members.athlete_id, athleteId));
+    const newAthleteId = Number.parseInt(athlete.id);
+    const idChanged = Number.isFinite(newAthleteId) && newAthleteId !== oldAthleteId;
 
-    const updatedMember = await this.getMemberByAthleteId(athleteId);
+    const discordFields = {
+      discord_username: discordUser?.username || null,
+      discord_display_name: discordUser?.globalName || discordUser?.displayName || null,
+      discord_discriminator: discordUser?.discriminator || '0',
+      discord_avatar: discordUser?.avatar || null,
+    };
 
-    logger.memberAction('RELINKED', `${athlete.firstname} ${athlete.lastname}`, updatedMember.discordUserId, athleteId, {
-      relinkedAt: updatedMember.lastTokenRefresh
+    if (idChanged) {
+      const conflictingMember = await this.getMemberByAthleteId(newAthleteId);
+      if (conflictingMember) {
+        throw new Error(`Cannot relink: athlete id ${newAthleteId} is already registered to a different member`);
+      }
+
+      // Transaction must be synchronous for better-sqlite3.
+      const transaction = this.db.transaction(() => {
+        this.db.update(members)
+          .set({
+            athlete_id: newAthleteId,
+            athlete: JSON.stringify(athlete),
+            provider,
+            ...discordFields,
+            encrypted_tokens: encryptedTokens,
+            updated_at: new Date().toISOString()
+          })
+          .where(eq(members.athlete_id, oldAthleteId))
+          .run();
+
+        this.db.update(races)
+          .set({ member_athlete_id: newAthleteId })
+          .where(eq(races.member_athlete_id, oldAthleteId))
+          .run();
+
+        this.db.update(personalBests)
+          .set({ member_athlete_id: newAthleteId })
+          .where(eq(personalBests.member_athlete_id, oldAthleteId))
+          .run();
+
+        this.db.update(activities)
+          .set({ member_athlete_id: newAthleteId })
+          .where(eq(activities.member_athlete_id, oldAthleteId))
+          .run();
+      });
+
+      transaction();
+    } else {
+      await this.db.update(members)
+        .set({
+          athlete: JSON.stringify(athlete),
+          provider,
+          ...discordFields,
+          encrypted_tokens: encryptedTokens,
+          updated_at: new Date().toISOString()
+        })
+        .where(eq(members.athlete_id, athleteId));
+    }
+
+    const finalAthleteId = idChanged ? newAthleteId : athleteId;
+    const updatedMember = await this.getMemberByAthleteId(finalAthleteId);
+
+    logger.memberAction('RELINKED', `${athlete.firstname} ${athlete.lastname}`, updatedMember.discordUserId, finalAthleteId, {
+      relinkedAt: updatedMember.lastTokenRefresh,
+      ...(idChanged ? { previousAthleteId: oldAthleteId } : {})
     });
 
     return updatedMember;
@@ -458,7 +546,7 @@ class DatabaseManager {
     return transaction();
   }
 
-  async updateTokens(athleteId, tokenData) {
+  async updateTokens(athleteId, tokenData, provider = 'strava') {
     await this.ensureInitialized();
 
     if (!tokenData) {
@@ -466,14 +554,33 @@ class DatabaseManager {
       return null;
     }
 
-    // Encrypt the new tokens
+    // Preserve any OTHER provider's credentials already stored for this member
+    // (e.g. a Strava token refresh must not wipe out saved intervals.icu
+    // credentials from a prior provider switch, and vice versa).
+    let existingNamespaces = {};
+    if (config.security.encryptionKey) {
+      try {
+        const currentMember = await this.getMemberByAthleteId(athleteId);
+        if (currentMember?.tokens) {
+          existingNamespaces = normalizeTokenBlob(EncryptionUtils.decryptTokens(currentMember.tokens));
+        }
+      } catch (error) {
+        logger.database.warn('Could not decrypt existing tokens during token update - other provider credentials may be lost', {
+          athleteId,
+          error: error.message
+        });
+      }
+    }
+
+    // Encrypt the new tokens, merged into the namespaced blob under this provider's key
     let encryptedTokens;
     if (config.security.encryptionKey) {
       try {
-        encryptedTokens = EncryptionUtils.encryptTokensToJSON(tokenData);
+        encryptedTokens = EncryptionUtils.encryptTokensToJSON({ ...existingNamespaces, [provider]: tokenData });
 
         logger.database.info('Tokens encrypted successfully for token update', {
           athleteId,
+          provider,
           hasRefreshToken: !!tokenData.refresh_token,
           expiresAt: tokenData.expires_at ? new Date(tokenData.expires_at * 1000).toISOString() : 'unknown'
         });
@@ -762,12 +869,13 @@ class DatabaseManager {
   }
 
   // === ACTIVITY MANAGEMENT ===
-  async upsertActivity(athleteId, activity) {
+  async upsertActivity(athleteId, activity, provider = 'strava') {
     await this.ensureInitialized();
 
     const record = {
       strava_activity_id: String(activity.id),
       member_athlete_id: Number.parseInt(athleteId),
+      provider,
       name: activity.name || null,
       type: activity.type || null,
       sport_type: activity.sport_type || null,
@@ -795,6 +903,71 @@ class DatabaseManager {
         target: activities.strava_activity_id,
         set: record,
       });
+  }
+
+  async getActivityById(activityId) {
+    await this.ensureInitialized();
+
+    return await this.db.select()
+      .from(activities)
+      .where(eq(activities.strava_activity_id, String(activityId)))
+      .get() || null;
+  }
+
+  // Find an existing activities row for this member representing the SAME
+  // physical run under a DIFFERENT id — used to catch cross-provider
+  // duplicates after a member switches provider (e.g. a run synced once via
+  // Strava's webhook and again via the intervals.icu poll, or vice versa, so
+  // one physical run doesn't count twice toward the leaderboard).
+  //
+  // Strava's start_date_local carries a misleading trailing 'Z' even though
+  // it's actually local wall-clock time; intervals.icu's carries none.
+  // Stripping the 'Z' from both sides before comparing lets the two
+  // representations of the same run line up.
+  async findDuplicateActivity(athleteId, startDateLocal, excludeActivityId, provider = null) {
+    await this.ensureInitialized();
+
+    if (!startDateLocal) return null;
+
+    const target = new Date(startDateLocal.replace(/Z$/, ''));
+    if (Number.isNaN(target.getTime())) return null;
+
+    // Coarse ±1-day lexicographic pre-filter in SQL, refined below in JS with
+    // an exact (Z-stripped) timestamp comparison.
+    const rangeStart = new Date(target.getTime() - TIME.MS_PER_DAY).toISOString();
+    const rangeEnd = new Date(target.getTime() + TIME.MS_PER_DAY).toISOString();
+    const excludeId = String(excludeActivityId);
+
+    // When a provider is supplied, only rows from a DIFFERENT provider count
+    // as a duplicate — this is a cross-provider dedup check, so two
+    // legitimate same-provider activities that happen to start close
+    // together must never falsely match each other.
+    const conditions = [
+      eq(activities.member_athlete_id, Number.parseInt(athleteId)),
+      sql`${activities.strava_activity_id} != ${excludeId}`,
+      gte(activities.start_date_local, rangeStart),
+      lte(activities.start_date_local, rangeEnd)
+    ];
+    if (provider !== null) {
+      conditions.push(ne(activities.provider, provider));
+    }
+
+    const candidates = await this.db.select()
+      .from(activities)
+      .where(and(...conditions));
+
+    const TEN_MINUTES_MS = 10 * TIME.MS_PER_MINUTE;
+
+    for (const candidate of candidates) {
+      if (!candidate.start_date_local) continue;
+      const candidateTime = new Date(candidate.start_date_local.replace(/Z$/, ''));
+      if (Number.isNaN(candidateTime.getTime())) continue;
+      if (Math.abs(candidateTime.getTime() - target.getTime()) <= TEN_MINUTES_MS) {
+        return candidate;
+      }
+    }
+
+    return null;
   }
 
   // Aggregate run distance per active member for a date window.
@@ -877,6 +1050,7 @@ class DatabaseManager {
       athlete: member.athlete ? JSON.parse(member.athlete) : null,
       athleteId: member.athlete_id,
       isActive: Boolean(member.is_active),
+      provider: member.provider || 'strava',
       registeredAt: member.registered_at || member.created_at,
       lastTokenRefresh: member.updated_at,
       

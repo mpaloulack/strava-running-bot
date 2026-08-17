@@ -89,6 +89,20 @@ describe('ActivityEmbedBuilder', () => {
       expect(ActivityFormatter.getActivityTypeColor).toHaveBeenCalledWith('Run');
     });
 
+    it('should use activity.url when present instead of the Strava fallback', () => {
+      const activityWithUrl = { ...mockActivity, url: 'https://intervals.icu/activities/i176829341' };
+
+      ActivityEmbedBuilder.createActivityEmbed(activityWithUrl);
+
+      expect(mockEmbedBuilder.setURL).toHaveBeenCalledWith('https://intervals.icu/activities/i176829341');
+    });
+
+    it('should fall back to the Strava URL when activity.url is absent', () => {
+      ActivityEmbedBuilder.createActivityEmbed(mockActivity);
+
+      expect(mockEmbedBuilder.setURL).toHaveBeenCalledWith('https://www.strava.com/activities/12345');
+    });
+
     it('should create embed with posted type', () => {
       ActivityEmbedBuilder.createActivityEmbed(mockActivity, { type: 'posted' });
 
@@ -112,6 +126,37 @@ describe('ActivityEmbedBuilder', () => {
       expect(mockEmbedBuilder.setFooter).toHaveBeenCalledWith({
         iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg',
         text: 'Latest Activity • Powered by Strava'
+      });
+    });
+
+    it('should use the intervals.icu footer with no icon for posted intervals.icu activities', () => {
+      const intervalsActivity = { ...mockActivity, provider: 'intervals' };
+
+      ActivityEmbedBuilder.createActivityEmbed(intervalsActivity, { type: 'posted' });
+
+      expect(mockEmbedBuilder.setFooter).toHaveBeenCalledWith({
+        text: 'Powered by intervals.icu'
+      });
+    });
+
+    it('should use the intervals.icu footer with no icon for latest-type intervals.icu activities', () => {
+      const intervalsActivity = { ...mockActivity, provider: 'intervals' };
+
+      ActivityEmbedBuilder.createActivityEmbed(intervalsActivity, { type: 'latest' });
+
+      expect(mockEmbedBuilder.setFooter).toHaveBeenCalledWith({
+        text: 'Latest Activity • Powered by intervals.icu'
+      });
+    });
+
+    it('should still use the Strava footer for strava-provider activities', () => {
+      const stravaActivity = { ...mockActivity, provider: 'strava' };
+
+      ActivityEmbedBuilder.createActivityEmbed(stravaActivity, { type: 'posted' });
+
+      expect(mockEmbedBuilder.setFooter).toHaveBeenCalledWith({
+        iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg',
+        text: 'Powered by Strava'
       });
     });
 
@@ -147,12 +192,26 @@ describe('ActivityEmbedBuilder', () => {
         { name: '⏱️ Time', value: '30:00', inline: true }
       ]);
 
-      expect(mockEmbedBuilder.addFields).toHaveBeenNthCalledWith(2, [ 
-        { name: '🏃 Pace', value: '6:00/km', inline: true } 
+      expect(mockEmbedBuilder.addFields).toHaveBeenNthCalledWith(2, [
+        { name: '🏃 Pace', value: '6:00/km', inline: true }
       ]);
       expect(ActivityFormatter.formatDistance).toHaveBeenCalledWith(5000);
       expect(ActivityFormatter.formatTime).toHaveBeenCalledWith(1800);
       expect(ActivityFormatter.formatPace).toHaveBeenCalledWith(5000, 1800);
+    });
+
+    it('should add a pace field for TrailRun and VirtualRun activities', () => {
+      // intervals.icu reports trail/virtual runs literally (Strava's legacy
+      // `type` folds them into 'Run') — they must still get a pace field.
+      for (const type of ['TrailRun', 'VirtualRun']) {
+        jest.clearAllMocks();
+        ActivityFormatter.formatPace.mockReturnValue('6:00/km');
+        ActivityEmbedBuilder.createActivityEmbed({ ...mockActivity, type });
+
+        expect(mockEmbedBuilder.addFields).toHaveBeenNthCalledWith(2, [
+          { name: '🏃 Pace', value: '6:00/km', inline: true }
+        ]);
+      }
     });
 
     it('should add optional elevation field when present', () => {
