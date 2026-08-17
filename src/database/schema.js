@@ -21,6 +21,9 @@ const members = sqliteTable('members', {
   
   // Encrypted token storage (stored as complete encrypted JSON object)
   encrypted_tokens: text('encrypted_tokens'), // JSON string containing the full encrypted token structure
+
+  // Activity provider: 'strava' (OAuth tokens) or 'intervals' (intervals.icu API key)
+  provider: text('provider').notNull().default('strava'),
 });
 
 // Indexes for members table

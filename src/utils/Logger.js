@@ -181,6 +181,13 @@ class Logger {
     debug: (message, data) => this.debug('STRAVA', message, data)
   };
 
+  intervals = {
+    error: (message, data) => this.error('INTERVALS', message, data),
+    warn: (message, data) => this.warn('INTERVALS', message, data),
+    info: (message, data) => this.info('INTERVALS', message, data),
+    debug: (message, data) => this.debug('INTERVALS', message, data)
+  };
+
   webhook = {
     error: (message, data) => this.error('WEBHOOK', message, data),
     warn: (message, data) => this.warn('WEBHOOK', message, data),

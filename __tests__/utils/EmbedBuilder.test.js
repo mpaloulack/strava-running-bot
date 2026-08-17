@@ -89,6 +89,20 @@ describe('ActivityEmbedBuilder', () => {
       expect(ActivityFormatter.getActivityTypeColor).toHaveBeenCalledWith('Run');
     });
 
+    it('should use activity.url when present instead of the Strava fallback', () => {
+      const activityWithUrl = { ...mockActivity, url: 'https://intervals.icu/activities/i176829341' };
+
+      ActivityEmbedBuilder.createActivityEmbed(activityWithUrl);
+
+      expect(mockEmbedBuilder.setURL).toHaveBeenCalledWith('https://intervals.icu/activities/i176829341');
+    });
+
+    it('should fall back to the Strava URL when activity.url is absent', () => {
+      ActivityEmbedBuilder.createActivityEmbed(mockActivity);
+
+      expect(mockEmbedBuilder.setURL).toHaveBeenCalledWith('https://www.strava.com/activities/12345');
+    });
+
     it('should create embed with posted type', () => {
       ActivityEmbedBuilder.createActivityEmbed(mockActivity, { type: 'posted' });
 
@@ -112,6 +126,37 @@ describe('ActivityEmbedBuilder', () => {
       expect(mockEmbedBuilder.setFooter).toHaveBeenCalledWith({
         iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg',
         text: 'Latest Activity • Powered by Strava'
+      });
+    });
+
+    it('should use the intervals.icu footer with no icon for posted intervals.icu activities', () => {
+      const intervalsActivity = { ...mockActivity, provider: 'intervals' };
+
+      ActivityEmbedBuilder.createActivityEmbed(intervalsActivity, { type: 'posted' });
+
+      expect(mockEmbedBuilder.setFooter).toHaveBeenCalledWith({
+        text: 'Powered by intervals.icu'
+      });
+    });
+
+    it('should use the intervals.icu footer with no icon for latest-type intervals.icu activities', () => {
+      const intervalsActivity = { ...mockActivity, provider: 'intervals' };
+
+      ActivityEmbedBuilder.createActivityEmbed(intervalsActivity, { type: 'latest' });
+
+      expect(mockEmbedBuilder.setFooter).toHaveBeenCalledWith({
+        text: 'Latest Activity • Powered by intervals.icu'
+      });
+    });
+
+    it('should still use the Strava footer for strava-provider activities', () => {
+      const stravaActivity = { ...mockActivity, provider: 'strava' };
+
+      ActivityEmbedBuilder.createActivityEmbed(stravaActivity, { type: 'posted' });
+
+      expect(mockEmbedBuilder.setFooter).toHaveBeenCalledWith({
+        iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg',
+        text: 'Powered by Strava'
       });
     });
 

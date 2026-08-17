@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ModalBuilder, TextInputBuilder, ButtonBuilder } = require('discord.js');
 const DiscordCommands = require('../../src/discord/commands');
 const ActivityEmbedBuilder = require('../../src/utils/EmbedBuilder');
 const DiscordUtils = require('../../src/utils/DiscordUtils');
@@ -140,6 +140,38 @@ jest.mock('discord.js', () => {
   })),
     PermissionFlagsBits: {
       ManageGuild: 32n
+    },
+    ModalBuilder: jest.fn().mockImplementation(() => ({
+      setCustomId: jest.fn().mockReturnThis(),
+      setTitle: jest.fn().mockReturnThis(),
+      addComponents: jest.fn().mockReturnThis()
+    })),
+    TextInputBuilder: jest.fn().mockImplementation(() => ({
+      setCustomId: jest.fn().mockReturnThis(),
+      setLabel: jest.fn().mockReturnThis(),
+      setStyle: jest.fn().mockReturnThis(),
+      setPlaceholder: jest.fn().mockReturnThis(),
+      setRequired: jest.fn().mockReturnThis(),
+      setMaxLength: jest.fn().mockReturnThis()
+    })),
+    TextInputStyle: {
+      Short: 1,
+      Paragraph: 2
+    },
+    ActionRowBuilder: jest.fn().mockImplementation(() => ({
+      addComponents: jest.fn().mockReturnThis()
+    })),
+    ButtonBuilder: jest.fn().mockImplementation(() => ({
+      setCustomId: jest.fn().mockReturnThis(),
+      setLabel: jest.fn().mockReturnThis(),
+      setStyle: jest.fn().mockReturnThis()
+    })),
+    ButtonStyle: {
+      Primary: 1,
+      Secondary: 2,
+      Success: 3,
+      Danger: 4,
+      Link: 5
     }
   };
 });
@@ -182,6 +214,7 @@ describe('DiscordCommands', () => {
   let mockActivityProcessor;
   let mockMemberManager;
   let mockStravaAPI;
+  let mockIntervalsAPI;
   let mockInteraction;
 
   const mockMember = {
@@ -225,23 +258,36 @@ describe('DiscordCommands', () => {
       reactivateMember: jest.fn(),
       getValidAccessToken: jest.fn(),
       getStats: jest.fn(),
+      registerMember: jest.fn(),
+      getStoredProviderTokens: jest.fn(),
       members: new Map([['12345', mockMember]]),
       discordToStrava: new Map([['123456789', '12345']])
     };
 
     // Mock StravaAPI
     mockStravaAPI = {
+      getAthlete: jest.fn(),
       getAthleteActivities: jest.fn(),
       getActivity: jest.fn(),
       shouldPostActivity: jest.fn(),
       processActivityWithStreams: jest.fn(),
+      refreshAccessToken: jest.fn(),
       getRateLimiterStats: jest.fn()
+    };
+
+    // Mock IntervalsAPI
+    mockIntervalsAPI = {
+      getAthlete: jest.fn(),
+      mapAthlete: jest.fn(),
+      getAthleteActivities: jest.fn(),
+      processActivityData: jest.fn()
     };
 
     // Mock ActivityProcessor
     mockActivityProcessor = {
       memberManager: mockMemberManager,
       stravaAPI: mockStravaAPI,
+      intervalsAPI: mockIntervalsAPI,
       getStats: jest.fn()
     };
 
@@ -275,6 +321,11 @@ describe('DiscordCommands', () => {
       deferReply: jest.fn(),
       followUp: jest.fn(),
       respond: jest.fn(),
+      showModal: jest.fn(),
+      customId: '',
+      fields: {
+        getTextInputValue: jest.fn()
+      },
       replied: false,
       deferred: false
     };
@@ -986,6 +1037,464 @@ describe('DiscordCommands', () => {
         content: '✅ You\'re already registered as **Test User**.'
       });
     });
+
+    it('should offer the Strava OAuth link (not "already registered") for an active intervals.icu member switching providers', async () => {
+      const intervalsMember = { ...mockMember, provider: 'intervals', isActive: true };
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue(intervalsMember);
+
+      await discordCommands.handleRegisterCommand(mockInteraction);
+
+      // getValidAccessToken would return an intervals.icu API key here, not a Strava
+      // token — it must not be consulted to decide "already registered" for Strava.
+      expect(mockMemberManager.getValidAccessToken).not.toHaveBeenCalled();
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        embeds: [expect.any(Object)]
+      });
+
+      const embedInstance = EmbedBuilder.mock.results[EmbedBuilder.mock.results.length - 1].value;
+      expect(embedInstance.setDescription).toHaveBeenCalledWith(expect.stringContaining('Switching providers'));
+    });
+
+    it('should still block re-registration for an active Strava member with a working connection (no switch note)', async () => {
+      const stravaMember = { ...mockMember, provider: 'strava', isActive: true };
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue(stravaMember);
+      mockMemberManager.getValidAccessToken.mockResolvedValue('valid_token');
+
+      await discordCommands.handleRegisterCommand(mockInteraction);
+
+      expect(mockMemberManager.getValidAccessToken).toHaveBeenCalledWith(stravaMember);
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        content: '✅ You\'re already registered as **Test User**.'
+      });
+    });
+
+    describe('instant switch-back to Strava (from an active intervals.icu member)', () => {
+      const intervalsMember = { ...mockMember, provider: 'intervals', isActive: true };
+      const rawStravaAthlete = { id: 12345, firstname: 'John', lastname: 'Doe', profile_medium: null };
+
+      beforeEach(() => {
+        mockInteraction.options.getString.mockReturnValue(null); // default provider: strava
+        mockMemberManager.getMemberByDiscordId.mockResolvedValue(intervalsMember);
+        mockMemberManager.registerMember.mockResolvedValue(mockMember);
+        mockStravaAPI.getAthlete.mockResolvedValue(rawStravaAthlete);
+      });
+
+      it('reuses a still-valid saved access token without calling refreshAccessToken', async () => {
+        const futureExpiry = Math.floor(Date.now() / 1000) + 3600;
+        mockMemberManager.getStoredProviderTokens.mockResolvedValue({
+          access_token: 'saved_access_token',
+          refresh_token: 'saved_refresh_token',
+          expires_at: futureExpiry
+        });
+
+        await discordCommands.handleRegisterCommand(mockInteraction);
+
+        expect(mockMemberManager.getStoredProviderTokens).toHaveBeenCalledWith(intervalsMember, 'strava');
+        expect(mockStravaAPI.refreshAccessToken).not.toHaveBeenCalled();
+        expect(mockStravaAPI.getAthlete).toHaveBeenCalledWith('saved_access_token');
+        expect(mockMemberManager.registerMember).toHaveBeenCalledWith(
+          mockInteraction.user.id,
+          rawStravaAthlete,
+          expect.objectContaining({ access_token: 'saved_access_token' }),
+          mockInteraction.user,
+          'strava'
+        );
+        expect(mockInteraction.editReply).toHaveBeenCalledWith({ embeds: [expect.any(Object)] });
+      });
+
+      it('refreshes an expired saved token and registers with the refreshed token data', async () => {
+        const pastExpiry = Math.floor(Date.now() / 1000) - 60;
+        mockMemberManager.getStoredProviderTokens.mockResolvedValue({
+          access_token: 'stale_access_token',
+          refresh_token: 'saved_refresh_token',
+          expires_at: pastExpiry
+        });
+        const refreshedTokenData = {
+          access_token: 'fresh_access_token',
+          refresh_token: 'new_refresh_token',
+          expires_at: Math.floor(Date.now() / 1000) + 3600
+        };
+        mockStravaAPI.refreshAccessToken.mockResolvedValue(refreshedTokenData);
+
+        await discordCommands.handleRegisterCommand(mockInteraction);
+
+        expect(mockStravaAPI.refreshAccessToken).toHaveBeenCalledWith('saved_refresh_token');
+        expect(mockStravaAPI.getAthlete).toHaveBeenCalledWith('fresh_access_token');
+        expect(mockMemberManager.registerMember).toHaveBeenCalledWith(
+          mockInteraction.user.id,
+          rawStravaAthlete,
+          refreshedTokenData,
+          mockInteraction.user,
+          'strava'
+        );
+        expect(mockInteraction.editReply).toHaveBeenCalledWith({ embeds: [expect.any(Object)] });
+      });
+
+      it('falls back to the OAuth-link flow when nothing was saved', async () => {
+        mockMemberManager.getStoredProviderTokens.mockResolvedValue(null);
+
+        await discordCommands.handleRegisterCommand(mockInteraction);
+
+        expect(mockStravaAPI.getAthlete).not.toHaveBeenCalled();
+        expect(mockMemberManager.registerMember).not.toHaveBeenCalled();
+        expect(mockInteraction.editReply).toHaveBeenCalledWith({
+          embeds: [expect.any(Object)]
+        });
+        const embedInstance = EmbedBuilder.mock.results[EmbedBuilder.mock.results.length - 1].value;
+        expect(embedInstance.setDescription).toHaveBeenCalledWith(expect.stringContaining('Switching providers'));
+      });
+
+      it('falls back to the OAuth-link flow when the refresh fails', async () => {
+        const pastExpiry = Math.floor(Date.now() / 1000) - 60;
+        mockMemberManager.getStoredProviderTokens.mockResolvedValue({
+          access_token: 'stale_access_token',
+          refresh_token: 'saved_refresh_token',
+          expires_at: pastExpiry
+        });
+        mockStravaAPI.refreshAccessToken.mockRejectedValue(new Error('invalid_grant'));
+
+        await discordCommands.handleRegisterCommand(mockInteraction);
+
+        expect(mockMemberManager.registerMember).not.toHaveBeenCalled();
+        expect(mockInteraction.editReply).toHaveBeenCalledWith({
+          embeds: [expect.any(Object)]
+        });
+      });
+
+      it('falls back to the OAuth-link flow when registerMember fails', async () => {
+        const futureExpiry = Math.floor(Date.now() / 1000) + 3600;
+        mockMemberManager.getStoredProviderTokens.mockResolvedValue({
+          access_token: 'saved_access_token',
+          refresh_token: 'saved_refresh_token',
+          expires_at: futureExpiry
+        });
+        mockMemberManager.registerMember.mockRejectedValue(new Error('DB error'));
+
+        await discordCommands.handleRegisterCommand(mockInteraction);
+
+        expect(mockInteraction.editReply).toHaveBeenCalledWith({
+          embeds: [expect.any(Object)]
+        });
+      });
+    });
+
+    it('should show the intervals.icu instructions embed with a button instead of the modal directly (fresh user)', async () => {
+      mockInteraction.options.getString.mockImplementation((name) => name === 'provider' ? 'intervals' : null);
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue(null);
+
+      await discordCommands.handleRegisterCommand(mockInteraction);
+
+      expect(mockInteraction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        embeds: [expect.any(Object)],
+        components: [expect.any(Object)]
+      });
+      expect(mockInteraction.reply).not.toHaveBeenCalled();
+      expect(mockInteraction.showModal).not.toHaveBeenCalled();
+      expect(mockMemberManager.registerMember).not.toHaveBeenCalled();
+    });
+
+    it('should show the intervals.icu instructions embed for an active intervals.icu member re-running /register (same provider)', async () => {
+      mockInteraction.options.getString.mockImplementation((name) => name === 'provider' ? 'intervals' : null);
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue({ ...mockMember, provider: 'intervals', isActive: true });
+
+      await discordCommands.handleRegisterCommand(mockInteraction);
+
+      expect(mockMemberManager.getStoredProviderTokens).not.toHaveBeenCalled();
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        embeds: [expect.any(Object)],
+        components: [expect.any(Object)]
+      });
+    });
+
+    describe('instant switch-back to intervals.icu (from an active Strava member)', () => {
+      beforeEach(() => {
+        mockInteraction.options.getString.mockImplementation((name) => name === 'provider' ? 'intervals' : null);
+        mockMemberManager.getMemberByDiscordId.mockResolvedValue({ ...mockMember, provider: 'strava', isActive: true });
+      });
+
+      it('instantly reconnects using a saved intervals.icu API key without showing the instructions/modal', async () => {
+        mockMemberManager.getStoredProviderTokens.mockResolvedValue({ api_key: 'saved_intervals_key' });
+        const rawAthlete = { id: 'i12345', name: 'John Doe' };
+        const mappedAthlete = { id: 12345, firstname: 'John', lastname: 'Doe', profile_medium: null };
+        mockIntervalsAPI.getAthlete.mockResolvedValue(rawAthlete);
+        mockIntervalsAPI.mapAthlete.mockReturnValue(mappedAthlete);
+        mockMemberManager.registerMember.mockResolvedValue(mockMember);
+
+        await discordCommands.handleRegisterCommand(mockInteraction);
+
+        expect(mockMemberManager.getStoredProviderTokens).toHaveBeenCalledWith(
+          expect.objectContaining({ provider: 'strava' }),
+          'intervals'
+        );
+        expect(mockIntervalsAPI.getAthlete).toHaveBeenCalledWith('saved_intervals_key');
+        expect(mockMemberManager.registerMember).toHaveBeenCalledWith(
+          mockInteraction.user.id,
+          mappedAthlete,
+          { api_key: 'saved_intervals_key' },
+          mockInteraction.user,
+          'intervals'
+        );
+        expect(mockInteraction.editReply).toHaveBeenCalledWith({ embeds: [expect.any(Object)] });
+        expect(ButtonBuilder).not.toHaveBeenCalled();
+        expect(mockInteraction.showModal).not.toHaveBeenCalled();
+      });
+
+      it('falls back to the instructions/button flow when no key was saved', async () => {
+        mockMemberManager.getStoredProviderTokens.mockResolvedValue(null);
+
+        await discordCommands.handleRegisterCommand(mockInteraction);
+
+        expect(mockIntervalsAPI.getAthlete).not.toHaveBeenCalled();
+        expect(mockMemberManager.registerMember).not.toHaveBeenCalled();
+        expect(mockInteraction.editReply).toHaveBeenCalledWith({
+          embeds: [expect.any(Object)],
+          components: [expect.any(Object)]
+        });
+      });
+
+      it('falls back to the instructions/button flow when the saved key is no longer valid', async () => {
+        mockMemberManager.getStoredProviderTokens.mockResolvedValue({ api_key: 'stale_key' });
+        mockIntervalsAPI.getAthlete.mockRejectedValue(new Error('Unauthorized'));
+
+        await discordCommands.handleRegisterCommand(mockInteraction);
+
+        expect(mockMemberManager.registerMember).not.toHaveBeenCalled();
+        expect(mockInteraction.editReply).toHaveBeenCalledWith({
+          embeds: [expect.any(Object)],
+          components: [expect.any(Object)]
+        });
+      });
+
+      it('falls back to the instructions/button flow when registerMember fails', async () => {
+        mockMemberManager.getStoredProviderTokens.mockResolvedValue({ api_key: 'saved_intervals_key' });
+        mockIntervalsAPI.getAthlete.mockResolvedValue({ id: 'i12345', name: 'John Doe' });
+        mockIntervalsAPI.mapAthlete.mockReturnValue({ id: 12345, firstname: 'John', lastname: 'Doe' });
+        mockMemberManager.registerMember.mockRejectedValue(new Error('DB error'));
+
+        await discordCommands.handleRegisterCommand(mockInteraction);
+
+        expect(mockInteraction.editReply).toHaveBeenCalledWith({
+          embeds: [expect.any(Object)],
+          components: [expect.any(Object)]
+        });
+      });
+    });
+
+    it('should keep the existing Strava flow when provider is strava', async () => {
+      mockInteraction.options.getString.mockImplementation((name) => name === 'provider' ? 'strava' : null);
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue(null);
+
+      await discordCommands.handleRegisterCommand(mockInteraction);
+
+      expect(mockInteraction.showModal).not.toHaveBeenCalled();
+      expect(mockInteraction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    });
+
+    it('should default to the Strava flow when provider option is absent', async () => {
+      mockInteraction.options.getString.mockReturnValue(null);
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue(null);
+
+      await discordCommands.handleRegisterCommand(mockInteraction);
+
+      expect(mockInteraction.showModal).not.toHaveBeenCalled();
+      expect(mockInteraction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+    });
+  });
+
+  describe('showIntervalsRegisterInstructions', () => {
+    it('should edit the (already deferred) reply with an embed explaining how to get the API key and a button', async () => {
+      await discordCommands.showIntervalsRegisterInstructions(mockInteraction);
+
+      expect(ButtonBuilder).toHaveBeenCalled();
+      const buttonInstance = ButtonBuilder.mock.results[ButtonBuilder.mock.results.length - 1].value;
+      expect(buttonInstance.setCustomId).toHaveBeenCalledWith('intervals_register_button');
+      expect(buttonInstance.setStyle).toHaveBeenCalledWith(1); // ButtonStyle.Primary
+
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        embeds: [expect.any(Object)],
+        components: [expect.any(Object)]
+      });
+      expect(mockInteraction.reply).not.toHaveBeenCalled();
+      expect(mockInteraction.showModal).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('handleButtonInteraction', () => {
+    it('should dispatch intervals_register_button to showIntervalsRegisterModal', async () => {
+      mockInteraction.customId = 'intervals_register_button';
+      jest.spyOn(discordCommands, 'showIntervalsRegisterModal').mockResolvedValue();
+
+      await discordCommands.handleButtonInteraction(mockInteraction);
+
+      expect(discordCommands.showIntervalsRegisterModal).toHaveBeenCalledWith(mockInteraction);
+    });
+
+    it('should log a warning and do nothing for unknown button ids', async () => {
+      mockInteraction.customId = 'some_other_button';
+      jest.spyOn(discordCommands, 'showIntervalsRegisterModal').mockResolvedValue();
+
+      await discordCommands.handleButtonInteraction(mockInteraction);
+
+      expect(discordCommands.showIntervalsRegisterModal).not.toHaveBeenCalled();
+      expect(logger.discord.warn).toHaveBeenCalled();
+    });
+  });
+
+  describe('showIntervalsRegisterModal', () => {
+    it('should build and show a modal requesting the intervals.icu API key', async () => {
+      await discordCommands.showIntervalsRegisterModal(mockInteraction);
+
+      expect(ModalBuilder).toHaveBeenCalled();
+      expect(TextInputBuilder).toHaveBeenCalled();
+
+      const modalInstance = ModalBuilder.mock.results[ModalBuilder.mock.results.length - 1].value;
+      expect(modalInstance.setCustomId).toHaveBeenCalledWith('intervals_register_modal');
+      expect(modalInstance.setTitle).toHaveBeenCalledWith('Connect intervals.icu');
+
+      const textInputInstance = TextInputBuilder.mock.results[TextInputBuilder.mock.results.length - 1].value;
+      expect(textInputInstance.setCustomId).toHaveBeenCalledWith('api_key');
+      expect(textInputInstance.setRequired).toHaveBeenCalledWith(true);
+
+      expect(mockInteraction.showModal).toHaveBeenCalledWith(modalInstance);
+    });
+  });
+
+  describe('handleModalSubmit', () => {
+    it('should dispatch intervals_register_modal to handleIntervalsRegisterModal', async () => {
+      mockInteraction.customId = 'intervals_register_modal';
+      jest.spyOn(discordCommands, 'handleIntervalsRegisterModal').mockResolvedValue();
+
+      await discordCommands.handleModalSubmit(mockInteraction);
+
+      expect(discordCommands.handleIntervalsRegisterModal).toHaveBeenCalledWith(mockInteraction);
+    });
+
+    it('should log a warning and do nothing for unknown modal ids', async () => {
+      mockInteraction.customId = 'some_other_modal';
+      jest.spyOn(discordCommands, 'handleIntervalsRegisterModal').mockResolvedValue();
+
+      await discordCommands.handleModalSubmit(mockInteraction);
+
+      expect(discordCommands.handleIntervalsRegisterModal).not.toHaveBeenCalled();
+      expect(logger.discord.warn).toHaveBeenCalled();
+    });
+  });
+
+  describe('handleIntervalsRegisterModal', () => {
+    beforeEach(() => {
+      mockInteraction.fields.getTextInputValue.mockReturnValue(' my_api_key ');
+    });
+
+    it('should validate the key, register the member, and confirm success', async () => {
+      const rawAthlete = { id: 'i12345', name: 'John Doe' };
+      const mappedAthlete = { id: 12345, firstname: 'John', lastname: 'Doe', profile_medium: null };
+      mockIntervalsAPI.getAthlete.mockResolvedValue(rawAthlete);
+      mockIntervalsAPI.mapAthlete.mockReturnValue(mappedAthlete);
+      mockMemberManager.registerMember.mockResolvedValue(mockMember);
+
+      await discordCommands.handleIntervalsRegisterModal(mockInteraction);
+
+      expect(mockInteraction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+      expect(mockIntervalsAPI.getAthlete).toHaveBeenCalledWith('my_api_key');
+      expect(mockIntervalsAPI.mapAthlete).toHaveBeenCalledWith(rawAthlete);
+      expect(mockMemberManager.registerMember).toHaveBeenCalledWith(
+        mockInteraction.user.id,
+        mappedAthlete,
+        { api_key: 'my_api_key' },
+        mockInteraction.user,
+        'intervals'
+      );
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({ embeds: [expect.any(Object)] });
+    });
+
+    it('should mention the provider switch when the member was previously an active Strava member', async () => {
+      const rawAthlete = { id: 'i12345', name: 'John Doe' };
+      const mappedAthlete = { id: 12345, firstname: 'John', lastname: 'Doe', profile_medium: null };
+      mockIntervalsAPI.getAthlete.mockResolvedValue(rawAthlete);
+      mockIntervalsAPI.mapAthlete.mockReturnValue(mappedAthlete);
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue({ ...mockMember, provider: 'strava', isActive: true });
+      mockMemberManager.registerMember.mockResolvedValue(mockMember);
+
+      await discordCommands.handleIntervalsRegisterModal(mockInteraction);
+
+      const embedInstance = EmbedBuilder.mock.results[EmbedBuilder.mock.results.length - 1].value;
+      expect(embedInstance.setDescription).toHaveBeenCalledWith(expect.stringContaining('previously connected via Strava'));
+    });
+
+    it('should not mention a provider switch for a brand-new member', async () => {
+      const rawAthlete = { id: 'i12345', name: 'John Doe' };
+      const mappedAthlete = { id: 12345, firstname: 'John', lastname: 'Doe', profile_medium: null };
+      mockIntervalsAPI.getAthlete.mockResolvedValue(rawAthlete);
+      mockIntervalsAPI.mapAthlete.mockReturnValue(mappedAthlete);
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue(null);
+      mockMemberManager.registerMember.mockResolvedValue(mockMember);
+
+      await discordCommands.handleIntervalsRegisterModal(mockInteraction);
+
+      const embedInstance = EmbedBuilder.mock.results[EmbedBuilder.mock.results.length - 1].value;
+      expect(embedInstance.setDescription).not.toHaveBeenCalledWith(expect.stringContaining('previously connected via Strava'));
+    });
+
+    it('should never echo the API key back to the user', async () => {
+      const rawAthlete = { id: 'i12345', name: 'John Doe' };
+      mockIntervalsAPI.getAthlete.mockResolvedValue(rawAthlete);
+      mockIntervalsAPI.mapAthlete.mockReturnValue({ id: 12345, firstname: 'John', lastname: 'Doe' });
+      mockMemberManager.registerMember.mockResolvedValue(mockMember);
+
+      await discordCommands.handleIntervalsRegisterModal(mockInteraction);
+
+      const allReplyCalls = JSON.stringify(mockInteraction.editReply.mock.calls);
+      expect(allReplyCalls).not.toContain('my_api_key');
+    });
+
+    it('should reply with an error when the API key cannot be validated', async () => {
+      mockIntervalsAPI.getAthlete.mockRejectedValue(new Error('Unauthorized'));
+
+      await discordCommands.handleIntervalsRegisterModal(mockInteraction);
+
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        content: expect.stringContaining('Could not validate that intervals.icu API key')
+      });
+      expect(mockMemberManager.registerMember).not.toHaveBeenCalled();
+    });
+
+    it('should reply with an error when the mapped athlete id is not finite', async () => {
+      mockIntervalsAPI.getAthlete.mockResolvedValue({ id: 'not-a-number', name: 'Bad Athlete' });
+      mockIntervalsAPI.mapAthlete.mockReturnValue({ id: NaN, firstname: 'Bad', lastname: 'Athlete' });
+
+      await discordCommands.handleIntervalsRegisterModal(mockInteraction);
+
+      expect(mockMemberManager.registerMember).not.toHaveBeenCalled();
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        content: expect.any(String)
+      });
+    });
+
+    it('should show a friendly message when the member is already registered', async () => {
+      mockIntervalsAPI.getAthlete.mockResolvedValue({ id: 'i12345', name: 'John Doe' });
+      mockIntervalsAPI.mapAthlete.mockReturnValue({ id: 12345, firstname: 'John', lastname: 'Doe' });
+      mockMemberManager.registerMember.mockRejectedValue(new Error('Member already registered'));
+
+      await discordCommands.handleIntervalsRegisterModal(mockInteraction);
+
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        content: expect.stringContaining('already registered')
+      });
+    });
+
+    it('should reply with a generic failure message for other registration errors', async () => {
+      mockIntervalsAPI.getAthlete.mockResolvedValue({ id: 'i12345', name: 'John Doe' });
+      mockIntervalsAPI.mapAthlete.mockReturnValue({ id: 12345, firstname: 'John', lastname: 'Doe' });
+      mockMemberManager.registerMember.mockRejectedValue(new Error('Database exploded'));
+
+      await discordCommands.handleIntervalsRegisterModal(mockInteraction);
+
+      expect(logger.discord.error).toHaveBeenCalled();
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        content: expect.stringMatching(/failed/i)
+      });
+    });
   });
 
   describe('handleHelpCommand', () => {
@@ -1024,6 +1533,8 @@ describe('DiscordCommands', () => {
       // French content sanity check
       expect(fields.toLowerCase()).toMatch(/connecter|connecte/);
       expect(fields.toLowerCase()).toMatch(/courses?/);
+      // intervals.icu registration mentioned alongside Strava
+      expect(fields).toContain('provider:intervals.icu');
     });
 
     it('admin user (ManageGuild): reply also includes the admin commands section', async () => {
@@ -1182,6 +1693,56 @@ describe('DiscordCommands', () => {
       expect(logger.discord.error).toHaveBeenCalledWith('Error fetching last activity', expect.any(Object));
       expect(mockInteraction.editReply).toHaveBeenCalledWith({
         content: '❌ Failed to fetch the last activity. Please try again later.'
+      });
+    });
+
+    describe('intervals.icu members', () => {
+      const olderActivity = {
+        id: 'i111',
+        name: 'Older Run',
+        start_date_local: '2024-01-01T06:00:00'
+      };
+      const newerActivity = {
+        id: 'i222',
+        name: 'Newer Run',
+        start_date_local: '2024-01-05T06:00:00'
+      };
+      const intervalsMember = { ...mockMember, provider: 'intervals' };
+      const processedIntervalsActivity = { id: 'i222', name: 'Newer Run', provider: 'intervals' };
+
+      beforeEach(() => {
+        findMemberSpy.mockResolvedValue(intervalsMember);
+        mockMemberManager.getValidAccessToken.mockResolvedValue('intervals_api_key');
+        mockIntervalsAPI.getAthleteActivities.mockResolvedValue([olderActivity, newerActivity]);
+        mockIntervalsAPI.processActivityData.mockReturnValue(processedIntervalsActivity);
+      });
+
+      it('should use the intervals API and render the most recent activity by start_date_local', async () => {
+        await discordCommands.handleLastActivityCommand(mockInteraction, mockInteraction.options);
+
+        expect(mockIntervalsAPI.getAthleteActivities).toHaveBeenCalledWith('intervals_api_key', expect.any(String));
+        expect(mockStravaAPI.getAthleteActivities).not.toHaveBeenCalled();
+
+        expect(mockIntervalsAPI.processActivityData).toHaveBeenCalledWith(
+          newerActivity,
+          { ...intervalsMember.athlete, discordUser: intervalsMember.discordUser }
+        );
+
+        expect(ActivityEmbedBuilder.createActivityEmbed).toHaveBeenCalledWith(processedIntervalsActivity, { type: 'latest' });
+        expect(mockInteraction.editReply).toHaveBeenCalledWith({
+          embeds: [expect.any(Object)]
+        });
+      });
+
+      it('should report no recent activities when intervals.icu returns none', async () => {
+        mockIntervalsAPI.getAthleteActivities.mockResolvedValue([]);
+
+        await discordCommands.handleLastActivityCommand(mockInteraction, mockInteraction.options);
+
+        expect(mockInteraction.editReply).toHaveBeenCalledWith({
+          content: '📭 No recent activities found for **Test User**.'
+        });
+        expect(mockIntervalsAPI.processActivityData).not.toHaveBeenCalled();
       });
     });
   });
@@ -1598,6 +2159,23 @@ describe('DiscordCommands', () => {
       expect(discordCommands.pbManager.syncFromHistory).not.toHaveBeenCalled();
     });
 
+    it('should refuse to sync a single intervals.icu member (Strava-only feature)', async () => {
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue({
+        discordUserId: '123456789',
+        athleteId: 12345,
+        isActive: true,
+        provider: 'intervals',
+      });
+
+      await discordCommands.handleSyncCommand(syncInteraction, syncInteraction.options);
+
+      expect(syncInteraction.editReply).toHaveBeenCalledWith({
+        content: '❌ /sync uses Strava best-effort data and is only available for Strava-connected members.',
+      });
+      expect(discordCommands.pbManager.syncFromHistory).not.toHaveBeenCalled();
+      expect(mockMemberManager.getValidAccessToken).not.toHaveBeenCalled();
+    });
+
     it('should reply with error when access token cannot be retrieved', async () => {
       mockMemberManager.getValidAccessToken.mockResolvedValue(null);
 
@@ -1979,6 +2557,33 @@ describe('DiscordCommands', () => {
 
       expect(discordCommands.pbManager.syncFromHistory).toHaveBeenCalledTimes(1);
       expect(discordCommands.pbManager.syncFromHistory.mock.calls[0][0]).toBe('111');
+      expect(bulkInteraction.editReply).toHaveBeenCalledWith(
+        expect.objectContaining({ embeds: expect.any(Array) })
+      );
+    });
+
+    it('skips intervals.icu members without calling the Strava API for them', async () => {
+      const memberCarol = {
+        discordUserId: '333',
+        athleteId: 3,
+        isActive: true,
+        provider: 'intervals',
+        discordUser: null,
+        athlete: { firstname: 'Carol', lastname: 'Cyclist' },
+      };
+      mockMemberManager.getAllMembers.mockResolvedValue([memberAlice, memberCarol, memberBob]);
+
+      await discordCommands.handleSyncCommand(bulkInteraction, bulkInteraction.options);
+
+      expect(discordCommands.pbManager.syncFromHistory).toHaveBeenCalledTimes(2);
+      expect(discordCommands.pbManager.syncFromHistory).not.toHaveBeenCalledWith(
+        '333', expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything()
+      );
+      expect(mockMemberManager.getValidAccessToken).not.toHaveBeenCalledWith(memberCarol);
+      expect(logger.discord.info).toHaveBeenCalledWith(
+        'Skipping intervals.icu member in team-wide Strava PB sync',
+        expect.objectContaining({ memberName: 'Carol Cyclist' })
+      );
       expect(bulkInteraction.editReply).toHaveBeenCalledWith(
         expect.objectContaining({ embeds: expect.any(Array) })
       );

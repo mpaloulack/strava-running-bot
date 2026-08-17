@@ -28,7 +28,7 @@ class ActivityEmbedBuilder {
     const embed = new EmbedBuilder()
       .setTitle(activityTitle)
       .setTimestamp(new Date(activity.start_date))
-      .setURL(`https://www.strava.com/activities/${activity.id}`);
+      .setURL(activity.url || `https://www.strava.com/activities/${activity.id}`);
     this._setEmbedColor(embed, activity, displayType);
     this._setEmbedThumbnail(embed, activity);
     this._setEmbedAuthorAndFooter(embed, activity, type);
@@ -111,12 +111,16 @@ class ActivityEmbedBuilder {
       iconURL = activity.athlete.discordUser?.avatarURL ?? activity.athlete.profile_medium;
     }
 
+    const isIntervals = activity.provider === 'intervals';
+
     if (type === 'latest') {
       embed.setAuthor({
         name: `${authorName} - Last Activity`,
         iconURL: iconURL,
       });
-      embed.setFooter({
+      embed.setFooter(isIntervals ? {
+        text: 'Latest Activity • Powered by intervals.icu',
+      } : {
         text: 'Latest Activity • Powered by Strava',
         iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg',
       });
@@ -125,7 +129,9 @@ class ActivityEmbedBuilder {
         name: authorName,
         iconURL: iconURL,
       });
-      embed.setFooter({
+      embed.setFooter(isIntervals ? {
+        text: 'Powered by intervals.icu',
+      } : {
         text: 'Powered by Strava',
         iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg',
       });

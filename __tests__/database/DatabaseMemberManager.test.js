@@ -69,7 +69,7 @@ describe('DatabaseMemberManager', () => {
       const result = await memberManager.registerMember('discord123', mockAthlete, mockTokenData, mockDiscordUser);
 
       expect(mockDatabaseManager.initialize).toHaveBeenCalled();
-      expect(mockDatabaseManager.registerMember).toHaveBeenCalledWith('discord123', mockAthlete, mockTokenData, mockDiscordUser);
+      expect(mockDatabaseManager.registerMember).toHaveBeenCalledWith('discord123', mockAthlete, mockTokenData, mockDiscordUser, 'strava');
       expect(result.athleteId).toBe(12345);
     });
 
@@ -78,7 +78,15 @@ describe('DatabaseMemberManager', () => {
 
       await memberManager.registerMember('discord123', mockAthlete, mockTokenData);
 
-      expect(mockDatabaseManager.registerMember).toHaveBeenCalledWith('discord123', mockAthlete, mockTokenData, null);
+      expect(mockDatabaseManager.registerMember).toHaveBeenCalledWith('discord123', mockAthlete, mockTokenData, null, 'strava');
+    });
+
+    it('should pass an explicit provider through to registerMember', async () => {
+      mockDatabaseManager.registerMember.mockResolvedValue({ athleteId: 12345, provider: 'intervals' });
+
+      await memberManager.registerMember('discord123', mockAthlete, mockTokenData, mockDiscordUser, 'intervals');
+
+      expect(mockDatabaseManager.registerMember).toHaveBeenCalledWith('discord123', mockAthlete, mockTokenData, mockDiscordUser, 'intervals');
     });
 
     it('should relink an existing active member whose stored tokens no longer work', async () => {
@@ -89,7 +97,7 @@ describe('DatabaseMemberManager', () => {
 
       const result = await memberManager.registerMember('discord123', mockAthlete, mockTokenData, mockDiscordUser);
 
-      expect(mockDatabaseManager.relinkMember).toHaveBeenCalledWith(12345, mockAthlete, mockTokenData, mockDiscordUser);
+      expect(mockDatabaseManager.relinkMember).toHaveBeenCalledWith(12345, mockAthlete, mockTokenData, mockDiscordUser, 'strava');
       expect(mockDatabaseManager.registerMember).not.toHaveBeenCalled();
       expect(result.athleteId).toBe(12345);
     });
@@ -115,6 +123,89 @@ describe('DatabaseMemberManager', () => {
         memberManager.registerMember('discord123', mockAthlete, mockTokenData, mockDiscordUser)
       ).rejects.toThrow('already registered');
 
+      expect(mockDatabaseManager.relinkMember).not.toHaveBeenCalled();
+    });
+
+    it('should relink an active member who explicitly switches provider, without consulting getValidAccessToken', async () => {
+      const existingMember = {
+        athleteId: 12345,
+        discordUserId: 'discord123',
+        isActive: true,
+        provider: 'strava',
+        tokens: { encrypted: 'data' }
+      };
+      mockDatabaseManager.getMemberByDiscordId.mockResolvedValue(existingMember);
+      const validTokenSpy = jest.spyOn(memberManager, 'getValidAccessToken');
+      mockDatabaseManager.relinkMember.mockResolvedValue({
+        athleteId: 12345,
+        discordUserId: 'discord123',
+        provider: 'intervals'
+      });
+
+      const result = await memberManager.registerMember('discord123', mockAthlete, mockTokenData, mockDiscordUser, 'intervals');
+
+      expect(validTokenSpy).not.toHaveBeenCalled();
+      expect(mockDatabaseManager.relinkMember).toHaveBeenCalledWith(12345, mockAthlete, mockTokenData, mockDiscordUser, 'intervals');
+      expect(mockDatabaseManager.registerMember).not.toHaveBeenCalled();
+      expect(result.provider).toBe('intervals');
+      expect(logger.database.info).toHaveBeenCalledWith(
+        'Explicit provider switch on registration - relinking member',
+        expect.objectContaining({ fromProvider: 'strava', toProvider: 'intervals' })
+      );
+    });
+
+    it('should relink a member with no stored provider (legacy strava default) switching to intervals', async () => {
+      const existingMember = {
+        athleteId: 12345,
+        discordUserId: 'discord123',
+        isActive: true,
+        // no `provider` field at all - defaults to 'strava'
+        tokens: { encrypted: 'data' }
+      };
+      mockDatabaseManager.getMemberByDiscordId.mockResolvedValue(existingMember);
+      const validTokenSpy = jest.spyOn(memberManager, 'getValidAccessToken');
+      mockDatabaseManager.relinkMember.mockResolvedValue({ athleteId: 12345, provider: 'intervals' });
+
+      await memberManager.registerMember('discord123', mockAthlete, mockTokenData, mockDiscordUser, 'intervals');
+
+      expect(validTokenSpy).not.toHaveBeenCalled();
+      expect(mockDatabaseManager.relinkMember).toHaveBeenCalledWith(12345, mockAthlete, mockTokenData, mockDiscordUser, 'intervals');
+    });
+
+    it('should still throw already-registered for an active member re-registering with the SAME provider and valid tokens', async () => {
+      const existingMember = {
+        athleteId: 12345,
+        discordUserId: 'discord123',
+        isActive: true,
+        provider: 'strava',
+        tokens: { encrypted: 'data' }
+      };
+      mockDatabaseManager.getMemberByDiscordId.mockResolvedValue(existingMember);
+      jest.spyOn(memberManager, 'getValidAccessToken').mockResolvedValue('valid_access_token');
+
+      await expect(
+        memberManager.registerMember('discord123', mockAthlete, mockTokenData, mockDiscordUser, 'strava')
+      ).rejects.toThrow('already registered');
+
+      expect(mockDatabaseManager.relinkMember).not.toHaveBeenCalled();
+    });
+
+    it('should not bypass the inactive-member block even when the provider differs', async () => {
+      const existingMember = {
+        athleteId: 12345,
+        discordUserId: 'discord123',
+        isActive: false,
+        provider: 'strava',
+        tokens: null
+      };
+      mockDatabaseManager.getMemberByDiscordId.mockResolvedValue(existingMember);
+      const validTokenSpy = jest.spyOn(memberManager, 'getValidAccessToken');
+
+      await expect(
+        memberManager.registerMember('discord123', mockAthlete, mockTokenData, mockDiscordUser, 'intervals')
+      ).rejects.toThrow('already registered');
+
+      expect(validTokenSpy).not.toHaveBeenCalled();
       expect(mockDatabaseManager.relinkMember).not.toHaveBeenCalled();
     });
   });
@@ -318,15 +409,24 @@ describe('DatabaseMemberManager', () => {
   });
 
   describe('updateTokens', () => {
-    it('should update member tokens', async () => {
+    it('should update member tokens, defaulting provider to strava', async () => {
       const mockTokenData = { access_token: 'new_token', refresh_token: 'new_refresh' };
       mockDatabaseManager.updateTokens.mockResolvedValue(true);
 
       const result = await memberManager.updateTokens(12345, mockTokenData);
 
       expect(mockDatabaseManager.initialize).toHaveBeenCalled();
-      expect(mockDatabaseManager.updateTokens).toHaveBeenCalledWith(12345, mockTokenData);
+      expect(mockDatabaseManager.updateTokens).toHaveBeenCalledWith(12345, mockTokenData, 'strava');
       expect(result).toBe(true);
+    });
+
+    it('should pass an explicit provider through to databaseManager.updateTokens', async () => {
+      const mockTokenData = { api_key: 'intervals-key' };
+      mockDatabaseManager.updateTokens.mockResolvedValue(true);
+
+      await memberManager.updateTokens(12345, mockTokenData, 'intervals');
+
+      expect(mockDatabaseManager.updateTokens).toHaveBeenCalledWith(12345, mockTokenData, 'intervals');
     });
   });
 
@@ -444,7 +544,7 @@ describe('DatabaseMemberManager', () => {
       const result = await memberManager._getTokensFromDatabase(member);
 
       expect(result).toBe('new_token');
-      expect(mockDatabaseManager.updateTokens).toHaveBeenCalledWith(12345, mockNewTokens);
+      expect(mockDatabaseManager.updateTokens).toHaveBeenCalledWith(12345, mockNewTokens, 'strava');
     });
 
     it('should return null when token expired and no refresh token', async () => {
@@ -535,6 +635,147 @@ describe('DatabaseMemberManager', () => {
       jest.spyOn(memberManager, '_getTokensFromJsonFallback').mockResolvedValue(null);
 
       const result = await memberManager.getValidAccessToken(member);
+
+      expect(result).toBeNull();
+    });
+
+    it('should return decrypted api_key for intervals.icu members without touching the database token path', async () => {
+      const member = {
+        athleteId: 12345,
+        discordUserId: 'discord123',
+        provider: 'intervals',
+        tokens: { encrypted: 'data', iv: 'iv', authTag: 'tag' }
+      };
+
+      EncryptionUtils.decryptTokens.mockReturnValue({ api_key: 'intervals_api_key' });
+
+      const result = await memberManager.getValidAccessToken(member);
+
+      expect(result).toBe('intervals_api_key');
+      expect(EncryptionUtils.decryptTokens).toHaveBeenCalledWith(member.tokens);
+    });
+
+    it('should return null when intervals.icu token decryption fails', async () => {
+      const member = {
+        athleteId: 12345,
+        discordUserId: 'discord123',
+        provider: 'intervals',
+        tokens: { encrypted: 'data', iv: 'iv', authTag: 'tag' }
+      };
+
+      EncryptionUtils.decryptTokens.mockReturnValue(null);
+
+      const result = await memberManager.getValidAccessToken(member);
+
+      expect(result).toBeNull();
+    });
+
+    it('should return the strava access token from a database blob for a strava member (namespaced format)', async () => {
+      const member = {
+        athleteId: 12345,
+        discordUserId: 'discord123',
+        provider: 'strava',
+        tokens: { encrypted: 'data', iv: 'iv', authTag: 'tag' }
+      };
+
+      EncryptionUtils.decryptTokens.mockReturnValue({
+        strava: { access_token: 'namespaced_strava_token', expires_at: Date.now() / 1000 + 3600 },
+        intervals: { api_key: 'unrelated_intervals_key' }
+      });
+
+      const result = await memberManager.getValidAccessToken(member);
+
+      expect(result).toBe('namespaced_strava_token');
+    });
+
+    it('should return the intervals.icu api_key from a namespaced blob without disturbing a stored strava namespace', async () => {
+      const member = {
+        athleteId: 12345,
+        discordUserId: 'discord123',
+        provider: 'intervals',
+        tokens: { encrypted: 'data', iv: 'iv', authTag: 'tag' }
+      };
+
+      EncryptionUtils.decryptTokens.mockReturnValue({
+        strava: { access_token: 'preserved_strava_token', expires_at: Date.now() / 1000 + 3600 },
+        intervals: { api_key: 'namespaced_intervals_key' }
+      });
+
+      const result = await memberManager.getValidAccessToken(member);
+
+      expect(result).toBe('namespaced_intervals_key');
+    });
+
+    it('should return null for an intervals.icu member whose blob only has a strava namespace', async () => {
+      const member = {
+        athleteId: 12345,
+        discordUserId: 'discord123',
+        provider: 'intervals',
+        tokens: { encrypted: 'data', iv: 'iv', authTag: 'tag' }
+      };
+
+      EncryptionUtils.decryptTokens.mockReturnValue({
+        strava: { access_token: 'strava_only_token', expires_at: Date.now() / 1000 + 3600 }
+      });
+
+      const result = await memberManager.getValidAccessToken(member);
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('getStoredProviderTokens', () => {
+    it('should return the requested namespace from a namespaced blob', async () => {
+      const member = { athleteId: 12345, tokens: { encrypted: 'data', iv: 'iv', authTag: 'tag' } };
+      const stravaTokens = { access_token: 'stored_strava_token', expires_at: 123 };
+
+      EncryptionUtils.decryptTokens.mockReturnValue({
+        strava: stravaTokens,
+        intervals: { api_key: 'stored_intervals_key' }
+      });
+
+      const result = await memberManager.getStoredProviderTokens(member, 'strava');
+
+      expect(result).toEqual(stravaTokens);
+    });
+
+    it('should normalize a legacy flat strava blob before returning the strava namespace', async () => {
+      const member = { athleteId: 12345, tokens: { encrypted: 'data', iv: 'iv', authTag: 'tag' } };
+      const legacyFlatBlob = { access_token: 'legacy_token', refresh_token: 'legacy_refresh', expires_at: 123 };
+
+      EncryptionUtils.decryptTokens.mockReturnValue(legacyFlatBlob);
+
+      const result = await memberManager.getStoredProviderTokens(member, 'strava');
+
+      expect(result).toEqual(legacyFlatBlob);
+    });
+
+    it('should normalize a legacy flat intervals blob before returning the intervals namespace', async () => {
+      const member = { athleteId: 12345, tokens: { encrypted: 'data', iv: 'iv', authTag: 'tag' } };
+
+      EncryptionUtils.decryptTokens.mockReturnValue({ api_key: 'legacy_intervals_key' });
+
+      const result = await memberManager.getStoredProviderTokens(member, 'intervals');
+
+      expect(result).toEqual({ api_key: 'legacy_intervals_key' });
+    });
+
+    it('should return null when the requested namespace is not present', async () => {
+      const member = { athleteId: 12345, tokens: { encrypted: 'data', iv: 'iv', authTag: 'tag' } };
+
+      EncryptionUtils.decryptTokens.mockReturnValue({ strava: { access_token: 'only_strava' } });
+
+      const result = await memberManager.getStoredProviderTokens(member, 'intervals');
+
+      expect(result).toBeNull();
+    });
+
+    it('should return null when there are no stored tokens at all', async () => {
+      const member = { athleteId: 12345, tokens: null };
+
+      EncryptionUtils.decryptTokens.mockReturnValue(null);
+
+      const result = await memberManager.getStoredProviderTokens(member, 'strava');
 
       expect(result).toBeNull();
     });

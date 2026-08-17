@@ -1,4 +1,5 @@
 const StravaAPI = require('../strava/api');
+const IntervalsAPI = require('../intervals/api');
 const DiscordBot = require('../discord/bot');
 const DatabaseMemberManager = require('../database/DatabaseMemberManager');
 const ActivityQueue = require('../managers/ActivityQueue');
@@ -14,6 +15,7 @@ const { TIME } = require('../constants');
 class ActivityProcessor {
   constructor() {
     this.stravaAPI = new StravaAPI();
+    this.intervalsAPI = new IntervalsAPI();
     this.memberManager = new DatabaseMemberManager();
     this.discordBot = new DiscordBot(this); // Pass this instance to Discord bot
     this.activityQueue = new ActivityQueue(this); // Activity queue for delayed posting
@@ -96,6 +98,17 @@ class ActivityProcessor {
         return;
       }
 
+      // A member's athlete_id can keep routing Strava webhooks to them even
+      // after they've switched to another provider (the old id stays valid
+      // until they switch back). Ignore those events rather than calling the
+      // Strava API with credentials that no longer make sense for this member.
+      if ((member.provider || 'strava') !== 'strava') {
+        logger.activityProcessing(activityId, athleteId, 'NON_STRAVA_MEMBER', 'SKIPPED', {
+          provider: member.provider
+        });
+        return;
+      }
+
       const memberName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
       logger.activity.debug('Found registered member for activity', {
         activityId,
@@ -129,6 +142,23 @@ class ActivityProcessor {
           athleteId,
           error: pbError.message,
         });
+      }
+
+      // Cross-provider duplicate check: if this same physical run already has
+      // an activities row under a different id (e.g. posted once via the
+      // intervals.icu poll before/after this member's provider switch), skip
+      // saving/posting it again so it doesn't double-count on the leaderboard.
+      // PB detection above still runs — best_efforts are worth recording even
+      // for a duplicate.
+      const duplicate = await this.memberManager.databaseManager.findDuplicateActivity(
+        athleteId, activity?.start_date_local, activityId
+      );
+      if (duplicate) {
+        logger.activityProcessing(activityId, athleteId, 'CROSS_PROVIDER_DUPLICATE', 'SKIPPED', {
+          duplicateOf: duplicate.strava_activity_id
+        });
+        this.processedActivities.add(activityKey);
+        return;
       }
 
       // Save activity to DB (non-blocking) — also independent of the post filter
@@ -270,8 +300,10 @@ class ActivityProcessor {
   }
 
   // Process recent activities for all members (useful for initial sync or recovery)
+  // Strava-only: intervals.icu members are recovered via pollIntervalsActivities'
+  // own dedup-backed lookback, not this Strava-API-based sync path.
   async processRecentActivities(hoursBack = 24) {
-    const members = await this.memberManager.getAllMembers();
+    const members = (await this.memberManager.getAllMembers()).filter(m => (m.provider || 'strava') === 'strava');
     const after = Math.floor((Date.now() - (hoursBack * TIME.MS_PER_HOUR)) / 1000);
     
     logger.activity.info('Processing recent activities', {
@@ -329,6 +361,151 @@ class ActivityProcessor {
     }
 
     logger.activity.info('Finished processing recent activities');
+  }
+
+  // Poll intervals.icu for new activities for all intervals.icu members.
+  // There are no webhooks for intervals.icu, so this is called on a schedule.
+  //
+  // No stored watermark: intervals.icu activities upload well after they
+  // start (a long run started hours ago, or a watch that syncs late), so a
+  // window based on "time since last poll" can miss activities that started
+  // before the watermark but only just synced. Instead we always look back
+  // a fixed 40 hours and rely on the DB + in-memory dedup in
+  // processIntervalsActivity to skip anything already handled. 40h = the 24h
+  // posting age-filter window plus margin for intervals.icu interpreting the
+  // `oldest` param in the athlete's local time (a negative UTC offset would
+  // otherwise shave up to 12h off the effective window).
+  async pollIntervalsActivities() {
+    try {
+      const members = (await this.memberManager.getAllMembers()).filter(m => m.provider === 'intervals');
+      if (members.length === 0) {
+        return;
+      }
+
+      const oldest = new Date(Date.now() - 40 * TIME.MS_PER_HOUR).toISOString();
+
+      logger.activity.info('Polling intervals.icu activities', {
+        memberCount: members.length,
+        oldest
+      });
+
+      for (const member of members) {
+        const memberName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
+
+        try {
+          const apiKey = await this.memberManager.getValidAccessToken(member);
+          if (!apiKey) {
+            logger.activity.warn('Unable to get valid API key for intervals.icu poll', {
+              memberName,
+              athleteId: member.athleteId
+            });
+            continue;
+          }
+
+          const activities = await this.intervalsAPI.getAthleteActivities(apiKey, oldest);
+
+          logger.activity.info('Found intervals.icu activities', {
+            memberName,
+            activityCount: activities.length
+          });
+
+          for (const activity of activities) {
+            await new Promise(resolve => setTimeout(resolve, 200));
+            await this.processIntervalsActivity(activity, member);
+          }
+        } catch (error) {
+          logger.activity.error('Error polling intervals.icu activities for member', {
+            memberName,
+            athleteId: member.athleteId,
+            error: error.message
+          });
+        }
+      }
+    } catch (error) {
+      logger.activity.error('Failed to poll intervals.icu activities', {
+        error: error.message,
+        stack: error.stack
+      });
+    }
+  }
+
+  async processIntervalsActivity(activity, member) {
+    const athleteId = member.athleteId;
+    const activityKey = `${athleteId}-${activity.id}`;
+
+    if (this.processedActivities.has(activityKey)) {
+      logger.activityProcessing(activity.id, athleteId, 'DUPLICATE', 'SKIPPED', {
+        reason: 'Already processed'
+      });
+      return;
+    }
+
+    try {
+      // Restart-safe dedup: intervals.icu ids are 'i'-prefixed strings so they
+      // can never collide with Strava's numeric activity ids in this table.
+      // A DB row is only ever written once an activity is fully handled
+      // (filtered-out or successfully posted) — see below — so its presence
+      // here reliably means "nothing left to do."
+      if (await this.memberManager.databaseManager.getActivityById(activity.id)) {
+        this.processedActivities.add(activityKey);
+        return;
+      }
+
+      // Cross-provider duplicate check: this same physical run may already
+      // have a row under its Strava id (e.g. posted before this member
+      // switched to intervals.icu, or vice versa on a later switch-back).
+      // Skip entirely — no upsert — so the leaderboard doesn't double-count it.
+      const duplicate = await this.memberManager.databaseManager.findDuplicateActivity(
+        athleteId, activity.start_date_local, activity.id
+      );
+      if (duplicate) {
+        this.processedActivities.add(activityKey);
+        logger.activityProcessing(activity.id, athleteId, 'CROSS_PROVIDER_DUPLICATE', 'SKIPPED', {
+          duplicateOf: duplicate.strava_activity_id
+        });
+        return;
+      }
+
+      if (!this.intervalsAPI.shouldPostActivity(activity)) {
+        await this.memberManager.databaseManager.upsertActivity(athleteId, activity);
+        this.processedActivities.add(activityKey);
+        logger.activityProcessing(activity.id, athleteId, activity.name, 'FILTERED', {
+          reason: 'Activity filtered by posting rules'
+        });
+        return;
+      }
+
+      const processedActivity = this.intervalsAPI.processActivityData(activity, {
+        ...member.athlete,
+        discordUser: member.discordUser
+      });
+
+      // Post before persisting: if postActivity throws, we must NOT upsert
+      // or mark as processed, so the next poll retries it instead of
+      // silently dropping it forever.
+      await this.discordBot.postActivity(processedActivity);
+
+      try {
+        await this.memberManager.databaseManager.upsertActivity(athleteId, activity);
+      } catch (saveError) {
+        logger.activity.error('Failed to save intervals.icu activity to DB', {
+          activityId: activity.id,
+          error: saveError.message,
+        });
+      }
+
+      this.processedActivities.add(activityKey);
+
+      logger.activityProcessing(activity.id, athleteId, activity.name, 'COMPLETED', {
+        activityType: activity.type,
+        distance: activity.distance
+      });
+    } catch (error) {
+      logger.activityProcessing(activity.id, athleteId, 'UNKNOWN', 'FAILED', {
+        error: error.message,
+        stack: error.stack
+      });
+    }
   }
 
   // Cleanup old processed activity records to prevent memory buildup

@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const ActivityEmbedBuilder = require('../utils/EmbedBuilder');
 const DiscordUtils = require('../utils/DiscordUtils');
 const ActivityFormatter = require('../utils/ActivityFormatter');
@@ -99,7 +99,17 @@ class DiscordCommands {
       // Register command
       new SlashCommandBuilder()
         .setName('register')
-        .setDescription('Register yourself with Strava to join the team'),
+        .setDescription('Register yourself with Strava to join the team')
+        .addStringOption(option =>
+          option
+            .setName('provider')
+            .setDescription('Activity provider to connect (default: Strava)')
+            .setRequired(false)
+            .addChoices(
+              { name: 'Strava', value: 'strava' },
+              { name: 'intervals.icu', value: 'intervals' }
+            )
+        ),
 
       // Bot status command
       new SlashCommandBuilder()
@@ -1014,43 +1024,82 @@ class DiscordCommands {
 
   // Handle register command
   async handleRegisterCommand(interaction) {
-    // Acknowledge immediately to prevent timeout
+    const provider = interaction.options.getString('provider') ?? 'strava';
+
+    // Acknowledge immediately to prevent timeout. Neither branch below shows a
+    // modal as the first response — the intervals.icu modal only ever opens
+    // from the button in showIntervalsRegisterInstructions — so deferring
+    // here is always safe.
     await interaction.deferReply({ ephemeral: true });
 
     const userId = interaction.user.id;
     const existingMember = await this.activityProcessor.memberManager.getMemberByDiscordId(userId);
+    const existingProvider = existingMember?.provider || 'strava';
+    const isProviderSwitch = Boolean(existingMember?.isActive) && existingProvider !== provider;
+
+    if (provider === 'intervals') {
+      // Switching from an active Strava connection: try to reuse a previously saved
+      // intervals.icu API key (e.g. from before switching to Strava) so the member
+      // doesn't have to re-enter it. Any failure falls back to the normal instructions flow.
+      if (isProviderSwitch) {
+        const switched = await this._tryInstantIntervalsSwitch(interaction, existingMember);
+        if (switched) return;
+      }
+
+      // Discord modals can't contain links, so intervals.icu registration shows an
+      // ephemeral embed explaining where to find the API key, with a button that
+      // opens the modal (button interactions accept showModal as their first response).
+      await this.showIntervalsRegisterInstructions(interaction);
+      return;
+    }
 
     if (existingMember) {
       const memberName = existingMember.discordUser ? existingMember.discordUser.displayName : `${existingMember.athlete.firstname} ${existingMember.athlete.lastname}`;
 
-      // Deactivated members stay blocked (needs admin /reactivate first). Active members
-      // only stay blocked if their stored tokens actually still work — otherwise (e.g. after
-      // an ENCRYPTION_KEY rotation, or the user revoking access on Strava) fall through and
-      // offer a fresh OAuth link so they can relink instead of being stuck.
-      const hasValidToken = existingMember.isActive
+      // An active member registered under a different provider (e.g. intervals.icu) isn't
+      // "already registered" for Strava purposes — they're switching. getValidAccessToken
+      // would return their intervals.icu API key here, which isn't a Strava token, so it
+      // can't be used to decide whether they're already connected to Strava.
+      // Deactivated members stay blocked (needs admin /reactivate first). Active Strava
+      // members only stay blocked if their stored tokens actually still work — otherwise
+      // (e.g. after an ENCRYPTION_KEY rotation, or the user revoking access on Strava) fall
+      // through and offer a fresh OAuth link so they can relink instead of being stuck.
+      const hasValidToken = existingMember.isActive && !isProviderSwitch
         ? await this.activityProcessor.memberManager.getValidAccessToken(existingMember)
         : null;
 
-      if (!existingMember.isActive || hasValidToken) {
+      if (!isProviderSwitch && (!existingMember.isActive || hasValidToken)) {
         await interaction.editReply({
           content: `✅ You're already registered as **${memberName}**.`
         });
         return;
       }
+
+      // Switching from an active intervals.icu connection: try to reuse a previously
+      // saved Strava token (e.g. from before switching to intervals.icu), refreshing it
+      // if expired, so the member doesn't have to re-authorize. Any failure falls back
+      // to the normal OAuth-link flow.
+      if (isProviderSwitch) {
+        const switched = await this._tryInstantStravaSwitch(interaction, existingMember);
+        if (switched) return;
+      }
     }
 
     const registerUrl = `${config.server.baseUrl}/auth/strava?user_id=${userId}`;
+    const switchNote = isProviderSwitch
+      ? '\n\n**Switching providers:** This will move your connection from intervals.icu to Strava.'
+      : '';
 
     const embed = new EmbedBuilder()
       .setTitle('🔗 Register with Strava')
       .setColor('#FC4C02')
-      .setDescription('Click the link below to connect your Strava account and join the team!\n\n**Data Usage:** This app will access your public Strava activities to post them to this Discord channel. We only process public activities and respect your privacy settings.\n\n**By registering, you authorize this app to access your public Strava activities.**')
+      .setDescription(`Click the link below to connect your Strava account and join the team!\n\n**Data Usage:** This app will access your public Strava activities to post them to this Discord channel. We only process public activities and respect your privacy settings.\n\n**By registering, you authorize this app to access your public Strava activities.**${switchNote}`)
       .addFields([{
         name: '📝 Registration Steps',
         value: `1. [Click here to register](${registerUrl})\n2. Authorize the app on Strava\n3. Return to Discord when complete`,
         inline: false
       }])
-      .setFooter({ 
+      .setFooter({
         text: 'Powered by Strava • This link is personalized for your Discord account',
         iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg'
       })
@@ -1059,6 +1108,237 @@ class DiscordCommands {
     await interaction.editReply({
       embeds: [embed]
     });
+  }
+
+  // Instant switch-back to intervals.icu using a previously saved API key. Returns true
+  // (and has already replied) on success, false on any failure so the caller can fall
+  // back to the normal instructions+button flow.
+  async _tryInstantIntervalsSwitch(interaction, existingMember) {
+    try {
+      const saved = await this.activityProcessor.memberManager.getStoredProviderTokens(existingMember, 'intervals');
+      if (!saved?.api_key) return false;
+
+      const rawAthlete = await this.activityProcessor.intervalsAPI.getAthlete(saved.api_key);
+      const athlete = this.activityProcessor.intervalsAPI.mapAthlete(rawAthlete);
+      if (!Number.isFinite(athlete.id)) return false;
+
+      await this.activityProcessor.memberManager.registerMember(
+        interaction.user.id,
+        athlete,
+        { api_key: saved.api_key },
+        interaction.user,
+        'intervals'
+      );
+
+      const embed = new EmbedBuilder()
+        .setTitle('✅ Connected to intervals.icu')
+        .setColor('#03DAC6')
+        .setDescription(
+          `**${athlete.firstname} ${athlete.lastname}**, your intervals.icu account is connected! ` +
+          'We reused your previously saved intervals.icu API key — no need to re-enter it. ' +
+          'Your activities will sync automatically about every 5 minutes.'
+        )
+        .setTimestamp();
+
+      await interaction.editReply({ embeds: [embed] });
+      return true;
+    } catch (error) {
+      logger.discord.warn('Instant intervals.icu provider switch-back failed, falling back to the manual flow', {
+        user: interaction.user.tag,
+        error: error.message
+      });
+      return false;
+    }
+  }
+
+  // Instant switch-back to Strava using a previously saved token, refreshing it if
+  // expired. Returns true (and has already replied) on success, false on any failure
+  // so the caller can fall back to the normal OAuth-link flow.
+  async _tryInstantStravaSwitch(interaction, existingMember) {
+    try {
+      const saved = await this.activityProcessor.memberManager.getStoredProviderTokens(existingMember, 'strava');
+      if (!saved?.access_token && !saved?.refresh_token) return false;
+
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const isExpired = !saved.expires_at || saved.expires_at <= nowSeconds;
+
+      const tokenData = isExpired
+        ? await this.activityProcessor.stravaAPI.refreshAccessToken(saved.refresh_token)
+        : saved;
+
+      if (!tokenData?.access_token) return false;
+
+      const rawAthlete = await this.activityProcessor.stravaAPI.getAthlete(tokenData.access_token);
+
+      await this.activityProcessor.memberManager.registerMember(
+        interaction.user.id,
+        rawAthlete,
+        tokenData,
+        interaction.user,
+        'strava'
+      );
+
+      const embed = new EmbedBuilder()
+        .setTitle('✅ Reconnected to Strava')
+        .setColor('#FC4C02')
+        .setDescription(
+          `**${rawAthlete.firstname} ${rawAthlete.lastname}**, your saved Strava connection has been restored — ` +
+          'no need to re-authorize. Your activities will be posted as before.'
+        )
+        .setTimestamp();
+
+      await interaction.editReply({ embeds: [embed] });
+      return true;
+    } catch (error) {
+      logger.discord.warn('Instant Strava provider switch-back failed, falling back to the OAuth flow', {
+        user: interaction.user.tag,
+        error: error.message
+      });
+      return false;
+    }
+  }
+
+  // Explain where to find the intervals.icu API key and offer a button that opens the modal.
+  // Modals can't contain links, and the caller always defers first, so this uses editReply.
+  async showIntervalsRegisterInstructions(interaction) {
+    const embed = new EmbedBuilder()
+      .setTitle('🔗 Connect intervals.icu')
+      .setColor('#03DAC6')
+      .setDescription(
+        '1. Open [intervals.icu Settings](https://intervals.icu/settings) (you must be logged in)\n' +
+        '2. Scroll to the **Developer Settings** section and copy your **API Key** (generate one if empty)\n' +
+        '3. Click the button below and paste the key\n\n' +
+        'Your key only grants access to your own intervals.icu data and is stored encrypted.'
+      )
+      .setTimestamp();
+
+    const button = new ButtonBuilder()
+      .setCustomId('intervals_register_button')
+      .setLabel('Enter API key')
+      .setStyle(ButtonStyle.Primary);
+
+    const row = new ActionRowBuilder().addComponents(button);
+
+    await interaction.editReply({
+      embeds: [embed],
+      components: [row]
+    });
+  }
+
+  // Dispatch button interactions to their handlers
+  async handleButtonInteraction(interaction) {
+    if (interaction.customId === 'intervals_register_button') {
+      await this.showIntervalsRegisterModal(interaction);
+      return;
+    }
+
+    logger.discord.warn('Unknown button interaction', { customId: interaction.customId });
+  }
+
+  // Show the intervals.icu registration modal — must be the first response to the interaction
+  async showIntervalsRegisterModal(interaction) {
+    const modal = new ModalBuilder()
+      .setCustomId('intervals_register_modal')
+      .setTitle('Connect intervals.icu');
+
+    const apiKeyInput = new TextInputBuilder()
+      .setCustomId('api_key')
+      .setLabel('intervals.icu API key')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('Find it in intervals.icu Settings → Developer Settings')
+      .setRequired(true);
+
+    const row = new ActionRowBuilder().addComponents(apiKeyInput);
+    modal.addComponents(row);
+
+    await interaction.showModal(modal);
+  }
+
+  // Dispatch modal submissions to their handlers
+  async handleModalSubmit(interaction) {
+    if (interaction.customId === 'intervals_register_modal') {
+      await this.handleIntervalsRegisterModal(interaction);
+      return;
+    }
+
+    logger.discord.warn('Unknown modal submission', { customId: interaction.customId });
+  }
+
+  // Handle the intervals.icu registration modal submission
+  async handleIntervalsRegisterModal(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+
+    const apiKey = interaction.fields.getTextInputValue('api_key').trim();
+
+    let rawAthlete;
+    try {
+      rawAthlete = await this.activityProcessor.intervalsAPI.getAthlete(apiKey);
+    } catch (error) {
+      logger.discord.warn('Failed to validate intervals.icu API key', {
+        user: interaction.user.tag,
+        error: error.message
+      });
+      await interaction.editReply({
+        content: '❌ Could not validate that intervals.icu API key. Generate one in intervals.icu Settings → Developer Settings and try again.'
+      });
+      return;
+    }
+
+    const athlete = this.activityProcessor.intervalsAPI.mapAthlete(rawAthlete);
+
+    if (!Number.isFinite(athlete.id)) {
+      logger.discord.warn('intervals.icu athlete mapping produced a non-finite id', {
+        user: interaction.user.tag
+      });
+      await interaction.editReply({
+        content: '❌ Could not read your intervals.icu athlete profile. Please try again.'
+      });
+      return;
+    }
+
+    try {
+      // Cheap pre-check so the success message can mention a provider switch.
+      const existingMember = await this.activityProcessor.memberManager.getMemberByDiscordId(interaction.user.id);
+      const isProviderSwitch = existingMember?.isActive && (existingMember.provider || 'strava') === 'strava';
+
+      await this.activityProcessor.memberManager.registerMember(
+        interaction.user.id,
+        athlete,
+        { api_key: apiKey },
+        interaction.user,
+        'intervals'
+      );
+
+      const switchNote = isProviderSwitch
+        ? ' You were previously connected via Strava — that connection has been switched to intervals.icu.'
+        : '';
+
+      const embed = new EmbedBuilder()
+        .setTitle('✅ Connected to intervals.icu')
+        .setColor('#03DAC6')
+        .setDescription(
+          `**${athlete.firstname} ${athlete.lastname}**, your intervals.icu account is connected! ` +
+          `Your activities will sync automatically about every 5 minutes.${switchNote}`
+        )
+        .setTimestamp();
+
+      await interaction.editReply({ embeds: [embed] });
+    } catch (error) {
+      if (error.message?.includes('already registered')) {
+        await interaction.editReply({
+          content: '✅ You\'re already registered.'
+        });
+        return;
+      }
+
+      logger.discord.error('Error registering intervals.icu member', {
+        user: interaction.user.tag,
+        error: error.message
+      });
+      await interaction.editReply({
+        content: '❌ Failed to complete intervals.icu registration. Please try again later.'
+      });
+    }
   }
 
 
@@ -1071,7 +1351,7 @@ class DiscordCommands {
       {
         name: '🔗 1. Se connecter',
         value:
-          '`/register` — Connecte ton compte Strava pour rejoindre l\'équipe. Tu recevras un lien personnel pour autoriser l\'accès à tes activités publiques.',
+          '`/register` — Connecte ton compte Strava pour rejoindre l\'équipe. Tu recevras un lien personnel pour autoriser l\'accès à tes activités publiques.\n`/register provider:intervals.icu` — Connecte plutôt un compte intervals.icu via une clé API.',
         inline: false,
       },
       {
@@ -1287,6 +1567,37 @@ class DiscordCommands {
           content: `❌ **${memberName}** needs to re-authorize with Strava to view their activities.\n` +
                    'Please use the `/register` command to reconnect your Strava account.',
         });
+        return;
+      }
+
+      // intervals.icu members: fetch via the intervals API instead of Strava.
+      // intervals.icu exposes no per-activity privacy flags, so there's no
+      // equivalent of the Strava path's shouldPostActivity({skipAgeFilter:true}) gate.
+      if (member.provider === 'intervals') {
+        const oldest = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+        const intervalsActivities = await this.activityProcessor.intervalsAPI.getAthleteActivities(accessToken, oldest);
+
+        if (!intervalsActivities || intervalsActivities.length === 0) {
+          const memberName = getDiscordName(member);
+          await interaction.editReply({
+            content: `📭 No recent activities found for **${memberName}**.`,
+          });
+          return;
+        }
+
+        // The API's sort order isn't guaranteed — pick the most recent by start_date_local.
+        const latestActivity = intervalsActivities.reduce((latest, activity) =>
+          new Date(activity.start_date_local) > new Date(latest.start_date_local) ? activity : latest
+        );
+
+        const processedActivity = this.activityProcessor.intervalsAPI.processActivityData(
+          latestActivity,
+          { ...member.athlete, discordUser: member.discordUser }
+        );
+
+        const embed = ActivityEmbedBuilder.createActivityEmbed(processedActivity, { type: 'latest' });
+
+        await interaction.editReply({ embeds: [embed] });
         return;
       }
 
@@ -2419,6 +2730,13 @@ class DiscordCommands {
         return;
       }
 
+      if (member.provider === 'intervals') {
+        await interaction.editReply({
+          content: '❌ /sync uses Strava best-effort data and is only available for Strava-connected members.',
+        });
+        return;
+      }
+
       const period = options.getString('period');
       const monthInput = options.getString('month');
 
@@ -2516,10 +2834,21 @@ class DiscordCommands {
       const totals = { processed: 0, updated: 0, errors: 0 };
       const skipped = [];
       const failed = [];
+      const intervalsSkipped = [];
 
       for (const [index, member] of members.entries()) {
         const memberName = member.discordUser?.displayName
           || `${member.athlete.firstname} ${member.athlete.lastname}`.trim();
+
+        // PB sync relies on Strava best_efforts — intervals.icu members can't be synced this way.
+        if (member.provider === 'intervals') {
+          logger.discord.info('Skipping intervals.icu member in team-wide Strava PB sync', {
+            memberName,
+            athleteId: member.athleteId,
+          });
+          intervalsSkipped.push(memberName);
+          continue;
+        }
 
         await this._editReplySafe(interaction, {
           content: `⏳ Syncing **${periodLabel}** — **${memberName}** (${index + 1}/${members.length})…`,
@@ -2557,7 +2886,7 @@ class DiscordCommands {
         .setTitle(`🔄 Team Sync Complete — ${periodLabel}`)
         .setColor('#D4AF37')
         .addFields([
-          { name: 'Members synced', value: String(members.length - skipped.length - failed.length), inline: true },
+          { name: 'Members synced', value: String(members.length - skipped.length - failed.length - intervalsSkipped.length), inline: true },
           { name: 'Activities scanned', value: String(totals.processed), inline: true },
           { name: 'PBs updated', value: String(totals.updated), inline: true },
         ])
@@ -2565,11 +2894,14 @@ class DiscordCommands {
       if (skipped.length > 0) {
         embed.addFields([{ name: '⚠️ Skipped (no valid token)', value: skipped.join(', ') }]);
       }
+      if (intervalsSkipped.length > 0) {
+        embed.addFields([{ name: 'ℹ️ Skipped (intervals.icu — Strava-only sync)', value: intervalsSkipped.join(', ') }]);
+      }
       if (failed.length > 0) {
         embed.addFields([{ name: '❌ Failed', value: failed.join(', ') }]);
       }
 
-      const syncedCount = members.length - skipped.length - failed.length;
+      const syncedCount = members.length - skipped.length - failed.length - intervalsSkipped.length;
       await this._deliverSyncSummary(
         interaction,
         `🔄 **Team sync complete — ${periodLabel}** — ${syncedCount} members synced, ${totals.processed} activities scanned, ${totals.updated} PBs updated.`,

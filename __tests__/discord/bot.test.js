@@ -66,6 +66,8 @@ const getOnceHandler = (mockClient, eventName) => {
 const createMockInteraction = (overrides = {}) => ({
   isChatInputCommand: () => false,
   isAutocomplete: () => false,
+  isModalSubmit: () => false,
+  isButton: () => false,
   ...overrides
 });
 
@@ -117,11 +119,15 @@ describe('DiscordBot', () => {
     const mockGetCommands = jest.fn().mockReturnValue([]);
     const mockHandleCommand = jest.fn();
     const mockHandleAutocomplete = jest.fn();
-    
+    const mockHandleModalSubmit = jest.fn();
+    const mockHandleButtonInteraction = jest.fn();
+
     mockCommands = {
       getCommands: mockGetCommands,
       handleCommand: mockHandleCommand,
-      handleAutocomplete: mockHandleAutocomplete
+      handleAutocomplete: mockHandleAutocomplete,
+      handleModalSubmit: mockHandleModalSubmit,
+      handleButtonInteraction: mockHandleButtonInteraction
     };
     DiscordCommands.mockImplementation(() => mockCommands);
 
@@ -224,6 +230,26 @@ describe('DiscordBot', () => {
         expect(mockCommands.handleAutocomplete).toHaveBeenCalledWith(mockInteraction);
       });
 
+      it('should handle modal submit interactions', async () => {
+        const mockInteraction = createMockInteraction({
+          isModalSubmit: () => true
+        });
+
+        await interactionHandler(mockInteraction);
+
+        expect(mockCommands.handleModalSubmit).toHaveBeenCalledWith(mockInteraction);
+      });
+
+      it('should handle button interactions', async () => {
+        const mockInteraction = createMockInteraction({
+          isButton: () => true
+        });
+
+        await interactionHandler(mockInteraction);
+
+        expect(mockCommands.handleButtonInteraction).toHaveBeenCalledWith(mockInteraction);
+      });
+
       it('should ignore other interaction types', async () => {
         const mockInteraction = createMockInteraction();
 
@@ -231,6 +257,28 @@ describe('DiscordBot', () => {
 
         expect(mockCommands.handleCommand).not.toHaveBeenCalled();
         expect(mockCommands.handleAutocomplete).not.toHaveBeenCalled();
+        expect(mockCommands.handleModalSubmit).not.toHaveBeenCalled();
+        expect(mockCommands.handleButtonInteraction).not.toHaveBeenCalled();
+      });
+
+      it('should handle modal submit errors gracefully', async () => {
+        const mockInteraction = createMockInteraction({
+          isModalSubmit: () => true
+        });
+        const error = new Error('Modal submit failed');
+        mockCommands.handleModalSubmit.mockRejectedValue(error);
+
+        await expect(interactionHandler(mockInteraction)).resolves.toBeUndefined();
+      });
+
+      it('should handle button interaction errors gracefully', async () => {
+        const mockInteraction = createMockInteraction({
+          isButton: () => true
+        });
+        const error = new Error('Button interaction failed');
+        mockCommands.handleButtonInteraction.mockRejectedValue(error);
+
+        await expect(interactionHandler(mockInteraction)).resolves.toBeUndefined();
       });
 
       it('should handle command errors gracefully', async () => {

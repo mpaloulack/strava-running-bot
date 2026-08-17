@@ -1,5 +1,6 @@
 const ActivityProcessor = require('../../src/processors/ActivityProcessor');
 const StravaAPI = require('../../src/strava/api');
+const IntervalsAPI = require('../../src/intervals/api');
 const DiscordBot = require('../../src/discord/bot');
 const DatabaseMemberManager = require('../../src/database/DatabaseMemberManager');
 const ActivityQueue = require('../../src/managers/ActivityQueue');
@@ -8,6 +9,7 @@ const logger = require('../../src/utils/Logger');
 
 // Mock dependencies
 jest.mock('../../src/strava/api');
+jest.mock('../../src/intervals/api');
 jest.mock('../../src/discord/bot');
 jest.mock('../../src/managers/MemberManager');
 jest.mock('../../src/database/DatabaseMemberManager');
@@ -36,6 +38,7 @@ jest.mock('../../src/utils/Logger', () => ({
 describe('ActivityProcessor', () => {
   let activityProcessor;
   let mockStravaAPI;
+  let mockIntervalsAPI;
   let mockDiscordBot;
   let mockMemberManager;
   let mockActivityQueue;
@@ -85,6 +88,15 @@ describe('ActivityProcessor', () => {
       getAthleteActivities: jest.fn()
     };
 
+    mockIntervalsAPI = {
+      getAthleteActivities: jest.fn(),
+      shouldPostActivity: jest.fn(),
+      processActivityData: jest.fn(),
+      getAthlete: jest.fn(),
+      mapAthlete: jest.fn(),
+      getActivity: jest.fn()
+    };
+
     mockDiscordBot = {
       start: jest.fn(),
       stop: jest.fn(),
@@ -102,7 +114,12 @@ describe('ActivityProcessor', () => {
       getMemberCount: jest.fn(),
       databaseManager: {
         upsertActivity: jest.fn().mockResolvedValue(undefined),
-        settingsManager: {},
+        getActivityById: jest.fn().mockResolvedValue(null),
+        findDuplicateActivity: jest.fn().mockResolvedValue(null),
+        settingsManager: {
+          getSetting: jest.fn().mockResolvedValue(null),
+          setSetting: jest.fn().mockResolvedValue(undefined),
+        },
       }
     };
 
@@ -116,6 +133,7 @@ describe('ActivityProcessor', () => {
 
     // Mock constructors
     StravaAPI.mockImplementation(() => mockStravaAPI);
+    IntervalsAPI.mockImplementation(() => mockIntervalsAPI);
     DiscordBot.mockImplementation(() => mockDiscordBot);
     DatabaseMemberManager.mockImplementation(() => mockMemberManager);
     ActivityQueue.mockImplementation(() => mockActivityQueue);
@@ -240,6 +258,50 @@ describe('ActivityProcessor', () => {
       expect(mockStravaAPI.getActivity).not.toHaveBeenCalled();
       expect(logger.activityProcessing).toHaveBeenCalledWith(98765, 12345, 'Test User', 'FAILED', {
         reason: 'Unable to get valid access token'
+      });
+    });
+
+    it('should skip webhook events for a member who has switched to a non-strava provider', async () => {
+      const intervalsMember = { ...mockMember, provider: 'intervals' };
+      mockMemberManager.getMemberByAthleteId.mockResolvedValue(intervalsMember);
+
+      await activityProcessor.processNewActivity(98765, 12345);
+
+      expect(mockMemberManager.getValidAccessToken).not.toHaveBeenCalled();
+      expect(mockStravaAPI.getActivity).not.toHaveBeenCalled();
+      expect(logger.activityProcessing).toHaveBeenCalledWith(98765, 12345, 'NON_STRAVA_MEMBER', 'SKIPPED', {
+        provider: 'intervals'
+      });
+    });
+
+    it('should still process a member with no provider field set (legacy default strava)', async () => {
+      const legacyMember = { ...mockMember };
+      delete legacyMember.provider;
+      mockMemberManager.getMemberByAthleteId.mockResolvedValue(legacyMember);
+
+      await activityProcessor.processNewActivity(98765, 12345);
+
+      expect(mockStravaAPI.getActivity).toHaveBeenCalledWith(98765, 'valid_token');
+      expect(mockDiscordBot.postActivity).toHaveBeenCalled();
+    });
+
+    it('should skip and not upsert/post a cross-provider duplicate, after still running PB detection', async () => {
+      const pbSpy = jest.spyOn(activityProcessor.pbManager, 'checkAndUpdatePBs').mockResolvedValue([]);
+      mockMemberManager.databaseManager.findDuplicateActivity.mockResolvedValue({
+        strava_activity_id: 'i176829341'
+      });
+
+      await activityProcessor.processNewActivity(98765, 12345);
+
+      expect(pbSpy).toHaveBeenCalledWith(12345, mockActivity);
+      expect(mockMemberManager.databaseManager.findDuplicateActivity).toHaveBeenCalledWith(
+        12345, mockActivity.start_date_local, 98765
+      );
+      expect(mockMemberManager.databaseManager.upsertActivity).not.toHaveBeenCalled();
+      expect(mockDiscordBot.postActivity).not.toHaveBeenCalled();
+      expect(activityProcessor.processedActivities.has('12345-98765')).toBe(true);
+      expect(logger.activityProcessing).toHaveBeenCalledWith(98765, 12345, 'CROSS_PROVIDER_DUPLICATE', 'SKIPPED', {
+        duplicateOf: 'i176829341'
       });
     });
 
@@ -581,6 +643,280 @@ describe('ActivityProcessor', () => {
         discordUserId: '123456789'
       });
     }, 15000);
+
+    it('should skip intervals.icu members (recovered separately via pollIntervalsActivities)', async () => {
+      const intervalsMember = {
+        ...mockMember,
+        athlete: { ...mockMember.athlete, id: 54321 },
+        provider: 'intervals'
+      };
+      mockMemberManager.getAllMembers.mockResolvedValue([mockMember, intervalsMember]);
+      mockStravaAPI.getAthleteActivities.mockResolvedValue([]);
+
+      await activityProcessor.processRecentActivities(6);
+
+      expect(mockStravaAPI.getAthleteActivities).toHaveBeenCalledTimes(1);
+      expect(mockMemberManager.getValidAccessToken).toHaveBeenCalledTimes(1);
+      expect(mockMemberManager.getValidAccessToken).toHaveBeenCalledWith(mockMember);
+    });
+  });
+
+  describe('pollIntervalsActivities', () => {
+    const stravaMember = {
+      ...mockMember,
+      provider: 'strava'
+    };
+
+    const intervalsMember = {
+      discordUserId: '555555',
+      discordUser: { displayName: 'Intervals User', username: 'intervalsuser' },
+      athleteId: 54321,
+      athlete: { id: 54321, firstname: 'Jane', lastname: 'Runner' },
+      provider: 'intervals'
+    };
+
+    const intervalsActivity = {
+      id: 'i176829341',
+      name: 'Easy Run',
+      type: 'Run',
+      distance: 8000,
+      moving_time: 2400,
+      start_date_local: '2026-08-17T07:00:00'
+    };
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+      jest.useFakeTimers();
+
+      mockMemberManager.getAllMembers.mockResolvedValue([stravaMember, intervalsMember]);
+      mockMemberManager.getValidAccessToken.mockResolvedValue('intervals_api_key');
+      mockIntervalsAPI.getAthleteActivities.mockResolvedValue([intervalsActivity]);
+      mockIntervalsAPI.shouldPostActivity.mockReturnValue(true);
+      mockIntervalsAPI.processActivityData.mockReturnValue({ ...intervalsActivity, provider: 'intervals' });
+      mockDiscordBot.postActivity.mockResolvedValue();
+      mockMemberManager.databaseManager.getActivityById.mockResolvedValue(null);
+    });
+
+    it('polls only intervals.icu members and ignores strava-provider members', async () => {
+      const promise = activityProcessor.pollIntervalsActivities();
+      await jest.runAllTimersAsync();
+      await promise;
+
+      expect(mockMemberManager.getValidAccessToken).toHaveBeenCalledTimes(1);
+      expect(mockMemberManager.getValidAccessToken).toHaveBeenCalledWith(intervalsMember);
+      expect(mockIntervalsAPI.getAthleteActivities).toHaveBeenCalledTimes(1);
+    });
+
+    it('always uses a fixed 40-hour lookback window, independent of any prior poll', async () => {
+      const now = Date.now();
+      jest.spyOn(Date, 'now').mockReturnValue(now);
+
+      const promise = activityProcessor.pollIntervalsActivities();
+      await jest.runAllTimersAsync();
+      await promise;
+
+      const [, oldest] = mockIntervalsAPI.getAthleteActivities.mock.calls[0];
+      expect(oldest).toBe(new Date(now - 40 * 60 * 60 * 1000).toISOString());
+
+      Date.now.mockRestore();
+    });
+
+    it('does not read or write any intervals poll watermark setting', async () => {
+      const promise = activityProcessor.pollIntervalsActivities();
+      await jest.runAllTimersAsync();
+      await promise;
+
+      expect(mockMemberManager.databaseManager.settingsManager.getSetting).not.toHaveBeenCalled();
+      expect(mockMemberManager.databaseManager.settingsManager.setSetting).not.toHaveBeenCalled();
+    });
+
+    it('skips members without a valid api key and continues', async () => {
+      mockMemberManager.getValidAccessToken.mockResolvedValue(null);
+
+      const promise = activityProcessor.pollIntervalsActivities();
+      await jest.runAllTimersAsync();
+      await promise;
+
+      expect(mockIntervalsAPI.getAthleteActivities).not.toHaveBeenCalled();
+      expect(logger.activity.warn).toHaveBeenCalledWith(
+        'Unable to get valid API key for intervals.icu poll',
+        expect.objectContaining({ athleteId: 54321 })
+      );
+    });
+
+    it('returns early when there are no intervals.icu members', async () => {
+      mockMemberManager.getAllMembers.mockResolvedValue([stravaMember]);
+
+      await activityProcessor.pollIntervalsActivities();
+
+      expect(mockIntervalsAPI.getAthleteActivities).not.toHaveBeenCalled();
+      expect(mockMemberManager.databaseManager.settingsManager.setSetting).not.toHaveBeenCalled();
+    });
+
+    it('continues to the next member when one member errors', async () => {
+      const secondIntervalsMember = {
+        ...intervalsMember,
+        discordUserId: '666666',
+        athlete: { id: 99999, firstname: 'Second', lastname: 'Runner' }
+      };
+      mockMemberManager.getAllMembers.mockResolvedValue([intervalsMember, secondIntervalsMember]);
+      mockMemberManager.getValidAccessToken
+        .mockResolvedValueOnce('intervals_api_key')
+        .mockResolvedValueOnce('intervals_api_key');
+      mockIntervalsAPI.getAthleteActivities
+        .mockRejectedValueOnce(new Error('rate limited'))
+        .mockResolvedValueOnce([intervalsActivity]);
+
+      const promise = activityProcessor.pollIntervalsActivities();
+      await jest.runAllTimersAsync();
+      await promise;
+
+      expect(logger.activity.error).toHaveBeenCalledWith(
+        'Error polling intervals.icu activities for member',
+        expect.objectContaining({ athleteId: 54321, error: 'rate limited' })
+      );
+      expect(mockIntervalsAPI.getAthleteActivities).toHaveBeenCalledTimes(2);
+      expect(mockDiscordBot.postActivity).toHaveBeenCalled();
+    });
+
+    it('does not throw when the poll itself fails unexpectedly', async () => {
+      mockMemberManager.getAllMembers.mockRejectedValue(new Error('db down'));
+
+      await expect(activityProcessor.pollIntervalsActivities()).resolves.toBeUndefined();
+      expect(logger.activity.error).toHaveBeenCalledWith(
+        'Failed to poll intervals.icu activities',
+        expect.objectContaining({ error: 'db down' })
+      );
+    });
+  });
+
+  describe('processIntervalsActivity', () => {
+    const intervalsMember = {
+      discordUserId: '555555',
+      discordUser: { displayName: 'Intervals User', username: 'intervalsuser' },
+      athleteId: 54321,
+      athlete: { id: 54321, firstname: 'Jane', lastname: 'Runner' },
+      provider: 'intervals'
+    };
+
+    const intervalsActivity = {
+      id: 'i176829341',
+      name: 'Easy Run',
+      type: 'Run',
+      distance: 8000,
+      moving_time: 2400,
+      start_date_local: '2026-08-17T07:00:00'
+    };
+
+    const processedIntervalsActivity = {
+      ...intervalsActivity,
+      provider: 'intervals',
+      url: 'https://intervals.icu/activities/i176829341'
+    };
+
+    beforeEach(() => {
+      mockMemberManager.databaseManager.getActivityById.mockResolvedValue(null);
+      mockMemberManager.databaseManager.upsertActivity.mockResolvedValue(undefined);
+      mockIntervalsAPI.shouldPostActivity.mockReturnValue(true);
+      mockIntervalsAPI.processActivityData.mockReturnValue(processedIntervalsActivity);
+      mockDiscordBot.postActivity.mockResolvedValue();
+    });
+
+    it('posts the processed activity, then persists it, and marks it processed on the happy path', async () => {
+      const callOrder = [];
+      mockDiscordBot.postActivity.mockImplementation(async () => { callOrder.push('post'); });
+      mockMemberManager.databaseManager.upsertActivity.mockImplementation(async () => { callOrder.push('upsert'); });
+
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember);
+
+      expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(54321, intervalsActivity);
+      expect(mockIntervalsAPI.processActivityData).toHaveBeenCalledWith(
+        intervalsActivity,
+        expect.objectContaining({ ...intervalsMember.athlete, discordUser: intervalsMember.discordUser })
+      );
+      expect(mockDiscordBot.postActivity).toHaveBeenCalledWith(processedIntervalsActivity);
+      // Persist only happens after a successful post, so a post failure can never
+      // leave a DB row that permanently blocks a retry.
+      expect(callOrder).toEqual(['post', 'upsert']);
+      expect(activityProcessor.processedActivities.has('54321-i176829341')).toBe(true);
+      expect(logger.activityProcessing).toHaveBeenCalledWith(
+        'i176829341', 54321, intervalsActivity.name, 'COMPLETED', expect.any(Object)
+      );
+    });
+
+    it('skips already-processed activities (in-memory dedup)', async () => {
+      activityProcessor.processedActivities.add('54321-i176829341');
+
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember);
+
+      expect(mockMemberManager.databaseManager.getActivityById).not.toHaveBeenCalled();
+      expect(logger.activityProcessing).toHaveBeenCalledWith(
+        'i176829341', 54321, 'DUPLICATE', 'SKIPPED', { reason: 'Already processed' }
+      );
+    });
+
+    it('skips activities already present in the database (restart-safe dedup)', async () => {
+      mockMemberManager.databaseManager.getActivityById.mockResolvedValue({ strava_activity_id: 'i176829341' });
+
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember);
+
+      expect(mockMemberManager.databaseManager.upsertActivity).not.toHaveBeenCalled();
+      expect(mockDiscordBot.postActivity).not.toHaveBeenCalled();
+      expect(activityProcessor.processedActivities.has('54321-i176829341')).toBe(true);
+    });
+
+    it('skips a cross-provider duplicate (found via findDuplicateActivity) without upserting', async () => {
+      mockMemberManager.databaseManager.findDuplicateActivity.mockResolvedValue({
+        strava_activity_id: '98765'
+      });
+
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember);
+
+      expect(mockMemberManager.databaseManager.findDuplicateActivity).toHaveBeenCalledWith(
+        54321, intervalsActivity.start_date_local, intervalsActivity.id
+      );
+      expect(mockMemberManager.databaseManager.upsertActivity).not.toHaveBeenCalled();
+      expect(mockDiscordBot.postActivity).not.toHaveBeenCalled();
+      expect(activityProcessor.processedActivities.has('54321-i176829341')).toBe(true);
+      expect(logger.activityProcessing).toHaveBeenCalledWith(
+        'i176829341', 54321, 'CROSS_PROVIDER_DUPLICATE', 'SKIPPED', { duplicateOf: '98765' }
+      );
+    });
+
+    it('caches and skips activities filtered by shouldPostActivity', async () => {
+      mockIntervalsAPI.shouldPostActivity.mockReturnValue(false);
+
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember);
+
+      expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalled();
+      expect(mockDiscordBot.postActivity).not.toHaveBeenCalled();
+      expect(activityProcessor.processedActivities.has('54321-i176829341')).toBe(true);
+      expect(logger.activityProcessing).toHaveBeenCalledWith(
+        'i176829341', 54321, intervalsActivity.name, 'FILTERED', expect.any(Object)
+      );
+    });
+
+    it('does not persist or mark as processed when Discord posting fails, so a later poll retries it', async () => {
+      mockDiscordBot.postActivity.mockRejectedValue(new Error('discord error'));
+
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember);
+
+      expect(mockMemberManager.databaseManager.upsertActivity).not.toHaveBeenCalled();
+      expect(activityProcessor.processedActivities.has('54321-i176829341')).toBe(false);
+      expect(logger.activityProcessing).toHaveBeenCalledWith(
+        'i176829341', 54321, 'UNKNOWN', 'FAILED', expect.any(Object)
+      );
+
+      // Simulate the next poll: DB still has no row and the in-memory set has
+      // no entry for this activity, so dedup lets it through and a retry can
+      // succeed.
+      mockDiscordBot.postActivity.mockResolvedValue();
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember);
+
+      expect(mockDiscordBot.postActivity).toHaveBeenCalledTimes(2);
+      expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(54321, intervalsActivity);
+      expect(activityProcessor.processedActivities.has('54321-i176829341')).toBe(true);
+    });
   });
 
   describe('cleanupProcessedActivities', () => {

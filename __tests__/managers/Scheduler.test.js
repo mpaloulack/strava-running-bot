@@ -118,7 +118,8 @@ describe('Scheduler', () => {
       discordBot: mockDiscordBot,
       memberManager: {
         getMemberByAthleteId: jest.fn()
-      }
+      },
+      pollIntervalsActivities: jest.fn().mockResolvedValue()
     };
 
     mockLeaderboardManager = {
@@ -668,6 +669,60 @@ describe('Scheduler', () => {
 
       expect(roadEmbed).toBe(mockEmbedBuilder);
       expect(trailEmbed).toBe(mockEmbedBuilder);
+    });
+  });
+
+  describe('intervals.icu Poll', () => {
+    const intervalsConfig = {
+      scheduler: {
+        weeklyEnabled: false,
+        monthlyEnabled: false,
+        weeklySchedule: '0 8 * * 1',
+        monthlySchedule: '0 8 1 * *',
+        timezone: 'UTC',
+        intervalsPollEnabled: true,
+        intervalsPollSchedule: '*/5 * * * *'
+      }
+    };
+
+    test('schedules an intervalsPoll cron job when enabled', async () => {
+      await scheduler.initialize(intervalsConfig);
+
+      expect(cron.schedule).toHaveBeenCalledTimes(1);
+      expect(cron.schedule.mock.calls[0][0]).toBe('*/5 * * * *');
+      expect(scheduler.jobs.has('intervalsPoll')).toBe(true);
+      expect(mockCronJob.start).toHaveBeenCalled();
+    });
+
+    test('does not schedule an intervalsPoll job when disabled', async () => {
+      await scheduler.initialize({
+        ...intervalsConfig,
+        scheduler: { ...intervalsConfig.scheduler, intervalsPollEnabled: false }
+      });
+
+      expect(scheduler.jobs.has('intervalsPoll')).toBe(false);
+    });
+
+    test('the registered cron callback invokes runIntervalsPoll', async () => {
+      await scheduler.initialize(intervalsConfig);
+      const cronCallback = cron.schedule.mock.calls[0][1];
+      const spy = jest.spyOn(scheduler, 'runIntervalsPoll').mockResolvedValueOnce();
+
+      cronCallback();
+
+      expect(spy).toHaveBeenCalled();
+    });
+
+    test('runIntervalsPoll delegates to activityProcessor.pollIntervalsActivities', async () => {
+      await scheduler.runIntervalsPoll();
+
+      expect(mockActivityProcessor.pollIntervalsActivities).toHaveBeenCalled();
+    });
+
+    test('runIntervalsPoll swallows errors from the activity processor', async () => {
+      mockActivityProcessor.pollIntervalsActivities.mockRejectedValueOnce(new Error('poll failed'));
+
+      await expect(scheduler.runIntervalsPoll()).resolves.toBeUndefined();
     });
   });
 

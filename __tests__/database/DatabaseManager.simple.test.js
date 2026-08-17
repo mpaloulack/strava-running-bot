@@ -217,6 +217,48 @@ describe('DatabaseManager', () => {
       expect(mockDb.insert).toHaveBeenCalled();
     });
 
+    it('should store the given provider on the inserted member row', async () => {
+      const discordUserId = 'discord123';
+      const athlete = { id: 12345, firstname: 'John', lastname: 'Doe' };
+      const tokenData = { api_key: 'intervals-key' };
+
+      const mockInsertChain = { values: jest.fn().mockReturnThis() };
+      mockDb.insert.mockReturnValue(mockInsertChain);
+
+      mockDb.get
+        .mockResolvedValueOnce(null) // getMemberByDiscordId - no existing
+        .mockResolvedValueOnce(null) // getMemberByAthleteId - no existing
+        .mockResolvedValueOnce({ athlete_id: 12345, discord_id: discordUserId, provider: 'intervals' }); // getMemberByAthleteId after insert
+
+      await DatabaseManager.registerMember(discordUserId, athlete, tokenData, null, 'intervals');
+
+      expect(mockInsertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: 'intervals' })
+      );
+    });
+
+    it('should namespace tokens by provider when encrypting for a new member', async () => {
+      const discordUserId = 'discord123';
+      const athlete = { id: 12345, firstname: 'John', lastname: 'Doe' };
+      const tokenData = { api_key: 'intervals-key' };
+
+      const encryptSpy = jest.spyOn(EncryptionUtils, 'encryptTokensToJSON');
+
+      const mockInsertChain = { values: jest.fn().mockReturnThis() };
+      mockDb.insert.mockReturnValue(mockInsertChain);
+
+      mockDb.get
+        .mockResolvedValueOnce(null) // getMemberByDiscordId - no existing
+        .mockResolvedValueOnce(null) // getMemberByAthleteId - no existing
+        .mockResolvedValueOnce({ athlete_id: 12345, discord_id: discordUserId, provider: 'intervals' });
+
+      await DatabaseManager.registerMember(discordUserId, athlete, tokenData, null, 'intervals');
+
+      expect(encryptSpy).toHaveBeenCalledWith({ intervals: tokenData });
+
+      encryptSpy.mockRestore();
+    });
+
     it('should relink an existing member with fresh tokens and athlete/discord info', async () => {
       const existingAthleteId = 12345;
       const athlete = { id: 12345, firstname: 'John', lastname: 'Doe' };
@@ -254,6 +296,232 @@ describe('DatabaseManager', () => {
       );
       expect(result.athleteId).toBe(existingAthleteId);
       expect(result.discordUserId).toBe('discord123');
+    });
+
+    it('should include the given provider in the relink update payload', async () => {
+      const existingAthleteId = 12345;
+      const athlete = { id: 12345, firstname: 'John', lastname: 'Doe' };
+      const tokenData = { api_key: 'intervals-key' };
+
+      const mockUpdateChain = {
+        set: jest.fn().mockReturnThis(),
+        where: jest.fn().mockResolvedValue(undefined)
+      };
+      mockDb.update.mockReturnValue(mockUpdateChain);
+
+      const mockSelectChain = {
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        get: jest.fn().mockResolvedValue({
+          athlete_id: existingAthleteId,
+          discord_id: 'discord123',
+          athlete: JSON.stringify(athlete),
+          is_active: 1,
+          provider: 'intervals',
+          encrypted_tokens: JSON.stringify({ iv: 'iv', encrypted: 'enc', authTag: 'tag' })
+        })
+      };
+      mockDb.select.mockReturnValue(mockSelectChain);
+
+      await DatabaseManager.relinkMember(existingAthleteId, athlete, tokenData, null, 'intervals');
+
+      expect(mockUpdateChain.set).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: 'intervals' })
+      );
+    });
+
+    it('should renumber athlete_id and cascade into races/personal_bests/activities inside one transaction when the athlete id changes', async () => {
+      const oldAthleteId = 12345;
+      const newAthleteId = 99999;
+      const athlete = { id: newAthleteId, firstname: 'Jane', lastname: 'Runner' };
+      const tokenData = { api_key: 'intervals-key' };
+
+      const mockUpdateChain = {
+        set: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        run: jest.fn().mockReturnValue({ changes: 1 })
+      };
+      mockDb.update.mockReturnValue(mockUpdateChain);
+
+      const mockGet = jest.fn()
+        .mockResolvedValueOnce(null) // token-preservation lookup at oldAthleteId - nothing to preserve
+        .mockResolvedValueOnce(null) // conflict check at newAthleteId - no conflict
+        .mockResolvedValueOnce({    // final fetch at newAthleteId after the transaction
+          athlete_id: newAthleteId,
+          discord_id: 'discord123',
+          athlete: JSON.stringify(athlete),
+          is_active: 1,
+          provider: 'intervals'
+        });
+
+      mockDb.select.mockReturnValue({
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        get: mockGet
+      });
+
+      const result = await DatabaseManager.relinkMember(oldAthleteId, athlete, tokenData, null, 'intervals');
+
+      expect(mockDb.transaction).toHaveBeenCalled();
+      // members row renumbered + provider switched
+      expect(mockUpdateChain.set).toHaveBeenNthCalledWith(1, expect.objectContaining({
+        athlete_id: newAthleteId,
+        provider: 'intervals'
+      }));
+      // races, personal_bests, activities all repointed at the new id
+      expect(mockUpdateChain.set).toHaveBeenNthCalledWith(2, { member_athlete_id: newAthleteId });
+      expect(mockUpdateChain.set).toHaveBeenNthCalledWith(3, { member_athlete_id: newAthleteId });
+      expect(mockUpdateChain.set).toHaveBeenNthCalledWith(4, { member_athlete_id: newAthleteId });
+      expect(mockUpdateChain.where).toHaveBeenCalledTimes(4);
+      expect(mockUpdateChain.run).toHaveBeenCalledTimes(4);
+
+      expect(result.athleteId).toBe(newAthleteId);
+    });
+
+    it('should reject the relink when another member already owns the target athlete id', async () => {
+      const oldAthleteId = 12345;
+      const newAthleteId = 99999;
+      const athlete = { id: newAthleteId, firstname: 'Jane', lastname: 'Runner' };
+      const tokenData = { api_key: 'intervals-key' };
+
+      const mockGet = jest.fn()
+        .mockResolvedValueOnce(null) // token-preservation lookup at oldAthleteId - nothing to preserve
+        .mockResolvedValueOnce({    // conflict check at newAthleteId - ALREADY TAKEN
+          athlete_id: newAthleteId,
+          discord_id: 'someone-else',
+          is_active: 1
+        });
+
+      mockDb.select.mockReturnValue({
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        get: mockGet
+      });
+
+      await expect(
+        DatabaseManager.relinkMember(oldAthleteId, athlete, tokenData, null, 'intervals')
+      ).rejects.toThrow(/already registered to a different member/);
+
+      expect(mockDb.update).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('should keep the single-update path (no transaction, no renumbering) when the athlete id is unchanged', async () => {
+      const existingAthleteId = 12345;
+      const athlete = { id: existingAthleteId, firstname: 'Jane', lastname: 'Runner' };
+      const tokenData = { api_key: 'intervals-key' };
+
+      const mockUpdateChain = {
+        set: jest.fn().mockReturnThis(),
+        where: jest.fn().mockResolvedValue(undefined)
+      };
+      mockDb.update.mockReturnValue(mockUpdateChain);
+
+      mockDb.select.mockReturnValue({
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        get: jest.fn().mockResolvedValue({
+          athlete_id: existingAthleteId,
+          discord_id: 'discord123',
+          athlete: JSON.stringify(athlete),
+          is_active: 1,
+          provider: 'strava'
+        })
+      });
+
+      await DatabaseManager.relinkMember(existingAthleteId, athlete, tokenData, null, 'intervals');
+
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockUpdateChain.set).toHaveBeenCalledTimes(1);
+      expect(mockUpdateChain.set).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: 'intervals' })
+      );
+      // athlete_id itself is never part of the single-update payload
+      expect(mockUpdateChain.set.mock.calls[0][0]).not.toHaveProperty('athlete_id');
+    });
+
+    it('should preserve the existing strava namespace when switching to intervals (same id)', async () => {
+      const existingAthleteId = 12345;
+      const athlete = { id: existingAthleteId, firstname: 'Jane', lastname: 'Runner' };
+      const tokenData = { api_key: 'new-intervals-key' };
+
+      // Legacy flat Strava blob - normalizes to { strava: {...} }
+      const decryptSpy = jest.spyOn(EncryptionUtils, 'decryptTokens').mockReturnValue({
+        access_token: 'preserved_strava_token',
+        refresh_token: 'preserved_refresh',
+        expires_at: 111
+      });
+      const encryptSpy = jest.spyOn(EncryptionUtils, 'encryptTokensToJSON');
+
+      const mockUpdateChain = {
+        set: jest.fn().mockReturnThis(),
+        where: jest.fn().mockResolvedValue(undefined)
+      };
+      mockDb.update.mockReturnValue(mockUpdateChain);
+
+      mockDb.select.mockReturnValue({
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        get: jest.fn().mockResolvedValue({
+          athlete_id: existingAthleteId,
+          discord_id: 'discord123',
+          athlete: JSON.stringify(athlete),
+          is_active: 1,
+          provider: 'strava',
+          encrypted_tokens: JSON.stringify({ iv: 'iv', encrypted: 'enc', authTag: 'tag' })
+        })
+      });
+
+      await DatabaseManager.relinkMember(existingAthleteId, athlete, tokenData, null, 'intervals');
+
+      expect(encryptSpy).toHaveBeenCalledWith({
+        strava: { access_token: 'preserved_strava_token', refresh_token: 'preserved_refresh', expires_at: 111 },
+        intervals: tokenData
+      });
+
+      decryptSpy.mockRestore();
+      encryptSpy.mockRestore();
+    });
+
+    it('should preserve the existing intervals namespace when switching back to strava (same id)', async () => {
+      const existingAthleteId = 12345;
+      const athlete = { id: existingAthleteId, firstname: 'Jane', lastname: 'Runner' };
+      const tokenData = { access_token: 'new_strava_token', refresh_token: 'new_refresh', expires_at: 222 };
+
+      // Already-namespaced blob with only intervals stored
+      const decryptSpy = jest.spyOn(EncryptionUtils, 'decryptTokens').mockReturnValue({
+        intervals: { api_key: 'preserved_intervals_key' }
+      });
+      const encryptSpy = jest.spyOn(EncryptionUtils, 'encryptTokensToJSON');
+
+      const mockUpdateChain = {
+        set: jest.fn().mockReturnThis(),
+        where: jest.fn().mockResolvedValue(undefined)
+      };
+      mockDb.update.mockReturnValue(mockUpdateChain);
+
+      mockDb.select.mockReturnValue({
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        get: jest.fn().mockResolvedValue({
+          athlete_id: existingAthleteId,
+          discord_id: 'discord123',
+          athlete: JSON.stringify(athlete),
+          is_active: 1,
+          provider: 'intervals',
+          encrypted_tokens: JSON.stringify({ iv: 'iv', encrypted: 'enc', authTag: 'tag' })
+        })
+      });
+
+      await DatabaseManager.relinkMember(existingAthleteId, athlete, tokenData, null, 'strava');
+
+      expect(encryptSpy).toHaveBeenCalledWith({
+        intervals: { api_key: 'preserved_intervals_key' },
+        strava: tokenData
+      });
+
+      decryptSpy.mockRestore();
+      encryptSpy.mockRestore();
     });
 
     it('should throw and not update the row when token encryption fails during relink', async () => {
@@ -337,15 +605,76 @@ describe('DatabaseManager', () => {
     it('should update member tokens', async () => {
       const athleteId = 12345;
       const tokenData = { access_token: 'new_token', refresh_token: 'new_refresh' };
-      
+
       // Mock returning some result to indicate success
       mockDb.returning.mockResolvedValue([{ athlete_id: athleteId }]);
-      
+
       const result = await DatabaseManager.updateTokens(athleteId, tokenData);
 
       // updateTokens now returns the updated member object
       expect(result).toEqual({ athlete_id: athleteId });
       expect(mockDb.update).toHaveBeenCalled();
+    });
+
+    it('should merge the new tokens with the OTHER provider namespace already stored for the member', async () => {
+      const athleteId = 12345;
+      const tokenData = { access_token: 'refreshed_strava_token', refresh_token: 'r', expires_at: 999 };
+
+      const decryptSpy = jest.spyOn(EncryptionUtils, 'decryptTokens').mockReturnValue({
+        intervals: { api_key: 'preserved_intervals_key' }
+      });
+      const encryptSpy = jest.spyOn(EncryptionUtils, 'encryptTokensToJSON');
+
+      mockDb.select.mockReturnValue({
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        get: jest.fn().mockResolvedValue({
+          athlete_id: athleteId,
+          discord_id: 'discord123',
+          encrypted_tokens: JSON.stringify({ iv: 'iv', encrypted: 'enc', authTag: 'tag' })
+        })
+      });
+      mockDb.returning.mockResolvedValue([{ athlete_id: athleteId }]);
+
+      await DatabaseManager.updateTokens(athleteId, tokenData, 'strava');
+
+      expect(encryptSpy).toHaveBeenCalledWith({
+        intervals: { api_key: 'preserved_intervals_key' },
+        strava: tokenData
+      });
+
+      decryptSpy.mockRestore();
+      encryptSpy.mockRestore();
+    });
+
+    it('should default provider to strava and preserve an existing intervals namespace with no explicit provider arg', async () => {
+      const athleteId = 12345;
+      const tokenData = { access_token: 'refreshed_token' };
+
+      const decryptSpy = jest.spyOn(EncryptionUtils, 'decryptTokens').mockReturnValue({
+        api_key: 'legacy_intervals_key' // legacy flat intervals blob
+      });
+      const encryptSpy = jest.spyOn(EncryptionUtils, 'encryptTokensToJSON');
+
+      mockDb.select.mockReturnValue({
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        get: jest.fn().mockResolvedValue({
+          athlete_id: athleteId,
+          encrypted_tokens: JSON.stringify({ iv: 'iv', encrypted: 'enc', authTag: 'tag' })
+        })
+      });
+      mockDb.returning.mockResolvedValue([{ athlete_id: athleteId }]);
+
+      await DatabaseManager.updateTokens(athleteId, tokenData);
+
+      expect(encryptSpy).toHaveBeenCalledWith({
+        intervals: { api_key: 'legacy_intervals_key' },
+        strava: tokenData
+      });
+
+      decryptSpy.mockRestore();
+      encryptSpy.mockRestore();
     });
 
     it('should deactivate member', async () => {
@@ -522,6 +851,33 @@ describe('DatabaseManager', () => {
       expect(result.athleteId).toBe(12345);
       expect(result.discordUserId).toBe('discord123');
       expect(result.tokens).toBeNull();
+    });
+
+    it('should default provider to strava when column is missing', () => {
+      const member = {
+        athlete_id: 12345,
+        discord_user_id: 'discord123',
+        athlete: JSON.stringify({ id: 12345, firstname: 'John' }),
+        is_active: 1
+      };
+
+      const result = DatabaseManager.decryptMember(member);
+
+      expect(result.provider).toBe('strava');
+    });
+
+    it('should preserve a non-default provider value', () => {
+      const member = {
+        athlete_id: 12345,
+        discord_user_id: 'discord123',
+        athlete: JSON.stringify({ id: 12345, firstname: 'John' }),
+        is_active: 1,
+        provider: 'intervals'
+      };
+
+      const result = DatabaseManager.decryptMember(member);
+
+      expect(result.provider).toBe('intervals');
     });
   });
 
@@ -963,6 +1319,7 @@ describe('DatabaseManager', () => {
         athlete: { firstname: 'Test' },
         athleteId: 12345,
         isActive: false,
+        provider: 'strava',
         registeredAt: undefined,
         lastTokenRefresh: undefined,
         discordUser: {
@@ -1114,6 +1471,128 @@ describe('DatabaseManager', () => {
           set: expect.objectContaining({ strava_activity_id: '98765' }),
         })
       );
+    });
+  });
+
+  describe('getActivityById', () => {
+    beforeEach(() => {
+      DatabaseManager.isInitialized = true;
+      DatabaseManager.db = mockDb;
+    });
+
+    it('should return the activity when found', async () => {
+      const mockActivity = { strava_activity_id: 'i176829341', name: 'Morning Run' };
+
+      const mockSelectChain = {
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        get: jest.fn().mockResolvedValue(mockActivity)
+      };
+      mockDb.select.mockReturnValue(mockSelectChain);
+
+      const result = await DatabaseManager.getActivityById('i176829341');
+
+      expect(result).toEqual(mockActivity);
+    });
+
+    it('should stringify numeric activity ids before querying', async () => {
+      const mockWhereChain = jest.fn().mockReturnThis();
+      const mockSelectChain = {
+        from: jest.fn().mockReturnThis(),
+        where: mockWhereChain,
+        get: jest.fn().mockResolvedValue(null)
+      };
+      mockDb.select.mockReturnValue(mockSelectChain);
+
+      const result = await DatabaseManager.getActivityById(98765);
+
+      expect(result).toBeNull();
+      expect(mockWhereChain).toHaveBeenCalled();
+    });
+
+    it('should return null when activity not found', async () => {
+      const mockSelectChain = {
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        get: jest.fn().mockResolvedValue(undefined)
+      };
+      mockDb.select.mockReturnValue(mockSelectChain);
+
+      const result = await DatabaseManager.getActivityById('missing');
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('findDuplicateActivity', () => {
+    beforeEach(() => {
+      DatabaseManager.isInitialized = true;
+      DatabaseManager.db = mockDb;
+    });
+
+    it('should return null immediately when startDateLocal is falsy, without querying', async () => {
+      const result = await DatabaseManager.findDuplicateActivity(12345, null, 'i176829341');
+
+      expect(result).toBeNull();
+      expect(mockDb.select).not.toHaveBeenCalled();
+    });
+
+    it('should return null when the target startDateLocal itself is unparseable, without querying', async () => {
+      const result = await DatabaseManager.findDuplicateActivity(12345, 'not-a-date', 'i176829341');
+
+      expect(result).toBeNull();
+      expect(mockDb.select).not.toHaveBeenCalled();
+    });
+
+    it('should match a candidate within 10 minutes despite a Z/no-Z formatting difference between providers', async () => {
+      // Strava-style start_date_local carries a misleading trailing Z; intervals.icu carries none.
+      const candidate = { strava_activity_id: '98765', start_date_local: '2026-08-17T07:05:00' };
+      const mockWhereChain = jest.fn().mockResolvedValue([candidate]);
+      mockDb.select.mockReturnValue({ from: jest.fn().mockReturnThis(), where: mockWhereChain });
+
+      const result = await DatabaseManager.findDuplicateActivity(12345, '2026-08-17T07:00:00Z', 'i176829341');
+
+      expect(result).toEqual(candidate);
+      expect(mockWhereChain).toHaveBeenCalled();
+    });
+
+    it('should not match a candidate more than 10 minutes away', async () => {
+      const candidate = { strava_activity_id: '98765', start_date_local: '2026-08-17T07:20:00' };
+      mockDb.select.mockReturnValue({
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockResolvedValue([candidate])
+      });
+
+      const result = await DatabaseManager.findDuplicateActivity(12345, '2026-08-17T07:00:00Z', 'i176829341');
+
+      expect(result).toBeNull();
+    });
+
+    it('should return null when there are no candidates at all', async () => {
+      mockDb.select.mockReturnValue({
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockResolvedValue([])
+      });
+
+      const result = await DatabaseManager.findDuplicateActivity(12345, '2026-08-17T07:00:00Z', 'i176829341');
+
+      expect(result).toBeNull();
+    });
+
+    it('should skip candidates with a missing or unparseable start_date_local and still find a valid match', async () => {
+      const candidates = [
+        { strava_activity_id: '1', start_date_local: null },
+        { strava_activity_id: '2', start_date_local: 'not-a-date' },
+        { strava_activity_id: '3', start_date_local: '2026-08-17T07:02:00' }
+      ];
+      mockDb.select.mockReturnValue({
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockResolvedValue(candidates)
+      });
+
+      const result = await DatabaseManager.findDuplicateActivity(12345, '2026-08-17T07:00:00Z', 'i176829341');
+
+      expect(result).toEqual(candidates[2]);
     });
   });
 

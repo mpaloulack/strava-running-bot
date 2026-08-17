@@ -14,6 +14,9 @@ const config = {
     authUrl: 'https://www.strava.com/oauth/authorize',
     tokenUrl: 'https://www.strava.com/oauth/token',
   },
+  intervals: {
+    baseUrl: process.env.INTERVALS_BASE_URL || 'https://intervals.icu',
+  },
   server: {
     port: process.env.PORT || 3000,
     nodeEnv: process.env.NODE_ENV || 'development',
@@ -46,6 +49,11 @@ const config = {
     monthlySchedule: process.env.MONTHLY_SCHEDULE || '0 8 1 * *', // First day of month at 8:00 AM
     // 9 AM (after the 8 AM race announcement) on day 1 of every month — posts the previous month's totals.
     leaderboardSchedule: process.env.LEADERBOARD_SCHEDULE || '0 9 1 * *',
+
+    // intervals.icu has no per-user webhooks without an approved OAuth app,
+    // so members registered with an API key are polled on this schedule.
+    intervalsPollEnabled: process.env.INTERVALS_POLL !== 'false', // Default: enabled
+    intervalsPollSchedule: process.env.INTERVALS_POLL_SCHEDULE || '*/5 * * * *', // Every 5 minutes
 
     // Timezone for scheduling (important for proper timing)
     timezone: process.env.SCHEDULER_TIMEZONE || 'UTC',
