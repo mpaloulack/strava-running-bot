@@ -1100,8 +1100,7 @@ class DiscordCommands {
         inline: false
       }])
       .setFooter({
-        text: 'Powered by Strava • This link is personalized for your Discord account',
-        iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg'
+        text: 'Powered by Strava • This link is personalized for your Discord account'
       })
       .setTimestamp();
 
@@ -1405,7 +1404,6 @@ class DiscordCommands {
       .addFields(fields)
       .setFooter({
         text: 'Propulsé par Strava • Bonne course ! 🏁',
-        iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg',
       })
       .setTimestamp();
 

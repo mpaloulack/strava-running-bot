@@ -209,6 +209,32 @@ describe('TileProvider', () => {
 
       await expect(provider.fetchTiles(tiles)).rejects.toThrow('Failed to fetch tile 2/1/0');
     });
+
+    it('leaves no fetch still in flight once the call has rejected', async () => {
+      const tiles = [
+        { z: 3, x: 0, y: 0 },
+        { z: 3, x: 1, y: 0 },
+        { z: 3, x: 2, y: 0 },
+      ];
+
+      const failing = nock('https://tile.example.test').get('/3/0/0.png').reply(500, 'boom');
+      const slow = nock('https://tile.example.test')
+        .get('/3/1/0.png')
+        .delay(30)
+        .reply(200, Buffer.from('ok'));
+      const alsoSlow = nock('https://tile.example.test')
+        .get('/3/2/0.png')
+        .delay(30)
+        .reply(200, Buffer.from('ok'));
+
+      await expect(provider.fetchTiles(tiles)).rejects.toThrow('Failed to fetch tile 3/0/0');
+
+      // Every request has completed by the time the rejection surfaces — nothing
+      // is left to write a cache file after this test tears its directory down.
+      expect(failing.isDone()).toBe(true);
+      expect(slow.isDone()).toBe(true);
+      expect(alsoSlow.isDone()).toBe(true);
+    });
   });
 
   describe('cache directory fallback', () => {

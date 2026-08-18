@@ -6,16 +6,21 @@ This document outlines how the Strava Running Bot complies with Strava's API ter
 
 ### Attribution Requirements
 
-- **"Powered by Strava"** text appears in all Discord embeds and web pages
-- **Strava logo** used in embed footers and web pages
+- **"Powered by Strava"** attribution appears in all Discord embeds and web pages
+- **Official Strava logo** — the unmodified "Powered by Strava" API logo, vendored in
+  `public/strava/` and self-hosted (see `public/strava/README.md`)
 - **Strava orange color** (#FC4C02) used consistently
 - **Links to Strava** included where appropriate
 
 ### Visual Elements
 
-- Discord embeds include Strava logo in footers
-- Registration pages include proper Strava attribution
-- Success/error pages include "Powered by Strava" branding
+- OAuth success/error pages display the official "Powered by Strava" logo
+- Route maps rendered for Strava activities carry the logo in the bottom-left corner
+- Discord embed footers carry the "Powered by Strava" text — Discord renders footer
+  icons at roughly 20x20 and crops them square, which the wordmark lockup cannot
+  survive, and cropping it would breach the brand guidelines
+- Maps for activities sourced from intervals.icu are **not** Strava-branded — attribution
+  follows the provider the data actually came from
 
 ## 🔒 Data Privacy & Usage
 
@@ -104,7 +109,7 @@ The bot automatically filters out:
 ### ✅ Completed
 
 - [x] Proper "Powered by Strava" attribution
-- [x] Strava logo usage in embeds
+- [x] Official Strava logo artwork, self-hosted and unmodified
 - [x] Privacy filtering (public activities only)
 - [x] Secure OAuth implementation
 - [x] Encrypted token storage
