@@ -84,7 +84,7 @@ describe('TileProvider', () => {
 
       await provider.fetchTile(5, 10, 15);
 
-      const cachePath = provider._cachePathFor(5, 10, 15);
+      const cachePath = provider._cachePathFor(tileCacheDir, 5, 10, 15);
       const cached = await fs.readFile(cachePath);
       expect(cached.toString()).toBe('tile-data');
     });
@@ -113,7 +113,7 @@ describe('TileProvider', () => {
       await provider.fetchTile(5, 10, 15);
       expect(first.isDone()).toBe(true);
 
-      const cachePath = provider._cachePathFor(5, 10, 15);
+      const cachePath = provider._cachePathFor(tileCacheDir, 5, 10, 15);
       const staleTime = new Date(Date.now() - TEST_TTL_MS - 1000);
       await fs.utimes(cachePath, staleTime, staleTime);
 
@@ -208,6 +208,77 @@ describe('TileProvider', () => {
       nock('https://tile.example.test').get('/2/2/0.png').reply(200, Buffer.from('ok'));
 
       await expect(provider.fetchTiles(tiles)).rejects.toThrow('Failed to fetch tile 2/1/0');
+    });
+  });
+
+  describe('cache directory fallback', () => {
+    // The default cache dir is derived from config.database.path, which points
+    // at /app/data for Docker. Outside a container that path isn't writable, and
+    // without a fallback every render would re-download its tiles — which the
+    // OSM tile usage policy explicitly asks clients not to do. Rather than rely
+    // on a genuinely unwritable path (platform-dependent), make mkdir fail for
+    // the configured dir only.
+    const configuredDir = '/unwritable/tile-cache';
+    const expectedFallback = path.join(process.cwd(), 'app', 'data', 'tile-cache');
+
+    const failMkdirForConfiguredDir = () => {
+      const realMkdir = fs.mkdir;
+      jest.spyOn(fs, 'mkdir').mockImplementation(async (dir, opts) => {
+        if (String(dir).startsWith(configuredDir)) {
+          const err = new Error(`EACCES: permission denied, mkdir '${dir}'`);
+          err.code = 'EACCES';
+          throw err;
+        }
+        return realMkdir.call(fs, dir, opts);
+      });
+    };
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('falls back to a local directory when the configured one is unwritable', async () => {
+      failMkdirForConfiguredDir();
+      provider.cacheDir = configuredDir;
+      provider._cacheDirPromise = null;
+
+      const resolved = await provider._ensureCacheDir();
+
+      expect(resolved).toBe(expectedFallback);
+      expect(provider.cacheDir).toBe(expectedFallback);
+      expect(logger.map.warn).toHaveBeenCalledWith(
+        expect.stringContaining('using local fallback'),
+        expect.objectContaining({ fallback: expectedFallback, code: 'EACCES' })
+      );
+    });
+
+    it('still returns the tile when no directory is writable at all', async () => {
+      jest.spyOn(fs, 'mkdir').mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
+      provider.cacheDir = configuredDir;
+      provider._cacheDirPromise = null;
+
+      nock('https://tile.example.test').get('/5/1/2.png').reply(200, Buffer.from('tiledata'));
+
+      const buffer = await provider.fetchTile(5, 1, 2);
+
+      expect(buffer.toString()).toBe('tiledata');
+      expect(provider.cacheDir).toBeNull();
+      expect(logger.map.warn).toHaveBeenCalledWith(
+        'No writable tile cache directory, tiles will not be cached',
+        expect.any(Object)
+      );
+    });
+
+    it('resolves the configured directory only once per instance', async () => {
+      const mkdirSpy = jest.spyOn(fs, 'mkdir');
+
+      const first = await provider._ensureCacheDir();
+      const second = await provider._ensureCacheDir();
+
+      expect(first).toBe(tileCacheDir);
+      expect(second).toBe(tileCacheDir);
+      expect(mkdirSpy).toHaveBeenCalledTimes(1);
+      expect(logger.map.warn).not.toHaveBeenCalled();
     });
   });
 });

@@ -21,6 +21,59 @@ class TileProvider {
     this.userAgent = config.map.userAgent;
     this.timeoutMs = config.map.timeoutMs;
     this.cacheTtlMs = config.map.tileCacheTtlMs;
+    // Memoized _resolveCacheDir() promise — a promise rather than a flag so
+    // concurrent fetchTiles() workers all await the same resolution instead of
+    // racing ahead with a stale directory.
+    this._cacheDirPromise = null;
+  }
+
+  /**
+   * Resolve a writable cache directory, once per instance.
+   *
+   * The default cache dir is derived from `config.database.path`, which is
+   * `/app/data/...` for Docker. Outside a container that path isn't writable,
+   * so mirror the fallback `src/database/connection.js` already applies to the
+   * database file itself and drop back to `<cwd>/app/data/tile-cache` — without
+   * it every render would silently re-download its tiles, which the OSM tile
+   * usage policy explicitly asks clients not to do.
+   *
+   * @returns {Promise<string|null>} usable cache dir, or null if none is writable
+   */
+  async _ensureCacheDir() {
+    if (!this._cacheDirPromise) {
+      this._cacheDirPromise = this._resolveCacheDir();
+    }
+    return this._cacheDirPromise;
+  }
+
+  /**
+   * Probe the configured cache directory once, falling back as described above.
+   *
+   * @returns {Promise<string|null>}
+   */
+  async _resolveCacheDir() {
+    try {
+      await fs.mkdir(this.cacheDir, { recursive: true });
+      return this.cacheDir;
+    } catch (error) {
+      const fallback = path.join(process.cwd(), 'app', 'data', 'tile-cache');
+      try {
+        await fs.mkdir(fallback, { recursive: true });
+        logger.map.warn(`Cannot use tile cache dir ${this.cacheDir}, using local fallback`, {
+          error: error.message,
+          code: error.code,
+          fallback,
+        });
+        this.cacheDir = fallback;
+        return this.cacheDir;
+      } catch (fallbackError) {
+        logger.map.warn('No writable tile cache directory, tiles will not be cached', {
+          error: fallbackError.message,
+        });
+        this.cacheDir = null;
+        return null;
+      }
+    }
   }
 
   /**
@@ -47,8 +100,9 @@ class TileProvider {
    * @param {number} y
    * @returns {string}
    */
-  _cachePathFor(z, x, y) {
-    return path.join(this.cacheDir, String(z), String(x), `${y}.png`);
+  _cachePathFor(cacheDir, z, x, y) {
+    if (!cacheDir) return null;
+    return path.join(cacheDir, String(z), String(x), `${y}.png`);
   }
 
   /**
@@ -61,9 +115,10 @@ class TileProvider {
    * @returns {Promise<Buffer>}
    */
   async fetchTile(z, x, y) {
-    const cachePath = this._cachePathFor(z, x, y);
+    const cacheDir = await this._ensureCacheDir();
+    const cachePath = this._cachePathFor(cacheDir, z, x, y);
 
-    const cached = await this._readFromCache(cachePath, z, x, y);
+    const cached = cachePath ? await this._readFromCache(cachePath, z, x, y) : null;
     if (cached) return cached;
 
     const url = this.tileUrlFor(z, x, y);
@@ -86,7 +141,9 @@ class TileProvider {
     }
 
     const buffer = Buffer.from(response.data);
-    await this._writeToCache(cachePath, buffer, z, x, y);
+    if (cachePath) {
+      await this._writeToCache(cachePath, buffer, z, x, y);
+    }
 
     return buffer;
   }
