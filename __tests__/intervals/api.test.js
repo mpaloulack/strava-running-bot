@@ -264,6 +264,42 @@ describe('IntervalsAPI', () => {
       expect(result).toEqual({ time: [0, 1, 2], distance: [0, 5, 10] });
     });
 
+    it('should zip a paired latlng stream (data = lat, data2 = lng) into tuples', async () => {
+      // Verified against the live API: intervals.icu splits two-component
+      // streams across `data`/`data2` instead of emitting [lat, lng] tuples.
+      // Reading `data` alone yields bare latitudes and every route map silently
+      // renders empty.
+      mockAxios.get.mockResolvedValue({
+        data: [
+          {
+            type: 'latlng',
+            data: [45.492104, 45.492153, 45.49219],
+            data2: [-73.45637, -73.45654, -73.45652]
+          }
+        ]
+      });
+
+      const result = await intervalsAPI.getActivityStreams('i1', 'key');
+
+      expect(result.latlng).toEqual([
+        [45.492104, -73.45637],
+        [45.492153, -73.45654],
+        [45.49219, -73.45652]
+      ]);
+    });
+
+    it('should keep null entries aligned when zipping a paired stream', async () => {
+      mockAxios.get.mockResolvedValue({
+        data: [
+          { type: 'latlng', data: [null, 45.1], data2: [null, -73.1] }
+        ]
+      });
+
+      const result = await intervalsAPI.getActivityStreams('i1', 'key');
+
+      expect(result.latlng).toEqual([[null, null], [45.1, -73.1]]);
+    });
+
     it('should normalize an array-of-objects response using `name` instead of `type`', async () => {
       mockAxios.get.mockResolvedValue({
         data: [

@@ -163,7 +163,7 @@ class IntervalsAPI {
         if (!item || typeof item !== 'object') continue;
         const type = item.type || item.name;
         if (!type || !Array.isArray(item.data)) continue;
-        result[type] = item.data;
+        result[type] = IntervalsAPI._streamValues(item);
       }
       return result;
     }
@@ -173,12 +173,28 @@ class IntervalsAPI {
         if (Array.isArray(value)) {
           result[key] = value;
         } else if (value && Array.isArray(value.data)) {
-          result[key] = value.data;
+          result[key] = IntervalsAPI._streamValues(value);
         }
       }
     }
 
     return result;
+  }
+
+  /**
+   * Extract a stream's values, zipping paired streams into tuples.
+   *
+   * intervals.icu splits two-component streams across parallel arrays rather
+   * than emitting tuples: the `latlng` stream carries latitudes in `data` and
+   * longitudes in `data2`. Reading `data` alone yields a flat list of
+   * latitudes, which every downstream `[lat, lng]` consumer silently rejects.
+   *
+   * @param {{data: Array, data2?: Array}} stream
+   * @returns {Array} values, as `[a, b]` tuples when the stream is paired
+   */
+  static _streamValues(stream) {
+    if (!Array.isArray(stream.data2)) return stream.data;
+    return stream.data.map((value, i) => [value, stream.data2[i]]);
   }
 
   // Best-effort streams fetch + process — never lets a streams failure block
