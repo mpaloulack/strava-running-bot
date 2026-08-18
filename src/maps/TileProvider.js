@@ -167,8 +167,17 @@ class TileProvider {
       }
     };
 
+    // Wait for every worker to settle before propagating a failure. Promise.all
+    // would reject on the first error and leave the other workers fetching and
+    // writing cache files after the caller has moved on — orphaned I/O that
+    // lands in whatever state the cache directory is in by then.
     const workerCount = Math.min(MAX_CONCURRENT_FETCHES, tiles.length);
-    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+    const settled = await Promise.allSettled(
+      Array.from({ length: workerCount }, () => worker())
+    );
+
+    const failed = settled.find((outcome) => outcome.status === 'rejected');
+    if (failed) throw failed.reason;
 
     return results;
   }
