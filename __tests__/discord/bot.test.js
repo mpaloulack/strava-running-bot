@@ -145,8 +145,9 @@ describe('DiscordBot', () => {
     };
 
     // Mock ActivityEmbedBuilder
-    ActivityEmbedBuilder.createActivityEmbed.mockReturnValue({
-      title: 'Test Activity Embed'
+    ActivityEmbedBuilder.createActivityMessage.mockResolvedValue({
+      embeds: [{ title: 'Test Activity Embed' }],
+      files: []
     });
 
     discordBot = new DiscordBot(mockActivityProcessor);
@@ -460,14 +461,14 @@ describe('DiscordBot', () => {
     });
 
     it('should post activity to Discord channel', async () => {
-      const mockEmbed = { title: 'Test Activity Embed' };
-      ActivityEmbedBuilder.createActivityEmbed.mockReturnValue(mockEmbed);
+      const mockPayload = { embeds: [{ title: 'Test Activity Embed' }], files: [] };
+      ActivityEmbedBuilder.createActivityMessage.mockResolvedValue(mockPayload);
 
       await discordBot.postActivity(mockActivityData);
 
       expect(mockClient.channels.fetch).toHaveBeenCalledWith(config.discord.channelId);
-      expect(ActivityEmbedBuilder.createActivityEmbed).toHaveBeenCalledWith(mockActivityData, { type: 'posted' });
-      expect(mockChannel.send).toHaveBeenCalledWith({ embeds: [mockEmbed] });
+      expect(ActivityEmbedBuilder.createActivityMessage).toHaveBeenCalledWith(mockActivityData, { type: 'posted' });
+      expect(mockChannel.send).toHaveBeenCalledWith(mockPayload);
 
       expect(logger.discord.info).toHaveBeenCalledWith('Posted activity to Discord', {
         activityName: mockActivityData.name,
@@ -563,10 +564,10 @@ describe('DiscordBot', () => {
       );
     });
 
-    it('should create embed with correct parameters', async () => {
+    it('should create message payload with correct parameters', async () => {
       await discordBot.postActivity(mockActivityData);
 
-      expect(ActivityEmbedBuilder.createActivityEmbed).toHaveBeenCalledWith(mockActivityData, { type: 'posted' });
+      expect(ActivityEmbedBuilder.createActivityMessage).toHaveBeenCalledWith(mockActivityData, { type: 'posted' });
     });
   });
 
@@ -646,7 +647,7 @@ describe('DiscordBot', () => {
       await discordBot.postActivity(mockActivityData);
 
       expect(mockClient.channels.fetch).toHaveBeenCalledWith(config.discord.channelId);
-      expect(ActivityEmbedBuilder.createActivityEmbed).toHaveBeenCalled();
+      expect(ActivityEmbedBuilder.createActivityMessage).toHaveBeenCalled();
       expect(mockChannel.send).toHaveBeenCalled();
     });
   });

@@ -147,27 +147,6 @@ class ActivityFormatter {
       .replace(/@/g, '\\@');    // Escape @ symbols (mentions)
   }
 
-  /**
-   * Generate Google Maps static map URL from polyline
-   * @param {string} polyline - Encoded polyline from Strava
-   * @returns {string|null} Map URL or null if no API key
-   */
-  static generateStaticMapUrl(polyline) {
-    if (!process.env.GOOGLE_MAPS_API_KEY) {
-      return null;
-    }
-
-    // Google Static Maps API URL with polyline
-    const baseUrl = 'https://maps.googleapis.com/maps/api/staticmap';
-    const params = new URLSearchParams({
-      size: '600x400',
-      maptype: 'roadmap',
-      path: `enc:${polyline}`,
-      key: process.env.GOOGLE_MAPS_API_KEY,
-    });
-
-    return `${baseUrl}?${params.toString()}`;
-  }
 }
 
 module.exports = ActivityFormatter;

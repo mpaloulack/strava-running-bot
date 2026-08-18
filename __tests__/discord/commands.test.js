@@ -342,7 +342,10 @@ describe('DiscordCommands', () => {
       setFooter: jest.fn().mockReturnThis()
     }));
 
-    ActivityEmbedBuilder.createActivityEmbed.mockReturnValue({ title: 'Test Activity Embed' });
+    ActivityEmbedBuilder.createActivityMessage.mockResolvedValue({
+      embeds: [{ title: 'Test Activity Embed' }],
+      files: []
+    });
     DiscordUtils.extractUserId.mockReturnValue('123456789');
     DiscordUtils.chunkArray.mockReturnValue([[mockMember]]);
   });
@@ -1639,9 +1642,10 @@ describe('DiscordCommands', () => {
       expect(discordCommands.findMemberByInput).toHaveBeenCalledWith('Test User');
       expect(mockMemberManager.getValidAccessToken).toHaveBeenCalledWith(mockMember);
       expect(mockStravaAPI.getAthleteActivities).toHaveBeenCalledWith('valid_token', 1, 10);
-      expect(ActivityEmbedBuilder.createActivityEmbed).toHaveBeenCalledWith(mockActivity, { type: 'latest' });
+      expect(ActivityEmbedBuilder.createActivityMessage).toHaveBeenCalledWith(mockActivity, { type: 'latest' });
       expect(mockInteraction.editReply).toHaveBeenCalledWith({
-        embeds: [expect.any(Object)]
+        embeds: [expect.any(Object)],
+        files: []
       });
     });
 
@@ -1731,9 +1735,10 @@ describe('DiscordCommands', () => {
           'intervals_api_key'
         );
 
-        expect(ActivityEmbedBuilder.createActivityEmbed).toHaveBeenCalledWith(processedIntervalsActivity, { type: 'latest' });
+        expect(ActivityEmbedBuilder.createActivityMessage).toHaveBeenCalledWith(processedIntervalsActivity, { type: 'latest' });
         expect(mockInteraction.editReply).toHaveBeenCalledWith({
-          embeds: [expect.any(Object)]
+          embeds: [expect.any(Object)],
+          files: []
         });
       });
 

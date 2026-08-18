@@ -1,5 +1,8 @@
 require('dotenv').config();
+const path = require('node:path');
 const { ENCRYPTION } = require('../src/constants');
+
+const databasePath = process.env.DATABASE_PATH || '/app/data/bot.db';
 
 const config = {
   discord: {
@@ -36,7 +39,27 @@ const config = {
     version: '1.0.0',
   },
   database: {
-    path: process.env.DATABASE_PATH || '/app/data/bot.db',
+    path: databasePath,
+  },
+  // Self-hosted route maps: OpenStreetMap raster tiles composited locally.
+  // No API key or external map service — see the OSM tile usage policy
+  // (https://operations.osmfoundation.org/policies/tiles/), which is why the
+  // User-Agent, the on-disk tile cache and the attribution are mandatory.
+  map: {
+    enabled: process.env.MAP_ENABLED !== 'false', // Default: enabled
+    // Any {z}/{x}/{y} raster tile URL — e.g. OpenTopoMap or CyclOSM for trails.
+    tileUrl: process.env.MAP_TILE_URL || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    // Defaults next to the database file so Docker deployments keep it in the data volume.
+    tileCacheDir: process.env.MAP_TILE_CACHE_DIR || path.join(path.dirname(databasePath), 'tile-cache'),
+    // OSM blocks generic User-Agents; identify the app and give a contact URL.
+    userAgent: process.env.MAP_USER_AGENT
+      || 'strava-running-bot/1.0 (+https://github.com/mpaloulack/strava-running-bot)',
+    attribution: '© OpenStreetMap contributors',
+    width: parseInt(process.env.MAP_WIDTH, 10) || 600,
+    height: parseInt(process.env.MAP_HEIGHT, 10) || 400,
+    maxTiles: parseInt(process.env.MAP_MAX_TILES, 10) || 20, // bound on the tile grid per render
+    timeoutMs: parseInt(process.env.MAP_TIMEOUT_MS, 10) || 8000, // total budget for one render
+    tileCacheTtlMs: 7 * 24 * 60 * 60 * 1000, // OSM policy minimum when cache headers can't be honored
   },
   scheduler: {
     // Enable/disable scheduled race announcements

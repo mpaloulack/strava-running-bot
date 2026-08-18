@@ -16,7 +16,8 @@ services:
         BASE_URL: ${BASE_URL}
         LOG_LEVEL: ${LOG_LEVEL:-INFO}
         POST_DELAY_MINUTES: ${POST_DELAY_MINUTES:-15}
-        GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY}
+        MAP_ENABLED: ${MAP_ENABLED:-true}
+        MAP_TILE_URL: ${MAP_TILE_URL:-}
       volumes:
         # Map host directory (default ./data) to container data dir where members.json is stored
         - "${DOCKER_PATH}bot_data/data:/app/data:rw"

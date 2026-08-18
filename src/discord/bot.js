@@ -135,8 +135,8 @@ class DiscordBot {
         throw new Error('Discord channel not found');
       }
 
-      const embed = ActivityEmbedBuilder.createActivityEmbed(activityData, { type: 'posted' });
-      await channel.send({ embeds: [embed] });
+      const payload = await ActivityEmbedBuilder.createActivityMessage(activityData, { type: 'posted' });
+      await channel.send(payload);
       
       logger.discord.info('Posted activity to Discord', {
         activityName: activityData.name,

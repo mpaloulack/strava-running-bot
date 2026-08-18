@@ -489,7 +489,8 @@ find $BACKUP_DIR -name "*.backup" -mtime +30 -delete
 | `STRAVA_CLIENT_SECRET` | ✅ | Your client secret | From Strava API settings |
 | `STRAVA_WEBHOOK_VERIFY_TOKEN` | ✅ | Random secure string | For webhook verification |
 | `ENCRYPTION_KEY` | ✅ | 64-char hex string | For member data encryption |
-| `GOOGLE_MAPS_API_KEY` | ❌ | Your API key | For route map display |
+| `MAP_ENABLED` | ❌ | `true` | Route maps from OpenStreetMap tiles (no API key) |
+| `MAP_TILE_URL` | ❌ | `{z}/{x}/{y}` tile URL | Alternative tile style (OpenTopoMap, CyclOSM…) |
 
 ### Configuration Validation
 
