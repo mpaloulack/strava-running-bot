@@ -61,7 +61,11 @@ class ActivityEmbedBuilder {
     if (activity.map?.summary_polyline) {
       let mapBuffer;
       try {
-        mapBuffer = await MapRenderer.instance.renderRoute(activity.map.summary_polyline);
+        mapBuffer = await MapRenderer.instance.renderRoute(activity.map.summary_polyline, {
+          // Attribution follows the data source: only Strava-sourced
+          // activities carry the "Powered by Strava" logo.
+          poweredByStrava: activity.provider !== 'intervals',
+        });
       } catch (_error) {
         // MapRenderer never throws by contract, but don't let a route image
         // ever take down activity delivery.
@@ -155,22 +159,16 @@ class ActivityEmbedBuilder {
         name: `${authorName} - Last Activity`,
         iconURL: iconURL,
       });
-      embed.setFooter(isIntervals ? {
-        text: 'Latest Activity • Powered by intervals.icu',
-      } : {
-        text: 'Latest Activity • Powered by Strava',
-        iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg',
+      embed.setFooter({
+        text: isIntervals ? 'Latest Activity • Powered by intervals.icu' : 'Latest Activity • Powered by Strava',
       });
     } else {
       embed.setAuthor({
         name: authorName,
         iconURL: iconURL,
       });
-      embed.setFooter(isIntervals ? {
-        text: 'Powered by intervals.icu',
-      } : {
-        text: 'Powered by Strava',
-        iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg',
+      embed.setFooter({
+        text: isIntervals ? 'Powered by intervals.icu' : 'Powered by Strava',
       });
     }
   }

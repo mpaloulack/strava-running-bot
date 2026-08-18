@@ -471,6 +471,7 @@ strava-running-bot/
 ├── scripts/
 │   └── refresh-expired-tokens.js     # Maintenance script
 ├── public/                           # Static assets served by webhook server
+│   └── strava/                       # Official "Powered by Strava" API logos
 ├── __tests__/                        # Jest test suites (mirrors src/)
 ├── docs/                             # API, deployment, troubleshooting, etc.
 ├── .github/workflows/

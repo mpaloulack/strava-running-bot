@@ -486,8 +486,11 @@ class WebhookServer {
         margin: 0 auto;
       }
       .strava-logo {
-        color: #FC4C02;
-        font-weight: bold;
+        display: block;
+        width: 182px;
+        max-width: 100%;
+        height: auto;
+        margin: 0 auto 10px;
       }
       .footer {
         margin-top: 30px;
@@ -509,7 +512,7 @@ class WebhookServer {
               <p>Your Strava account has been successfully linked to the Strava Running Bot.</p>
               <p>You can now close this window and return to Discord.</p>
               <div class="footer">
-                <p class="strava-logo">Powered by Strava</p>
+                <img class="strava-logo" src="/static/strava/api_logo_pwrdBy_strava_horiz_orange.png" alt="Powered by Strava" width="182" height="18">
                 <p>This application uses the Strava API to access your public activities.</p>
               </div>
             </div>
@@ -539,7 +542,7 @@ class WebhookServer {
               <p>Please try again or contact support.</p>
               <div class="error">Error: ${errorMessage}</div>
               <div class="footer">
-                <p class="strava-logo">Powered by Strava</p>
+                <img class="strava-logo" src="/static/strava/api_logo_pwrdBy_strava_horiz_orange.png" alt="Powered by Strava" width="182" height="18">
                 <p>This application uses the Strava API to access your public activities.</p>
               </div>
             </div>

@@ -6,11 +6,16 @@ FROM node:24-bookworm-slim
 WORKDIR /app
 
 # Install runtime dependencies only (no build tools needed!)
+# fonts-dejavu-core is required, not cosmetic: the slim image ships no fonts at
+# all, and the librsvg inside sharp then renders every character of the map's
+# OpenStreetMap attribution as a .notdef box. Attribution is mandatory under the
+# OSM tile usage policy, so it has to be legible.
 RUN apt-get update && apt-get install -y \
     dumb-init \
     curl \
     sqlite3 \
     gosu \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy package files first for better Docker layer caching

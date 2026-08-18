@@ -63,6 +63,29 @@ const PARIS_ROUTE = [
   [48.8606, 2.3376],
 ];
 
+/**
+ * Count pixels in a region that read as Strava orange (#FC4C02). The
+ * "Powered by Strava" logo is the only orange artwork on a rendered map
+ * besides the route line, so a corner crop that contains orange is proof
+ * the brand overlay was composited.
+ */
+async function countOrangePixels(pngBuffer, region) {
+  const { data, info } = await sharp(pngBuffer)
+    .extract(region)
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  let orange = 0;
+  for (let i = 0; i < data.length; i += info.channels) {
+    const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
+    if (r > 200 && g < 130 && b < 90) orange += 1;
+  }
+  return orange;
+}
+
+/** Bottom-left corner of a default-sized map — where the brand overlay sits. */
+const BRAND_REGION = { left: 0, top: 340, width: 200, height: 60 };
+
 describe('MapRenderer', () => {
   afterEach(() => {
     jest.restoreAllMocks();
@@ -193,6 +216,102 @@ describe('MapRenderer', () => {
     const metadata = await sharp(result).metadata();
     expect(metadata.width).toBe(DEFAULT_MAP_CONFIG.width);
     expect(metadata.height).toBe(DEFAULT_MAP_CONFIG.height);
+  });
+
+  it('composites the Powered by Strava logo when poweredByStrava is set', async () => {
+    const { MapRenderer, PolylineUtils } = loadMapRenderer();
+    const encoded = PolylineUtils.encodePolyline(PARIS_ROUTE);
+    // Grey tiles: nothing in the base map can be mistaken for Strava orange.
+    const renderer = new MapRenderer({ fetchTiles: makeFetchTiles(() => makeTilePng('#888888')) });
+
+    const result = await renderer.renderRoute(encoded, { poweredByStrava: true });
+
+    expect(result).toBeInstanceOf(Buffer);
+    const metadata = await sharp(result).metadata();
+    expect(metadata.width).toBe(DEFAULT_MAP_CONFIG.width);
+    expect(metadata.height).toBe(DEFAULT_MAP_CONFIG.height);
+    expect(await countOrangePixels(result, BRAND_REGION)).toBeGreaterThan(50);
+  });
+
+  it('leaves the map unbranded when poweredByStrava is not requested', async () => {
+    const { MapRenderer, PolylineUtils } = loadMapRenderer();
+    const encoded = PolylineUtils.encodePolyline(PARIS_ROUTE);
+    const renderer = new MapRenderer({ fetchTiles: makeFetchTiles(() => makeTilePng('#888888')) });
+
+    const unbranded = await renderer.renderRoute(encoded);
+    const explicitlyUnbranded = await renderer.renderRoute(encoded, { poweredByStrava: false });
+
+    // The route line itself is orange, so only the corner crop is asserted on.
+    expect(await countOrangePixels(unbranded, BRAND_REGION)).toBe(0);
+    expect(await countOrangePixels(explicitlyUnbranded, BRAND_REGION)).toBe(0);
+  });
+
+  it('skips the brand overlay when the map is too small to hold it', async () => {
+    const { MapRenderer, PolylineUtils, logger } = loadMapRenderer({ width: 80, height: 60 });
+    const encoded = PolylineUtils.encodePolyline(PARIS_ROUTE);
+    const renderer = new MapRenderer({ fetchTiles: makeFetchTiles(() => makeTilePng('#888888')) });
+
+    const result = await renderer.renderRoute(encoded, { poweredByStrava: true });
+
+    expect(result).toBeInstanceOf(Buffer);
+    const metadata = await sharp(result).metadata();
+    expect(metadata.width).toBe(80);
+    expect(metadata.height).toBe(60);
+    // No plate fits in an 80px-wide map, so nothing is composited. The route
+    // line is itself orange at this size, so the decision is asserted at the
+    // source rather than by counting pixels.
+    await expect(renderer._buildStravaBrand(80, 60)).resolves.toBeNull();
+    expect(logger.map.warn).not.toHaveBeenCalled();
+  });
+
+  it('still returns a map when the brand overlay cannot be built', async () => {
+    const { MapRenderer, PolylineUtils, logger } = loadMapRenderer();
+    const encoded = PolylineUtils.encodePolyline(PARIS_ROUTE);
+    const renderer = new MapRenderer({ fetchTiles: makeFetchTiles(() => makeTilePng('#888888')) });
+    jest.spyOn(renderer, '_loadStravaLogo').mockRejectedValue(new Error('logo asset missing'));
+
+    const result = await renderer.renderRoute(encoded, { poweredByStrava: true });
+
+    expect(result).toBeInstanceOf(Buffer);
+    expect(await countOrangePixels(result, BRAND_REGION)).toBe(0);
+    expect(logger.map.warn).toHaveBeenCalledWith(
+      'Could not composite the Powered by Strava logo',
+      { error: 'logo asset missing' }
+    );
+  });
+
+  it('resizes the logo once and reuses it across renders', async () => {
+    const { MapRenderer } = loadMapRenderer();
+    const renderer = new MapRenderer({ fetchTiles: makeFetchTiles() });
+
+    const first = await renderer._loadStravaLogo(120);
+    const second = await renderer._loadStravaLogo(120);
+
+    expect(first.width).toBe(120);
+    expect(second.buffer).toBe(first.buffer);
+  });
+
+  it('does not cache a failed logo load', async () => {
+    const { MapRenderer } = loadMapRenderer();
+    const renderer = new MapRenderer({ fetchTiles: makeFetchTiles() });
+
+    // 0 is not a valid resize width — sharp rejects.
+    await expect(renderer._loadStravaLogo(0)).rejects.toThrow();
+    // The rejection was evicted, so a later valid width is unaffected.
+    await expect(renderer._loadStravaLogo(0)).rejects.toThrow();
+    await expect(renderer._loadStravaLogo(140)).resolves.toMatchObject({ width: 140 });
+  });
+
+  it('names a concrete font family for the attribution text', () => {
+    // A generic `sans-serif` alone resolves to nothing in a container with no
+    // fonts installed, and librsvg then draws .notdef boxes over the mandatory
+    // OSM attribution. The Dockerfile installs DejaVu to match.
+    const { MapRenderer } = loadMapRenderer();
+    const renderer = new MapRenderer({ fetchTiles: makeFetchTiles() });
+
+    const svg = renderer._buildOverlaySvg([[10, 10], [20, 20]], 12, 0, 0, 600, 400);
+
+    expect(svg).toContain('font-family="DejaVu Sans, sans-serif"');
   });
 
   it('defaults to a real TileProvider instance when none is injected', () => {

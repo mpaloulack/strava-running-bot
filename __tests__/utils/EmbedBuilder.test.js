@@ -118,7 +118,6 @@ describe('ActivityEmbedBuilder', () => {
         iconURL: 'https://cdn.discordapp.com/avatars/123/avatar.png'
       });
       expect(mockEmbedBuilder.setFooter).toHaveBeenCalledWith({
-        iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg',
         text: 'Powered by Strava'
       });
     });
@@ -131,7 +130,6 @@ describe('ActivityEmbedBuilder', () => {
         iconURL: 'https://cdn.discordapp.com/avatars/123/avatar.png'
       });
       expect(mockEmbedBuilder.setFooter).toHaveBeenCalledWith({
-        iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg',
         text: 'Latest Activity • Powered by Strava'
       });
     });
@@ -162,7 +160,6 @@ describe('ActivityEmbedBuilder', () => {
       ActivityEmbedBuilder.createActivityEmbed(stravaActivity, { type: 'posted' });
 
       expect(mockEmbedBuilder.setFooter).toHaveBeenCalledWith({
-        iconURL: 'https://cdn.worldvectorlogo.com/logos/strava-1.svg',
         text: 'Powered by Strava'
       });
     });
@@ -445,12 +442,34 @@ describe('ActivityEmbedBuilder', () => {
 
       const payload = await ActivityEmbedBuilder.createActivityMessage(mockActivity, { type: 'posted' });
 
-      expect(MapRenderer.instance.renderRoute).toHaveBeenCalledWith('encoded_polyline_data');
+      expect(MapRenderer.instance.renderRoute).toHaveBeenCalledWith('encoded_polyline_data', { poweredByStrava: true });
       expect(AttachmentBuilder).toHaveBeenCalledWith(buffer, { name: 'route.png' });
       expect(mockEmbedBuilder.setImage).toHaveBeenCalledWith('attachment://route.png');
       expect(payload.embeds).toEqual([mockEmbedBuilder]);
       expect(payload.files).toHaveLength(1);
       expect(payload.files[0]).toEqual({ buffer, name: 'route.png' });
+    });
+
+    it('asks for the Powered by Strava logo on maps of Strava activities', async () => {
+      MapRenderer.instance.renderRoute.mockResolvedValue(Buffer.from('png'));
+
+      await ActivityEmbedBuilder.createActivityMessage({ ...mockActivity, provider: 'strava' });
+
+      expect(MapRenderer.instance.renderRoute).toHaveBeenCalledWith(
+        'encoded_polyline_data',
+        { poweredByStrava: true }
+      );
+    });
+
+    it('does not brand maps of intervals.icu activities with the Strava logo', async () => {
+      MapRenderer.instance.renderRoute.mockResolvedValue(Buffer.from('png'));
+
+      await ActivityEmbedBuilder.createActivityMessage({ ...mockActivity, provider: 'intervals' });
+
+      expect(MapRenderer.instance.renderRoute).toHaveBeenCalledWith(
+        'encoded_polyline_data',
+        { poweredByStrava: false }
+      );
     });
 
     it('returns an empty files array and does not call setImage when the renderer returns null', async () => {

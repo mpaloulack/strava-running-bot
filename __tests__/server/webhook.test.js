@@ -436,6 +436,28 @@ describe('WebhookServer', () => {
         );
       });
 
+      it('should show the official Powered by Strava logo on the success page', async () => {
+        const response = await request(app)
+          .get('/auth/strava/callback')
+          .query(validCallbackParams)
+          .expect(200);
+
+        expect(response.text).toContain('/static/strava/api_logo_pwrdBy_strava_horiz_orange.png');
+        expect(response.text).toContain('alt="Powered by Strava"');
+      });
+
+      it('should show the official Powered by Strava logo on the failure page', async () => {
+        mockActivityProcessor.stravaAPI.exchangeCodeForToken.mockRejectedValue(new Error('boom'));
+
+        const response = await request(app)
+          .get('/auth/strava/callback')
+          .query(validCallbackParams)
+          .expect(500);
+
+        expect(response.text).toContain('/static/strava/api_logo_pwrdBy_strava_horiz_orange.png');
+        expect(response.text).toContain('alt="Powered by Strava"');
+      });
+
       it('should handle OAuth callback with error parameter', async () => {
         const response = await request(app)
           .get('/auth/strava/callback')
