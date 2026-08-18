@@ -805,6 +805,14 @@ describe('DatabaseMemberManager', () => {
       jest.resetModules();
     });
 
+    // `node:fs` is a core module: `jest.resetModules()` does not re-create it,
+    // and a worker process is reused across test files. Stubbing `fs.readFile`
+    // here without restoring it leaves every later test file in that worker with
+    // a broken `fs.readFile` — which is why these must be spies, not assignments.
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
     it('should successfully retrieve tokens from JSON fallback', async () => {
       const member = {
         athleteId: 12345,
@@ -819,7 +827,7 @@ describe('DatabaseMemberManager', () => {
       };
 
       const fs = require('node:fs').promises;
-      fs.readFile = jest.fn().mockResolvedValue(JSON.stringify(mockJsonData));
+      jest.spyOn(fs, 'readFile').mockResolvedValue(JSON.stringify(mockJsonData));
 
       jest.spyOn(memberManager, '_decryptTokenData').mockReturnValue({
         access_token: 'fallback_token'
@@ -844,7 +852,7 @@ describe('DatabaseMemberManager', () => {
       };
 
       const fs = require('node:fs').promises;
-      fs.readFile = jest.fn().mockResolvedValue(JSON.stringify(mockJsonData));
+      jest.spyOn(fs, 'readFile').mockResolvedValue(JSON.stringify(mockJsonData));
 
       const result = await memberManager._getTokensFromJsonFallback(member);
 
@@ -864,7 +872,7 @@ describe('DatabaseMemberManager', () => {
       };
 
       const fs = require('node:fs').promises;
-      fs.readFile = jest.fn().mockResolvedValue(JSON.stringify(mockJsonData));
+      jest.spyOn(fs, 'readFile').mockResolvedValue(JSON.stringify(mockJsonData));
 
       const result = await memberManager._getTokensFromJsonFallback(member);
 
@@ -878,7 +886,7 @@ describe('DatabaseMemberManager', () => {
       };
 
       const fs = require('node:fs').promises;
-      fs.readFile = jest.fn().mockRejectedValue(new Error('File not found'));
+      jest.spyOn(fs, 'readFile').mockRejectedValue(new Error('File not found'));
 
       const result = await memberManager._getTokensFromJsonFallback(member);
 
