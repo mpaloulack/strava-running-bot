@@ -29,7 +29,7 @@ A comprehensive bot that automatically posts Strava activities from your running
 - **Distance, time, and pace**
 - **Grade Adjusted Pace (GAP)** for hill-adjusted performance
 - **Average heart rate** and elevation gain
-- **Route map visualization** (with optional Google Maps integration)
+- **Route map visualization** (rendered locally from OpenStreetMap tiles — no API key)
 - **Direct links to Strava activities**
 - **Activity type-specific styling and icons**
 
@@ -442,6 +442,10 @@ strava-running-bot/
 │   │   └── SettingsManager.js        # Runtime-mutable settings
 │   ├── intervals/
 │   │   └── api.js                    # intervals.icu API wrapper (API-key auth)
+│   ├── maps/
+│   │   ├── MapRenderer.js            # Route PNG from OSM tiles (sharp compositing)
+│   │   ├── TileProvider.js           # Tile fetch + on-disk cache
+│   │   └── projection.js             # Web-Mercator / slippy-tile math
 │   ├── processors/
 │   │   └── ActivityProcessor.js      # Webhook/poll → fetch → format → post
 │   ├── server/
@@ -534,7 +538,7 @@ Key/value store used internally for sync checkpoints (e.g. cursor timestamps for
 - Discord.js v14 client wrapper with full intent support
 - Slash command registration and autocomplete handling
 - Rich embed generation using modular EmbedBuilder
-- Google Maps route visualization integration
+- OpenStreetMap route visualization (self-hosted rendering, no API key)
 - Error handling with graceful client destruction
 
 #### **StravaAPI**
@@ -665,7 +669,7 @@ SCHEDULER_TIMEZONE="America/New_York"  # Default: UTC
 - **Activity Filters**: Automatically filters activities without distance (weight training, etc.) and processes recent activities
 - **Rate Limiting**: Conservative Strava API limits (80 requests/15min, 900/day) with request queuing and 20%/10% safety margin
 - **Posting Delay**: Configurable delay before posting activities (default: 15 minutes) to allow for activity completion
-- **Route Visualization**: Google Maps integration for GPS route display in Discord embeds
+- **Route Visualization**: GPS routes drawn over OpenStreetMap tiles, composited by the bot and attached to Discord embeds (no API key or map service account)
 - **Token Management**: Automatic OAuth2 token refresh with secure AES-256 encrypted storage
 - **Data Persistence**: Atomic JSON file operations with backup and recovery mechanisms
 - **Error Handling**: Comprehensive error recovery with graceful degradation and logging

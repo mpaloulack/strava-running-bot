@@ -49,7 +49,7 @@ class PolylineUtils {
    * Algorithm (precision 5), the same format used by Strava's `summary_polyline`.
    *
    * @param {Array<[number, number]>} points
-   * @returns {string} encoded polyline, or '' if there are fewer than 2 points
+   * @returns {string} encoded polyline, or '' if `points` is empty/not an array
    */
   static encodePolyline(points) {
     if (!Array.isArray(points) || points.length === 0) return '';
@@ -71,6 +71,71 @@ class PolylineUtils {
     }
 
     return output;
+  }
+
+  /**
+   * Decode a Google Encoded Polyline (precision 5) string back into an array
+   * of [lat, lng] points. Exact inverse of {@link PolylineUtils.encodePolyline}.
+   *
+   * Never throws: a truncated/corrupt tail simply stops decoding early and
+   * whatever full points were recovered up to that point are returned.
+   *
+   * @param {string} encoded - encoded polyline string
+   * @returns {Array<[number, number]>} decoded points, or [] for null/undefined/empty/non-string input
+   */
+  static decodePolyline(encoded) {
+    if (typeof encoded !== 'string' || encoded.length === 0) return [];
+
+    const points = [];
+    let index = 0;
+    let lat = 0;
+    let lng = 0;
+    const len = encoded.length;
+
+    try {
+      while (index < len) {
+        const decodedLat = PolylineUtils._decodeSignedNumber(encoded, index);
+        if (decodedLat === null) break;
+        lat += decodedLat.value;
+        index = decodedLat.index;
+
+        const decodedLng = PolylineUtils._decodeSignedNumber(encoded, index);
+        if (decodedLng === null) break;
+        lng += decodedLng.value;
+        index = decodedLng.index;
+
+        points.push([lat / 1e5, lng / 1e5]);
+      }
+    } catch (_error) {
+      // Malformed/truncated input — fall through and return whatever decoded so far.
+    }
+
+    return points;
+  }
+
+  /**
+   * Decode a single zigzag-encoded, 5-bit-chunked signed number starting at
+   * `index`. Returns `null` (rather than throwing) if the chunk sequence
+   * runs off the end of the string without a terminating byte.
+   *
+   * @param {string} encoded
+   * @param {number} index
+   * @returns {{value: number, index: number}|null}
+   */
+  static _decodeSignedNumber(encoded, index) {
+    let result = 0;
+    let shift = 0;
+    let byte;
+
+    do {
+      if (index >= encoded.length) return null;
+      byte = encoded.charCodeAt(index++) - 63;
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20);
+
+    const value = (result & 1) ? ~(result >> 1) : (result >> 1);
+    return { value, index };
   }
 
   static _encodeSignedNumber(num) {

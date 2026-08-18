@@ -1,7 +1,8 @@
-const { EmbedBuilder } = require('discord.js');
+const { EmbedBuilder, AttachmentBuilder } = require('discord.js');
 const config = require('../../config/config');
 const ActivityEmbedBuilder = require('../../src/utils/EmbedBuilder');
 const ActivityFormatter = require('../../src/utils/ActivityFormatter');
+const MapRenderer = require('../../src/maps/MapRenderer');
 
 
 jest.mock('../../config/config', () => ({
@@ -30,11 +31,17 @@ const mockEmbedBuilder = {
   setImage: jest.fn().mockReturnThis()
 };
 
-// Mock dependencies  
+// Mock dependencies
 jest.mock('discord.js', () => ({
-  EmbedBuilder: jest.fn().mockImplementation(() => mockEmbedBuilder)
+  EmbedBuilder: jest.fn().mockImplementation(() => mockEmbedBuilder),
+  AttachmentBuilder: jest.fn().mockImplementation((buffer, opts) => ({ buffer, ...opts }))
 }));
 jest.mock('../../src/utils/ActivityFormatter');
+jest.mock('../../src/maps/MapRenderer', () => ({
+  instance: {
+    renderRoute: jest.fn()
+  }
+}));
 
 describe('ActivityEmbedBuilder', () => {
   beforeEach(() => {
@@ -47,7 +54,7 @@ describe('ActivityEmbedBuilder', () => {
     ActivityFormatter.formatDistance.mockReturnValue('5.00 km');
     ActivityFormatter.formatTime.mockReturnValue('30:00');
     ActivityFormatter.formatPace.mockReturnValue('6:00/km');
-    ActivityFormatter.generateStaticMapUrl.mockReturnValue('https://maps.googleapis.com/maps/api/staticmap?test');
+    MapRenderer.instance.renderRoute.mockReset();
   });
 
   describe('createActivityEmbed', () => {
@@ -254,39 +261,18 @@ describe('ActivityEmbedBuilder', () => {
       expect(mockEmbedBuilder.addFields).toHaveBeenCalledTimes(2);
     });
 
-    it('should add map image when available', () => {
-      ActivityFormatter.generateStaticMapUrl.mockReturnValue('https://maps.test.com/map.png');
-      
+    it('should never call setImage directly — map rendering is handled by createActivityMessage', () => {
       ActivityEmbedBuilder.createActivityEmbed(mockActivity);
 
-      expect(mockEmbedBuilder.setImage).toHaveBeenCalledWith('https://maps.test.com/map.png');
-      expect(ActivityFormatter.generateStaticMapUrl).toHaveBeenCalledWith('encoded_polyline_data');
+      expect(mockEmbedBuilder.setImage).not.toHaveBeenCalled();
+      expect(MapRenderer.instance.renderRoute).not.toHaveBeenCalled();
     });
 
     it('should handle activity without map', () => {
       const activityWithoutMap = { ...mockActivity };
       delete activityWithoutMap.map;
 
-      ActivityEmbedBuilder.createActivityEmbed(activityWithoutMap);
-
-      expect(mockEmbedBuilder.setImage).not.toHaveBeenCalled();
-      expect(ActivityFormatter.generateStaticMapUrl).not.toHaveBeenCalled();
-    });
-
-    it('should handle map without polyline', () => {
-      const activityWithEmptyMap = { ...mockActivity, map: {} };
-
-      ActivityEmbedBuilder.createActivityEmbed(activityWithEmptyMap);
-
-      expect(mockEmbedBuilder.setImage).not.toHaveBeenCalled();
-    });
-
-    it('should handle null map URL response', () => {
-      ActivityFormatter.generateStaticMapUrl.mockReturnValue(null);
-      
-      ActivityEmbedBuilder.createActivityEmbed(mockActivity);
-
-      expect(mockEmbedBuilder.setImage).not.toHaveBeenCalled();
+      expect(() => ActivityEmbedBuilder.createActivityEmbed(activityWithoutMap)).not.toThrow();
     });
 
     it('should handle activity with athlete but no Discord user', () => {
@@ -431,6 +417,77 @@ describe('ActivityEmbedBuilder', () => {
       expect(mockEmbedBuilder.addFields).toHaveBeenNthCalledWith(2, [
         { name: '🏃 Pace', value: 'N/A', inline: true }
       ]);
+    });
+  });
+
+  describe('createActivityMessage', () => {
+    const mockActivity = {
+      id: 12345,
+      name: 'Morning Run',
+      type: 'Run',
+      distance: 5000,
+      moving_time: 1800,
+      elapsed_time: 2100,
+      start_date: '2024-01-01T10:00:00Z',
+      map: {
+        summary_polyline: 'encoded_polyline_data'
+      },
+      athlete: {
+        id: 67890,
+        firstname: 'John',
+        lastname: 'Doe'
+      }
+    };
+
+    it('attaches a route.png file and sets attachment://route.png on the embed when the renderer returns a buffer', async () => {
+      const buffer = Buffer.from('fake-png-bytes');
+      MapRenderer.instance.renderRoute.mockResolvedValue(buffer);
+
+      const payload = await ActivityEmbedBuilder.createActivityMessage(mockActivity, { type: 'posted' });
+
+      expect(MapRenderer.instance.renderRoute).toHaveBeenCalledWith('encoded_polyline_data');
+      expect(AttachmentBuilder).toHaveBeenCalledWith(buffer, { name: 'route.png' });
+      expect(mockEmbedBuilder.setImage).toHaveBeenCalledWith('attachment://route.png');
+      expect(payload.embeds).toEqual([mockEmbedBuilder]);
+      expect(payload.files).toHaveLength(1);
+      expect(payload.files[0]).toEqual({ buffer, name: 'route.png' });
+    });
+
+    it('returns an empty files array and does not call setImage when the renderer returns null', async () => {
+      MapRenderer.instance.renderRoute.mockResolvedValue(null);
+
+      const payload = await ActivityEmbedBuilder.createActivityMessage(mockActivity);
+
+      expect(mockEmbedBuilder.setImage).not.toHaveBeenCalled();
+      expect(payload.files).toEqual([]);
+    });
+
+    it('does not call the renderer when the activity has no polyline', async () => {
+      const activityWithoutMap = { ...mockActivity, map: {} };
+
+      const payload = await ActivityEmbedBuilder.createActivityMessage(activityWithoutMap);
+
+      expect(MapRenderer.instance.renderRoute).not.toHaveBeenCalled();
+      expect(payload.files).toEqual([]);
+    });
+
+    it('does not call the renderer when the activity has no map at all', async () => {
+      const activityWithoutMap = { ...mockActivity };
+      delete activityWithoutMap.map;
+
+      const payload = await ActivityEmbedBuilder.createActivityMessage(activityWithoutMap);
+
+      expect(MapRenderer.instance.renderRoute).not.toHaveBeenCalled();
+      expect(payload.files).toEqual([]);
+    });
+
+    it('never throws and yields an empty files array when the renderer rejects', async () => {
+      MapRenderer.instance.renderRoute.mockRejectedValue(new Error('sharp blew up'));
+
+      const payload = await ActivityEmbedBuilder.createActivityMessage(mockActivity);
+
+      expect(mockEmbedBuilder.setImage).not.toHaveBeenCalled();
+      expect(payload.files).toEqual([]);
     });
   });
 

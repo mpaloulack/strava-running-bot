@@ -1596,9 +1596,9 @@ class DiscordCommands {
           accessToken
         );
 
-        const embed = ActivityEmbedBuilder.createActivityEmbed(processedActivity, { type: 'latest' });
+        const payload = await ActivityEmbedBuilder.createActivityMessage(processedActivity, { type: 'latest' });
 
-        await interaction.editReply({ embeds: [embed] });
+        await interaction.editReply(payload);
         return;
       }
 
@@ -1648,10 +1648,10 @@ class DiscordCommands {
         accessToken
       );
 
-      // Create the same embed as used for posting activities
-      const embed = ActivityEmbedBuilder.createActivityEmbed(processedActivity, { type: 'latest' });
+      // Create the same message payload as used for posting activities
+      const payload = await ActivityEmbedBuilder.createActivityMessage(processedActivity, { type: 'latest' });
 
-      await interaction.editReply({ embeds: [embed] });
+      await interaction.editReply(payload);
 
     } catch (error) {
       logger.discord.error('Error fetching last activity', {

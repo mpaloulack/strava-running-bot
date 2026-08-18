@@ -315,9 +315,11 @@ curl -X POST http://localhost:3000/webhook/strava \
 2. Route Map Issues
 
    ```bash
-   # Check Google Maps API key (optional)
-   # Verify GOOGLE_MAPS_API_KEY in .env
-   # Maps work without API key but may have limitations
+   # Maps are rendered locally from OpenStreetMap tiles - no API key needed.
+   # If embeds show no map, check the MAP logs for tile fetch failures:
+   #   - the activity may simply have no GPS data (manual/treadmill entry)
+   #   - set MAP_ENABLED=false to turn route maps off entirely
+   #   - tile cache lives next to the database (see MAP_TILE_CACHE_DIR)
    ```
 
 3. Formatting Problems

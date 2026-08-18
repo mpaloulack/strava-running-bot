@@ -101,4 +101,83 @@ describe('PolylineUtils', () => {
       });
     });
   });
+
+  describe('decodePolyline', () => {
+    it('should match Google\'s documented test vector', () => {
+      const decoded = PolylineUtils.decodePolyline('_p~iF~ps|U_ulLnnqC_mqNvxq`@');
+
+      expect(decoded).toHaveLength(3);
+      expect(decoded[0][0]).toBeCloseTo(38.5, 5);
+      expect(decoded[0][1]).toBeCloseTo(-120.2, 5);
+      expect(decoded[1][0]).toBeCloseTo(40.7, 5);
+      expect(decoded[1][1]).toBeCloseTo(-120.95, 5);
+      expect(decoded[2][0]).toBeCloseTo(43.252, 5);
+      expect(decoded[2][1]).toBeCloseTo(-126.453, 5);
+    });
+
+    it('should return [] for null, undefined, empty string, and non-string input', () => {
+      expect(PolylineUtils.decodePolyline(null)).toEqual([]);
+      expect(PolylineUtils.decodePolyline(undefined)).toEqual([]);
+      expect(PolylineUtils.decodePolyline('')).toEqual([]);
+      expect(PolylineUtils.decodePolyline(42)).toEqual([]);
+      expect(PolylineUtils.decodePolyline([])).toEqual([]);
+      expect(PolylineUtils.decodePolyline({})).toEqual([]);
+    });
+
+    it('should never throw on garbage/truncated input and return whatever decoded fully', () => {
+      expect(() => PolylineUtils.decodePolyline('!!!!!')).not.toThrow();
+      expect(() => PolylineUtils.decodePolyline('_p~iF~ps|U_ulLnnqC_mqNvxq`')).not.toThrow();
+      // Dropping the final byte truncates mid-chunk for the 3rd point: only
+      // the 2 fully-decodable points are returned, never a throw.
+      const decoded = PolylineUtils.decodePolyline('_p~iF~ps|U_ulLnnqC_mqNvxq`');
+      expect(decoded).toHaveLength(2);
+      expect(decoded[0][0]).toBeCloseTo(38.5, 5);
+      expect(decoded[0][1]).toBeCloseTo(-120.2, 5);
+      expect(decoded[1][0]).toBeCloseTo(40.7, 5);
+      expect(decoded[1][1]).toBeCloseTo(-120.95, 5);
+
+      // Truncated after exactly one full point: only that point is returned.
+      const oneFullPoint = PolylineUtils.decodePolyline('_p~iF~ps|U');
+      expect(oneFullPoint).toHaveLength(1);
+      expect(oneFullPoint[0][0]).toBeCloseTo(38.5, 5);
+      expect(oneFullPoint[0][1]).toBeCloseTo(-120.2, 5);
+    });
+
+    it('should be the exact inverse of encodePolyline (round-trip)', () => {
+      const points = [[38.5, -120.2], [40.7, -120.95], [43.252, -126.453], [0, 0], [-33.8688, 151.2093]];
+
+      const encoded = PolylineUtils.encodePolyline(points);
+      const decoded = PolylineUtils.decodePolyline(encoded);
+
+      expect(decoded).toHaveLength(points.length);
+      decoded.forEach(([lat, lng], i) => {
+        expect(lat).toBeCloseTo(points[i][0], 5);
+        expect(lng).toBeCloseTo(points[i][1], 5);
+      });
+    });
+
+    it('should round-trip negative and near-zero coordinates', () => {
+      const points = [[-0.00001, 0.00001], [-89.99999, -179.99999], [0.00002, -0.00002]];
+
+      const encoded = PolylineUtils.encodePolyline(points);
+      const decoded = PolylineUtils.decodePolyline(encoded);
+
+      expect(decoded).toHaveLength(points.length);
+      decoded.forEach(([lat, lng], i) => {
+        expect(lat).toBeCloseTo(points[i][0], 5);
+        expect(lng).toBeCloseTo(points[i][1], 5);
+      });
+    });
+
+    it('should round-trip a single point', () => {
+      const points = [[12.34567, -76.54321]];
+
+      const encoded = PolylineUtils.encodePolyline(points);
+      const decoded = PolylineUtils.decodePolyline(encoded);
+
+      expect(decoded).toHaveLength(1);
+      expect(decoded[0][0]).toBeCloseTo(points[0][0], 5);
+      expect(decoded[0][1]).toBeCloseTo(points[0][1], 5);
+    });
+  });
 });

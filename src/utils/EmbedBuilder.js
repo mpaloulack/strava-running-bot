@@ -1,6 +1,7 @@
 const config = require('../../config/config');
-const { EmbedBuilder } = require('discord.js');
+const { EmbedBuilder, AttachmentBuilder } = require('discord.js');
 const ActivityFormatter = require('./ActivityFormatter');
+const MapRenderer = require('../maps/MapRenderer');
 
 /**
  * Shared utility for creating Discord embeds for activities
@@ -36,9 +37,45 @@ class ActivityEmbedBuilder {
     this._addCoreActivityFields(embed, activity, displayType);
     this._addOptionalActivityFields(embed, activity);
     this._addPBField(embed, activity);
-    this._addMapImage(embed, activity);
 
     return embed;
+  }
+
+  /**
+   * Build a ready-to-send Discord message payload for an activity: the embed
+   * plus (when a route polyline is available) a locally-rendered map image
+   * attached and wired up via `attachment://route.png`.
+   *
+   * Never throws on map rendering failure — `MapRenderer.renderRoute`
+   * already swallows its own errors and returns `null`, and this method
+   * guards defensively anyway so a map bug can never break message delivery.
+   *
+   * @param {Object} activity - Processed activity data
+   * @param {Object} options - Embed options (see {@link createActivityEmbed})
+   * @returns {Promise<{embeds: EmbedBuilder[], files: AttachmentBuilder[]}>} Discord.js message payload
+   */
+  static async createActivityMessage(activity, options = {}) {
+    const embed = ActivityEmbedBuilder.createActivityEmbed(activity, options);
+    const files = [];
+
+    if (activity.map?.summary_polyline) {
+      let mapBuffer;
+      try {
+        mapBuffer = await MapRenderer.instance.renderRoute(activity.map.summary_polyline);
+      } catch (_error) {
+        // MapRenderer never throws by contract, but don't let a route image
+        // ever take down activity delivery.
+        mapBuffer = null;
+      }
+
+      if (mapBuffer) {
+        const attachment = new AttachmentBuilder(mapBuffer, { name: 'route.png' });
+        embed.setImage('attachment://route.png');
+        files.push(attachment);
+      }
+    }
+
+    return { embeds: [embed], files };
   }
 
   /**
@@ -219,20 +256,6 @@ class ActivityEmbedBuilder {
         value: `${Math.round(activity.total_elevation_gain)}m`,
         inline: true,
       }]);
-    }
-  }
-
-  /**
-   * Add map image if polyline is available
-   * @param {EmbedBuilder} embed - Discord embed builder
-   * @param {Object} activity - Activity data
-   */
-  static _addMapImage(embed, activity) {
-    if (activity.map?.summary_polyline) {
-      const mapUrl = ActivityFormatter.generateStaticMapUrl(activity.map.summary_polyline);
-      if (mapUrl) {
-        embed.setImage(mapUrl);
-      }
     }
   }
 

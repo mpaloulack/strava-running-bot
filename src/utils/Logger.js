@@ -188,6 +188,13 @@ class Logger {
     debug: (message, data) => this.debug('INTERVALS', message, data)
   };
 
+  map = {
+    error: (message, data) => this.error('MAP', message, data),
+    warn: (message, data) => this.warn('MAP', message, data),
+    info: (message, data) => this.info('MAP', message, data),
+    debug: (message, data) => this.debug('MAP', message, data)
+  };
+
   webhook = {
     error: (message, data) => this.error('WEBHOOK', message, data),
     warn: (message, data) => this.warn('WEBHOOK', message, data),
