@@ -683,6 +683,107 @@ describe('DatabaseManager', () => {
       encryptSpy.mockRestore();
     });
 
+    describe('clearProviderTokens', () => {
+      it('should remove only the target namespace and leave other providers intact', async () => {
+        const athleteId = 12345;
+
+        const decryptSpy = jest.spyOn(EncryptionUtils, 'decryptTokens').mockReturnValue({
+          strava: { access_token: 'strava_at', refresh_token: 'strava_rt', expires_at: 111 },
+          intervals: { api_key: 'preserved_intervals_key' }
+        });
+        const encryptSpy = jest.spyOn(EncryptionUtils, 'encryptTokensToJSON');
+
+        const mockUpdateChain = {
+          set: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+          returning: jest.fn().mockResolvedValue([{ athlete_id: athleteId }])
+        };
+        mockDb.update.mockReturnValue(mockUpdateChain);
+
+        mockDb.select.mockReturnValue({
+          from: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+          get: jest.fn().mockResolvedValue({
+            athlete_id: athleteId,
+            discord_id: 'discord123',
+            encrypted_tokens: JSON.stringify({ iv: 'iv', encrypted: 'enc', authTag: 'tag' })
+          })
+        });
+
+        const result = await DatabaseManager.clearProviderTokens(athleteId, 'strava');
+
+        expect(encryptSpy).toHaveBeenCalledWith({ intervals: { api_key: 'preserved_intervals_key' } });
+        expect(mockUpdateChain.set).toHaveBeenCalledWith(
+          expect.objectContaining({ encrypted_tokens: expect.any(String) })
+        );
+        expect(result).toEqual({ athlete_id: athleteId });
+
+        decryptSpy.mockRestore();
+        encryptSpy.mockRestore();
+      });
+
+      it('should null out the encrypted_tokens column when clearing the only remaining namespace', async () => {
+        const athleteId = 12345;
+
+        const decryptSpy = jest.spyOn(EncryptionUtils, 'decryptTokens').mockReturnValue({
+          strava: { access_token: 'strava_at', refresh_token: 'strava_rt', expires_at: 111 }
+        });
+        const encryptSpy = jest.spyOn(EncryptionUtils, 'encryptTokensToJSON');
+
+        const mockUpdateChain = {
+          set: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+          returning: jest.fn().mockResolvedValue([{ athlete_id: athleteId }])
+        };
+        mockDb.update.mockReturnValue(mockUpdateChain);
+
+        mockDb.select.mockReturnValue({
+          from: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+          get: jest.fn().mockResolvedValue({
+            athlete_id: athleteId,
+            discord_id: 'discord123',
+            encrypted_tokens: JSON.stringify({ iv: 'iv', encrypted: 'enc', authTag: 'tag' })
+          })
+        });
+
+        await DatabaseManager.clearProviderTokens(athleteId, 'strava');
+
+        expect(encryptSpy).not.toHaveBeenCalled();
+        expect(mockUpdateChain.set).toHaveBeenCalledWith(
+          expect.objectContaining({ encrypted_tokens: null })
+        );
+
+        decryptSpy.mockRestore();
+        encryptSpy.mockRestore();
+      });
+
+      it('should no-op and not touch the database when the provider has nothing stored', async () => {
+        const athleteId = 12345;
+
+        const decryptSpy = jest.spyOn(EncryptionUtils, 'decryptTokens').mockReturnValue({
+          intervals: { api_key: 'preserved_intervals_key' }
+        });
+
+        mockDb.select.mockReturnValue({
+          from: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+          get: jest.fn().mockResolvedValue({
+            athlete_id: athleteId,
+            discord_id: 'discord123',
+            encrypted_tokens: JSON.stringify({ iv: 'iv', encrypted: 'enc', authTag: 'tag' })
+          })
+        });
+
+        const result = await DatabaseManager.clearProviderTokens(athleteId, 'strava');
+
+        expect(result).toBeNull();
+        expect(mockDb.update).not.toHaveBeenCalled();
+
+        decryptSpy.mockRestore();
+      });
+    });
+
     it('should deactivate member', async () => {
       const athleteId = 12345;
       

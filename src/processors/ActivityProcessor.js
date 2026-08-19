@@ -563,6 +563,138 @@ class ActivityProcessor {
     }
   }
 
+  // Revoke this member's Strava access at Strava (freeing the athlete seat
+  // against the app's cap, see config.strava.athleteCap) and clear their
+  // stored Strava credentials. Called from the provider-switch, remove and
+  // deactivate paths in commands.js, plus the explicit /disconnect and
+  // /members revoke commands. Revocation is best-effort cleanup — it must
+  // never block or fail the user-facing operation that triggered it, so this
+  // never throws.
+  async revokeStravaAccess(member) {
+    const athleteId = member.athleteId;
+
+    try {
+      const tokenData = await this.memberManager.getStoredProviderTokens(member, 'strava');
+      if (!tokenData) {
+        logger.member.info('No stored Strava credentials to revoke', { athleteId });
+        return { revoked: false, reason: 'no_credentials' };
+      }
+
+      let accessToken = tokenData.access_token;
+      const isExpired = tokenData.expires_at && tokenData.expires_at < Date.now() / 1000;
+
+      if (isExpired) {
+        // Deauthorize needs a live access token. No refresh token means the
+        // stored access token can't be renewed, so treat it the same as an
+        // already-dead token: nothing left to revoke.
+        if (!tokenData.refresh_token) {
+          logger.member.info('Stored Strava token expired with no refresh token - treating as already revoked', {
+            athleteId
+          });
+          return { revoked: true, reason: 'already_revoked' };
+        }
+
+        try {
+          const refreshed = await this.stravaAPI.refreshAccessToken(tokenData.refresh_token);
+          accessToken = refreshed.access_token;
+        } catch (refreshError) {
+          // A failed refresh means the token is already dead at Strava's end.
+          logger.member.info('Token refresh failed before Strava deauthorization - treating as already revoked', {
+            athleteId,
+            error: refreshError.message
+          });
+          return { revoked: true, reason: 'already_revoked' };
+        }
+      }
+
+      const result = await this.stravaAPI.deauthorize(accessToken);
+
+      if (result.revoked) {
+        await this.memberManager.databaseManager.clearProviderTokens(athleteId, 'strava');
+      }
+
+      logger.member.info('Strava access revocation outcome', {
+        athleteId,
+        revoked: result.revoked,
+        reason: result.reason
+      });
+
+      return result;
+    } catch (error) {
+      logger.member.error('Unexpected error revoking Strava access', {
+        athleteId,
+        error: error.message
+      });
+      return { revoked: false, reason: error.message };
+    }
+  }
+
+  // A stored Strava credential occupies a real athlete seat regardless of the
+  // member's current active state or provider - Strava's app-level cap only
+  // cares whether the app still holds a live grant for that athlete. A member
+  // is "reclaimable" when they hold Strava credentials they no longer need:
+  // deactivated, or switched to another provider (both scenarios that predate
+  // automatic revocation, or where revocation itself failed). Factored out so
+  // countStravaSeats' `reclaimable` count and getReclaimableStravaMembers'
+  // list are always in lockstep - a member can never be counted in one and
+  // omitted from the other.
+  _isReclaimableStravaMember(member) {
+    return !(member.isActive && (member.provider || 'strava') === 'strava');
+  }
+
+  // Every member (active or not, any provider) currently holding a stored
+  // Strava namespace - the real seat-occupying set. A corrupt/undecryptable
+  // token blob must not blow up the whole scan, so a member whose lookup
+  // throws is logged and skipped rather than propagating.
+  async _getStravaCredentialHolders() {
+    const members = await this.memberManager.getAllMembersIncludingInactive();
+    const holders = [];
+
+    for (const member of members) {
+      let tokenData;
+      try {
+        tokenData = await this.memberManager.getStoredProviderTokens(member, 'strava');
+      } catch (error) {
+        logger.member.warn('Could not read stored Strava tokens for seat accounting - skipping member', {
+          athleteId: member.athleteId,
+          error: error.message
+        });
+        continue;
+      }
+
+      if (tokenData) {
+        holders.push(member);
+      }
+    }
+
+    return holders;
+  }
+
+  // Count real Strava seat usage against config.strava.athleteCap: `used` is
+  // every member still holding a stored Strava credential, regardless of
+  // active state or current provider; `reclaimable` is the subset of those
+  // who no longer need it (deactivated, or switched provider) and so could be
+  // freed by revoking. Used by /members revoke and the /members connections
+  // footer.
+  async countStravaSeats() {
+    const holders = await this._getStravaCredentialHolders();
+    const reclaimable = holders.filter(member => this._isReclaimableStravaMember(member));
+
+    return {
+      used: holders.length,
+      cap: config.strava.athleteCap,
+      reclaimable: reclaimable.length
+    };
+  }
+
+  // The actual member objects behind countStravaSeats' `reclaimable` count,
+  // in the same order getAllMembersIncludingInactive returns them. Used by
+  // the bulk /members revoke all_reclaimable path in commands.js.
+  async getReclaimableStravaMembers() {
+    const holders = await this._getStravaCredentialHolders();
+    return holders.filter(member => this._isReclaimableStravaMember(member));
+  }
+
   // Get activity statistics
   async getStats() {
     const queueStats = this.activityQueue.getStats();

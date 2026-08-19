@@ -300,6 +300,7 @@ node utils/setup.js validate-webhook
 | Command | Description | Usage |
 |---------|-------------|-------|
 | `/register` | Register yourself with Strava (OAuth) or intervals.icu (personal API key) | `/register` or `/register provider: intervals.icu` |
+| `/disconnect` | Disconnect your Strava access, freeing your athlete seat; optionally leave the team | `/disconnect` or `/disconnect leave_team: True` |
 | `/last` | Show last activity from a member | `/last member: John` |
 | `/sync` | Sync recent Strava activities and update Personal Bests | `/sync` or `/sync from: 2025-01-01` |
 | `/pb check` | View your personal bests (or another member's) | `/pb check` or `/pb check member: @user` |
@@ -324,6 +325,8 @@ node utils/setup.js validate-webhook
 | `/members remove` | Remove a team member | `/members remove user: @user` |
 | `/members deactivate` | Temporarily deactivate a member | `/members deactivate user: @user` |
 | `/members reactivate` | Reactivate a deactivated member | `/members reactivate user: @user` |
+| `/members revoke` | Revoke one member's Strava access, or bulk-revoke every reclaimable seat (deactivated members, or active intervals.icu members still holding Strava tokens), without touching membership | `/members revoke user: @user` or `/members revoke all_reclaimable: True` |
+| `/members connections` | Audit every member's provider and connection health (probes Strava/intervals.icu live) | `/members connections` or `/members connections include_inactive: True` |
 | `/botstatus` | Show bot statistics and health | `/botstatus` |
 | `/pb status` | Show PB sync status and stored PBs per member | `/pb status` |
 | `/all-races list` | List all team races | `/all-races list` or `/all-races list status: upcoming` |

@@ -616,6 +616,75 @@ class DatabaseManager {
     return null;
   }
 
+  // Remove one provider's namespace from a member's token blob, leaving any
+  // other provider's credentials untouched. Mirrors updateTokens's merge
+  // logic, inverted: decrypt the current blob, delete the target namespace,
+  // and re-encrypt whatever remains (or null out the column if nothing does).
+  // Used by ActivityProcessor.revokeStravaAccess to clear a member's Strava
+  // credentials once they've been revoked at Strava, so no dead credentials
+  // linger and the athlete seat reads as free.
+  async clearProviderTokens(athleteId, provider) {
+    await this.ensureInitialized();
+
+    let existingNamespaces = {};
+    if (config.security.encryptionKey) {
+      try {
+        const currentMember = await this.getMemberByAthleteId(athleteId);
+        if (currentMember?.tokens) {
+          existingNamespaces = normalizeTokenBlob(EncryptionUtils.decryptTokens(currentMember.tokens));
+        }
+      } catch (error) {
+        logger.database.warn('Could not decrypt existing tokens while clearing provider tokens', {
+          athleteId,
+          provider,
+          error: error.message
+        });
+      }
+    }
+
+    if (!(provider in existingNamespaces)) {
+      // Nothing stored for this provider already - no-op.
+      return null;
+    }
+
+    const remaining = { ...existingNamespaces };
+    delete remaining[provider];
+    const remainingProviders = Object.keys(remaining);
+
+    let encryptedTokens = null;
+    if (remainingProviders.length > 0) {
+      try {
+        encryptedTokens = EncryptionUtils.encryptTokensToJSON(remaining);
+      } catch (error) {
+        logger.database.error('Failed to encrypt tokens while clearing provider tokens', {
+          athleteId,
+          provider,
+          error: error.message
+        });
+        throw error;
+      }
+    }
+
+    const result = await this.db.update(members)
+      .set({
+        encrypted_tokens: encryptedTokens,
+        updated_at: new Date().toISOString()
+      })
+      .where(eq(members.athlete_id, Number.parseInt(athleteId)))
+      .returning();
+
+    if (result && result.length > 0) {
+      logger.database.info('Cleared provider tokens', {
+        athleteId,
+        provider,
+        remainingProviders
+      });
+      return result[0];
+    }
+
+    return null;
+  }
+
   // === RACE MANAGEMENT ===
   async addRace(memberAthleteId, raceData) {
     await this.ensureInitialized();

@@ -11,6 +11,7 @@ jest.mock('../../config/config', () => ({
     baseUrl: 'https://www.strava.com/api/v3',
     authUrl: 'https://www.strava.com/oauth/authorize',
     tokenUrl: 'https://www.strava.com/oauth/token',
+    deauthorizeUrl: 'https://www.strava.com/oauth/deauthorize',
     clientId: 'test_client_id',
     clientSecret: 'test_client_secret'
   },
@@ -198,6 +199,76 @@ describe('StravaAPI', () => {
         error: error.message,
         response: error.response.data,
         status: error.response.status
+      });
+    });
+  });
+
+  describe('deauthorize', () => {
+    it('should return revoked:true on a 2xx response', async () => {
+      mockAxios.post.mockResolvedValue({ status: 200, data: {} });
+
+      const result = await stravaAPI.deauthorize('test_access_token');
+
+      expect(mockAxios.post).toHaveBeenCalledWith(
+        config.strava.deauthorizeUrl,
+        null,
+        { headers: { Authorization: 'Bearer test_access_token' } }
+      );
+      expect(result).toEqual({ revoked: true });
+      expect(mockRateLimiter.executeRequest).toHaveBeenCalledWith(
+        expect.any(Function),
+        { operation: 'deauthorize' }
+      );
+    });
+
+    it('should treat a 401 response as already revoked', async () => {
+      const error = new Error('Unauthorized');
+      error.response = { status: 401, data: { message: 'Unauthorized' } };
+      mockAxios.post.mockRejectedValue(error);
+
+      const result = await stravaAPI.deauthorize('dead_token');
+
+      expect(result).toEqual({ revoked: true, reason: 'already_revoked' });
+      expect(logger.strava.warn).not.toHaveBeenCalled();
+    });
+
+    it('should treat a 403 response as already revoked', async () => {
+      const error = new Error('Forbidden');
+      error.response = { status: 403, data: { message: 'Forbidden' } };
+      mockAxios.post.mockRejectedValue(error);
+
+      const result = await stravaAPI.deauthorize('dead_token');
+
+      expect(result).toEqual({ revoked: true, reason: 'already_revoked' });
+    });
+
+    it('should return revoked:false without throwing on a network error', async () => {
+      const error = new Error('Network Error');
+      mockAxios.post.mockRejectedValue(error);
+
+      await expect(stravaAPI.deauthorize('test_access_token')).resolves.toEqual({
+        revoked: false,
+        reason: 'Network Error'
+      });
+      expect(logger.strava.warn).toHaveBeenCalledWith('Failed to deauthorize Strava access', {
+        error: 'Network Error',
+        response: undefined,
+        status: undefined
+      });
+    });
+
+    it('should return revoked:false without throwing on other error statuses', async () => {
+      const error = new Error('Server error');
+      error.response = { status: 500, data: { message: 'Internal Server Error' } };
+      mockAxios.post.mockRejectedValue(error);
+
+      const result = await stravaAPI.deauthorize('test_access_token');
+
+      expect(result).toEqual({ revoked: false, reason: 'Server error' });
+      expect(logger.strava.warn).toHaveBeenCalledWith('Failed to deauthorize Strava access', {
+        error: 'Server error',
+        response: { message: 'Internal Server Error' },
+        status: 500
       });
     });
   });

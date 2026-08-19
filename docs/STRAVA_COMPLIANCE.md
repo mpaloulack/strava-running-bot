@@ -64,6 +64,67 @@ The bot automatically filters out:
 - Members can deactivate/remove themselves
 - Admin controls for member management
 
+### Access Revocation (Deauthorization)
+
+The app is capped at **10 simultaneously connected Strava athletes** — the self-serve
+Standard Tier ceiling ([Strava docs](https://developers.strava.com/docs/getting-started/)).
+Freeing a seat requires actually telling Strava the connection is gone, not just
+deleting our own copy of the tokens — so the bot calls Strava's
+`POST /oauth/deauthorize` (`src/strava/api.js#deauthorize`,
+`src/processors/ActivityProcessor.js#revokeStravaAccess`) whenever a member's Strava
+connection ends:
+
+- Switching provider from Strava to intervals.icu (`/register provider:intervals.icu`)
+- `/members remove` and `/members deactivate` (admin)
+- `/members revoke` — explicit admin revoke without touching membership
+- `/disconnect` — explicit self-service revoke, with an optional `leave_team` flag
+
+This is a **compliance strengthening**, not a workaround: Strava requires apps to
+honor deauthorization and stop accessing an athlete's data once access is revoked.
+Revocation is best-effort — a failed call to Strava never blocks the member-facing
+operation that triggered it, and is reported back to the user/admin as a warning
+instead. Revoked tokens are cleared from storage (`clearProviderTokens`) so no dead
+credentials linger.
+
+Revocation frees headroom under the 10-athlete cap but does not raise it — hosting
+more than 10 athletes *simultaneously* connected to Strava still requires submitting
+the app for Strava's review process. `/members connections` (admin) and
+`/members revoke`'s reply report live usage against the cap
+(`config.strava.athleteCap`, default 10, overridable via `STRAVA_ATHLETE_CAP`).
+
+### Reclaimable Seats
+
+A stored Strava credential occupies a real seat against the app's cap regardless
+of whether the member is active or has since switched provider — Strava's app-level
+limit only cares whether the app still holds a live grant for that athlete. Seat
+accounting (`countStravaSeats`) reflects this: `used` counts every member holding
+a stored Strava credential, active or not, Strava or intervals.icu.
+
+Automatic revocation (above) only fires going forward, from the actions it's wired
+into. Two categories can still hold a seat they don't need without any of those
+actions ever having run: members deactivated before automatic revocation existed,
+and members who switched to intervals.icu before automatic revocation existed (or
+where the revoke call itself failed at the time). These are **reclaimable** seats.
+`/members connections` marks each one inline (`🔑 still holds a seat`) and the
+seats-used footer reports the total (`Strava seats used: 5/10 (1 reclaimable) · …`).
+`/members revoke all_reclaimable:True` sweeps all of them in one pass — sequential,
+one Strava API call at a time, reporting success/failure counts and the refreshed
+seat total; a failed revoke for one member doesn't stop the rest.
+
+### Connection Health Audit
+
+`/members connections` (admin) probes every member's stored credentials live —
+refreshing/validating Strava tokens and checking intervals.icu API keys — and
+reports per-member status alongside the Strava seat count. This exists mainly to
+surface one non-obvious failure mode: **intervals.icu cannot serve Strava-sourced
+activities back out through its API** (confirmed by the intervals.icu site owner,
+Oct 2025). A member who migrates to intervals.icu but whose intervals.icu account
+is itself fed by Strava will authenticate successfully and silently produce zero
+activities — there is no error, just... going quiet. `/members connections` flags
+this as a distinct ⚠️ status (valid key, zero activities in 30 days) with a footer
+explaining it, so admins can tell the member to point intervals.icu at Garmin,
+Coros, Polar, or a manual upload instead.
+
 ## 📊 Rate Limiting
 
 ### ✅ Implementation Complete
@@ -116,6 +177,7 @@ The bot automatically filters out:
 - [x] Webhook verification
 - [x] Configurable BASE_URL for production
 - [x] **Rate limiting implementation** (NEW!)
+- [x] **Strava deauthorization on disconnect/remove/deactivate/switch** — honors revocation and frees athlete seats (NEW!)
 
 ### ⚠️ Recommended for Production
 

@@ -24,6 +24,7 @@ const mockDatabaseManager = {
   reactivateMember: jest.fn(),
   removeMember: jest.fn(),
   updateTokens: jest.fn(),
+  clearProviderTokens: jest.fn(),
   getStats: jest.fn(),
   close: jest.fn(),
   backup: jest.fn(),
@@ -427,6 +428,27 @@ describe('DatabaseMemberManager', () => {
       await memberManager.updateTokens(12345, mockTokenData, 'intervals');
 
       expect(mockDatabaseManager.updateTokens).toHaveBeenCalledWith(12345, mockTokenData, 'intervals');
+    });
+  });
+
+  describe('clearProviderTokens', () => {
+    it('should ensure initialization and delegate to databaseManager.clearProviderTokens, returning its result', async () => {
+      mockDatabaseManager.clearProviderTokens.mockResolvedValue({ athlete_id: 12345 });
+
+      const result = await memberManager.clearProviderTokens(12345, 'strava');
+
+      expect(mockDatabaseManager.initialize).toHaveBeenCalled();
+      expect(mockDatabaseManager.clearProviderTokens).toHaveBeenCalledWith(12345, 'strava');
+      expect(result).toEqual({ athlete_id: 12345 });
+    });
+
+    it('should forward the given provider through unchanged', async () => {
+      mockDatabaseManager.clearProviderTokens.mockResolvedValue(null);
+
+      const result = await memberManager.clearProviderTokens(67890, 'intervals');
+
+      expect(mockDatabaseManager.clearProviderTokens).toHaveBeenCalledWith(67890, 'intervals');
+      expect(result).toBeNull();
     });
   });
 
