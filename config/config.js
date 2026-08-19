@@ -16,6 +16,12 @@ const config = {
     baseUrl: 'https://www.strava.com/api/v3',
     authUrl: 'https://www.strava.com/oauth/authorize',
     tokenUrl: 'https://www.strava.com/oauth/token',
+    deauthorizeUrl: 'https://www.strava.com/oauth/deauthorize',
+    // Self-serve Standard Tier ceiling on simultaneously connected athletes
+    // (https://developers.strava.com/docs/getting-started/) - going past it
+    // requires submitting the app for Strava review. Not hardcoded so the cap
+    // can be raised via env if the app is later approved for a higher tier.
+    athleteCap: Number(process.env.STRAVA_ATHLETE_CAP) || 10,
   },
   intervals: {
     baseUrl: process.env.INTERVALS_BASE_URL || 'https://intervals.icu',

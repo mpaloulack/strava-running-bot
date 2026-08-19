@@ -80,6 +80,42 @@ class StravaAPI {
     }, { operation: 'refreshAccessToken' });
   }
 
+  // Revoke this app's access to the given Strava account (POST
+  // /oauth/deauthorize). Called when a member switches away from Strava, is
+  // removed, or is deactivated, to free the athlete seat against the app's
+  // Strava API cap. Revocation is best-effort cleanup: it must never block
+  // the user-facing operation that triggered it, so this never throws.
+  async deauthorize(accessToken) {
+    logger.strava.debug('Deauthorizing Strava access');
+
+    return this.rateLimiter.executeRequest(async () => {
+      try {
+        await axios.post(config.strava.deauthorizeUrl, null, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        });
+
+        return { revoked: true };
+      } catch (error) {
+        const status = error.response?.status;
+
+        // Token already dead means the seat is already free - not a failure.
+        if (status === 401 || status === 403) {
+          return { revoked: true, reason: 'already_revoked' };
+        }
+
+        logger.strava.warn('Failed to deauthorize Strava access', {
+          error: error.message,
+          response: error.response?.data,
+          status
+        });
+
+        return { revoked: false, reason: error.message };
+      }
+    }, { operation: 'deauthorize' });
+  }
+
   // Get athlete information
   async getAthlete(accessToken) {
     logger.strava.debug('Fetching athlete information');

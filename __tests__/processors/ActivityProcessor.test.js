@@ -25,10 +25,19 @@ jest.mock('../../config/dynamicConfig', () => ({
 jest.mock('../../config/config', () => ({
   posting: {
     delayMinutes: 15
+  },
+  strava: {
+    athleteCap: 10
   }
 }));
 jest.mock('../../src/utils/Logger', () => ({
   activity: {
+    info: jest.fn(),
+    debug: jest.fn(),
+    error: jest.fn(),
+    warn: jest.fn()
+  },
+  member: {
     info: jest.fn(),
     debug: jest.fn(),
     error: jest.fn(),
@@ -87,7 +96,9 @@ describe('ActivityProcessor', () => {
       getActivity: jest.fn(),
       shouldPostActivity: jest.fn(),
       processActivityWithStreams: jest.fn(),
-      getAthleteActivities: jest.fn()
+      getAthleteActivities: jest.fn(),
+      deauthorize: jest.fn(),
+      refreshAccessToken: jest.fn()
     };
 
     mockIntervalsAPI = {
@@ -116,11 +127,14 @@ describe('ActivityProcessor', () => {
       getValidAccessToken: jest.fn(),
       refreshMemberToken: jest.fn(),
       getAllMembers: jest.fn(),
+      getAllMembersIncludingInactive: jest.fn(),
       getMemberCount: jest.fn(),
+      getStoredProviderTokens: jest.fn(),
       databaseManager: {
         upsertActivity: jest.fn().mockResolvedValue(undefined),
         getActivityById: jest.fn().mockResolvedValue(null),
         findDuplicateActivity: jest.fn().mockResolvedValue(null),
+        clearProviderTokens: jest.fn().mockResolvedValue(undefined),
         settingsManager: {
           getSetting: jest.fn().mockResolvedValue(null),
           setSetting: jest.fn().mockResolvedValue(undefined),
@@ -1089,6 +1103,257 @@ describe('ActivityProcessor', () => {
       // Should keep the most recent ones (higher numbers)
       expect(activityProcessor.processedActivities.has('test-11999')).toBe(true);
       expect(activityProcessor.processedActivities.has('test-0')).toBe(false);
+    });
+  });
+
+  describe('revokeStravaAccess', () => {
+    const athleteId = 12345;
+    const member = { athleteId, discordUserId: '123456789', provider: 'strava' };
+
+    it('should return no_credentials when the member has no stored Strava tokens', async () => {
+      mockMemberManager.getStoredProviderTokens.mockResolvedValue(null);
+
+      const result = await activityProcessor.revokeStravaAccess(member);
+
+      expect(mockMemberManager.getStoredProviderTokens).toHaveBeenCalledWith(member, 'strava');
+      expect(mockStravaAPI.deauthorize).not.toHaveBeenCalled();
+      expect(result).toEqual({ revoked: false, reason: 'no_credentials' });
+    });
+
+    it('should deauthorize directly with a still-valid access token', async () => {
+      const tokenData = {
+        access_token: 'valid_access_token',
+        refresh_token: 'refresh_token',
+        expires_at: Math.floor(Date.now() / 1000) + 3600
+      };
+      mockMemberManager.getStoredProviderTokens.mockResolvedValue(tokenData);
+      mockStravaAPI.deauthorize.mockResolvedValue({ revoked: true });
+
+      const result = await activityProcessor.revokeStravaAccess(member);
+
+      expect(mockStravaAPI.refreshAccessToken).not.toHaveBeenCalled();
+      expect(mockStravaAPI.deauthorize).toHaveBeenCalledWith('valid_access_token');
+      expect(mockMemberManager.databaseManager.clearProviderTokens).toHaveBeenCalledWith(athleteId, 'strava');
+      expect(result).toEqual({ revoked: true });
+    });
+
+    it('should refresh an expired access token before deauthorizing', async () => {
+      const tokenData = {
+        access_token: 'stale_access_token',
+        refresh_token: 'refresh_token',
+        expires_at: Math.floor(Date.now() / 1000) - 10
+      };
+      mockMemberManager.getStoredProviderTokens.mockResolvedValue(tokenData);
+      mockStravaAPI.refreshAccessToken.mockResolvedValue({ access_token: 'new_access_token' });
+      mockStravaAPI.deauthorize.mockResolvedValue({ revoked: true });
+
+      const result = await activityProcessor.revokeStravaAccess(member);
+
+      expect(mockStravaAPI.refreshAccessToken).toHaveBeenCalledWith('refresh_token');
+      expect(mockStravaAPI.deauthorize).toHaveBeenCalledWith('new_access_token');
+      expect(result).toEqual({ revoked: true });
+    });
+
+    it('should treat a failed token refresh as already revoked', async () => {
+      const tokenData = {
+        access_token: 'stale_access_token',
+        refresh_token: 'refresh_token',
+        expires_at: Math.floor(Date.now() / 1000) - 10
+      };
+      mockMemberManager.getStoredProviderTokens.mockResolvedValue(tokenData);
+      mockStravaAPI.refreshAccessToken.mockRejectedValue(new Error('invalid_grant'));
+
+      const result = await activityProcessor.revokeStravaAccess(member);
+
+      expect(mockStravaAPI.deauthorize).not.toHaveBeenCalled();
+      expect(mockMemberManager.databaseManager.clearProviderTokens).not.toHaveBeenCalled();
+      expect(result).toEqual({ revoked: true, reason: 'already_revoked' });
+    });
+
+    it('should treat an expired token with no refresh token as already revoked', async () => {
+      const tokenData = {
+        access_token: 'stale_access_token',
+        expires_at: Math.floor(Date.now() / 1000) - 10
+      };
+      mockMemberManager.getStoredProviderTokens.mockResolvedValue(tokenData);
+
+      const result = await activityProcessor.revokeStravaAccess(member);
+
+      expect(mockStravaAPI.deauthorize).not.toHaveBeenCalled();
+      expect(result).toEqual({ revoked: true, reason: 'already_revoked' });
+    });
+
+    it('should not clear stored tokens when the Strava API call fails', async () => {
+      const tokenData = {
+        access_token: 'valid_access_token',
+        refresh_token: 'refresh_token',
+        expires_at: Math.floor(Date.now() / 1000) + 3600
+      };
+      mockMemberManager.getStoredProviderTokens.mockResolvedValue(tokenData);
+      mockStravaAPI.deauthorize.mockResolvedValue({ revoked: false, reason: 'Network error' });
+
+      const result = await activityProcessor.revokeStravaAccess(member);
+
+      expect(mockMemberManager.databaseManager.clearProviderTokens).not.toHaveBeenCalled();
+      expect(result).toEqual({ revoked: false, reason: 'Network error' });
+    });
+
+    it('should never throw - unexpected errors resolve to revoked:false', async () => {
+      mockMemberManager.getStoredProviderTokens.mockRejectedValue(new Error('db exploded'));
+
+      const result = await activityProcessor.revokeStravaAccess(member);
+
+      expect(result).toEqual({ revoked: false, reason: 'db exploded' });
+      expect(logger.member.error).toHaveBeenCalledWith('Unexpected error revoking Strava access', {
+        athleteId,
+        error: 'db exploded'
+      });
+    });
+  });
+
+  describe('countStravaSeats / getReclaimableStravaMembers', () => {
+    // Shared fixture set exercising every category from the seat-accounting
+    // contract: real seat usage (`used`) is any stored Strava credential,
+    // active state or provider notwithstanding; `reclaimable` is the subset
+    // that no longer needs it.
+    const activeStravaWithTokens = { athleteId: 1, isActive: true, provider: 'strava' };
+    const inactiveStravaWithTokens = { athleteId: 2, isActive: false, provider: 'strava' };
+    const activeIntervalsWithLingeringStravaTokens = { athleteId: 3, isActive: true, provider: 'intervals' };
+    const activeIntervalsNoStravaTokens = { athleteId: 4, isActive: true, provider: 'intervals' };
+    const activeStravaClearedTokens = { athleteId: 5, isActive: true, provider: 'strava' };
+    const corruptBlobMember = { athleteId: 6, isActive: true, provider: 'strava' };
+
+    const allMembers = [
+      activeStravaWithTokens,
+      inactiveStravaWithTokens,
+      activeIntervalsWithLingeringStravaTokens,
+      activeIntervalsNoStravaTokens,
+      activeStravaClearedTokens,
+      corruptBlobMember
+    ];
+
+    beforeEach(() => {
+      mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue(allMembers);
+      mockMemberManager.getStoredProviderTokens.mockImplementation(async (member) => {
+        switch (member.athleteId) {
+        case 1: return { access_token: 'a' }; // active strava - not reclaimable
+        case 2: return { access_token: 'b' }; // inactive strava - reclaimable
+        case 3: return { access_token: 'c' }; // active intervals with lingering strava tokens - reclaimable
+        case 4: return null; // no strava namespace at all
+        case 5: return null; // cleared/null tokens
+        case 6: throw new Error('corrupt token blob'); // must be skipped, not thrown
+        default: return null;
+        }
+      });
+    });
+
+    describe('countStravaSeats', () => {
+      it('should enumerate via getAllMembersIncludingInactive, not getAllMembers', async () => {
+        await activityProcessor.countStravaSeats();
+
+        expect(mockMemberManager.getAllMembersIncludingInactive).toHaveBeenCalled();
+        expect(mockMemberManager.getAllMembers).not.toHaveBeenCalled();
+      });
+
+      it('should count every stored-credential holder as used, and the non-active-strava subset as reclaimable', async () => {
+        const result = await activityProcessor.countStravaSeats();
+
+        // used: athletes 1, 2, 3 hold a strava namespace (4, 5 don't; 6 errors and is skipped)
+        // reclaimable: athletes 2 (inactive) and 3 (active but on intervals) - athlete 1 is active+strava, not reclaimable
+        expect(result).toEqual({ used: 3, cap: 10, reclaimable: 2 });
+      });
+
+      it('should skip a member whose token blob throws, without propagating the error', async () => {
+        await expect(activityProcessor.countStravaSeats()).resolves.toBeDefined();
+        expect(logger.member.warn).toHaveBeenCalledWith(
+          'Could not read stored Strava tokens for seat accounting - skipping member',
+          { athleteId: 6, error: 'corrupt token blob' }
+        );
+      });
+
+      it('should count an active strava member with tokens as used but not reclaimable', async () => {
+        mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue([activeStravaWithTokens]);
+        mockMemberManager.getStoredProviderTokens.mockResolvedValue({ access_token: 'a' });
+
+        const result = await activityProcessor.countStravaSeats();
+
+        expect(result).toEqual({ used: 1, cap: 10, reclaimable: 0 });
+      });
+
+      it('should count an inactive member with lingering strava tokens as both used and reclaimable', async () => {
+        mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue([inactiveStravaWithTokens]);
+        mockMemberManager.getStoredProviderTokens.mockResolvedValue({ access_token: 'b' });
+
+        const result = await activityProcessor.countStravaSeats();
+
+        expect(result).toEqual({ used: 1, cap: 10, reclaimable: 1 });
+      });
+
+      it('should count an active intervals member with lingering strava tokens as both used and reclaimable', async () => {
+        mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue([activeIntervalsWithLingeringStravaTokens]);
+        mockMemberManager.getStoredProviderTokens.mockResolvedValue({ access_token: 'c' });
+
+        const result = await activityProcessor.countStravaSeats();
+
+        expect(result).toEqual({ used: 1, cap: 10, reclaimable: 1 });
+      });
+
+      it('should count an intervals member with no strava namespace as neither used nor reclaimable', async () => {
+        mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue([activeIntervalsNoStravaTokens]);
+        mockMemberManager.getStoredProviderTokens.mockResolvedValue(null);
+
+        const result = await activityProcessor.countStravaSeats();
+
+        expect(result).toEqual({ used: 0, cap: 10, reclaimable: 0 });
+      });
+
+      it('should count a member with cleared/null strava tokens as neither used nor reclaimable', async () => {
+        mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue([activeStravaClearedTokens]);
+        mockMemberManager.getStoredProviderTokens.mockResolvedValue(null);
+
+        const result = await activityProcessor.countStravaSeats();
+
+        expect(result).toEqual({ used: 0, cap: 10, reclaimable: 0 });
+      });
+
+      it('should default a missing provider field to strava when deciding reclaimability', async () => {
+        mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue([{ athleteId: 1, isActive: true }]);
+        mockMemberManager.getStoredProviderTokens.mockResolvedValue({ access_token: 'a' });
+
+        const result = await activityProcessor.countStravaSeats();
+
+        // isActive true + defaulted provider 'strava' => not reclaimable
+        expect(result).toEqual({ used: 1, cap: 10, reclaimable: 0 });
+      });
+    });
+
+    describe('getReclaimableStravaMembers', () => {
+      it('should return exactly the members counted as reclaimable by countStravaSeats, in list order', async () => {
+        const [{ reclaimable: reclaimableCount }, reclaimableMembers] = await Promise.all([
+          activityProcessor.countStravaSeats(),
+          activityProcessor.getReclaimableStravaMembers()
+        ]);
+
+        expect(reclaimableMembers).toEqual([inactiveStravaWithTokens, activeIntervalsWithLingeringStravaTokens]);
+        expect(reclaimableMembers).toHaveLength(reclaimableCount);
+      });
+
+      it('should return an empty array when nobody is reclaimable', async () => {
+        mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue([activeStravaWithTokens]);
+        mockMemberManager.getStoredProviderTokens.mockResolvedValue({ access_token: 'a' });
+
+        const result = await activityProcessor.getReclaimableStravaMembers();
+
+        expect(result).toEqual([]);
+      });
+
+      it('should skip a member whose token blob throws, without propagating the error', async () => {
+        await expect(activityProcessor.getReclaimableStravaMembers()).resolves.toBeDefined();
+        expect(logger.member.warn).toHaveBeenCalledWith(
+          'Could not read stored Strava tokens for seat accounting - skipping member',
+          { athleteId: 6, error: 'corrupt token blob' }
+        );
+      });
     });
   });
 

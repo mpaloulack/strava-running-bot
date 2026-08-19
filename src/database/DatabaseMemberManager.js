@@ -123,6 +123,11 @@ class DatabaseMemberManager {
     return await this.databaseManager.updateTokens(athleteId, tokenData, provider);
   }
 
+  async clearProviderTokens(athleteId, provider) {
+    await this.ensureInitialized();
+    return await this.databaseManager.clearProviderTokens(athleteId, provider);
+  }
+
   // Helper: Decrypt tokens using AES-256-GCM
   _decryptTokenData(encryptedTokens, _athleteId) {
     const config = require('../../config/config');
@@ -302,10 +307,17 @@ class DatabaseMemberManager {
   // Return the raw, decrypted credentials this member has stored for the given
   // provider (e.g. 'strava' or 'intervals'), or null if none are stored. Unlike
   // getValidAccessToken, this does no expiry checking, refreshing, or JSON
-  // fallback — callers are responsible for validating what they get back. Used
-  // for an instant provider switch-back: if a member switches from Strava to
-  // intervals.icu and later back, their still-preserved Strava tokens can be
-  // read here without asking them to re-authenticate.
+  // fallback — callers are responsible for validating what they get back.
+  //
+  // Two callers rely on this: an instant provider switch-back to intervals.icu
+  // (its API keys aren't seat-limited, so they're preserved across a switch
+  // and can be read here without asking the member to re-enter one — see
+  // _tryInstantIntervalsSwitch in commands.js), and
+  // ActivityProcessor.revokeStravaAccess, which reads the member's current
+  // 'strava' namespace before revoking it at Strava and clearing it via
+  // DatabaseManager.clearProviderTokens. There is no instant switch-back for
+  // Strava: once revoked, the namespace is gone and /register must go through
+  // OAuth again.
   async getStoredProviderTokens(member, provider) {
     const decryptedBlob = this._decryptTokenData(member.tokens, member.athleteId);
     const blob = normalizeTokenBlob(decryptedBlob);

@@ -32,9 +32,11 @@ jest.mock('discord.js', () => {
           setDescription: jest.fn().mockReturnThis(),
           addStringOption: jest.fn().mockImplementation((optionCallback) => {
             const option = {
-              setName: jest.fn().mockReturnThis(),
+              name: '',
+              required: false,
+              setName: jest.fn().mockImplementation((name) => { option.name = name; return option; }),
               setDescription: jest.fn().mockReturnThis(),
-              setRequired: jest.fn().mockReturnThis(),
+              setRequired: jest.fn().mockImplementation((req) => { option.required = req; return option; }),
               setMaxLength: jest.fn().mockReturnThis(),
               addChoices: jest.fn().mockReturnThis(),
               setAutocomplete: jest.fn().mockReturnThis()
@@ -45,9 +47,11 @@ jest.mock('discord.js', () => {
           }),
           addIntegerOption: jest.fn().mockImplementation((optionCallback) => {
             const option = {
-              setName: jest.fn().mockReturnThis(),
+              name: '',
+              required: false,
+              setName: jest.fn().mockImplementation((name) => { option.name = name; return option; }),
               setDescription: jest.fn().mockReturnThis(),
-              setRequired: jest.fn().mockReturnThis(),
+              setRequired: jest.fn().mockImplementation((req) => { option.required = req; return option; }),
               setMinValue: jest.fn().mockReturnThis(),
               setMaxValue: jest.fn().mockReturnThis()
             };
@@ -57,9 +61,11 @@ jest.mock('discord.js', () => {
           }),
           addChannelOption: jest.fn().mockImplementation((optionCallback) => {
             const option = {
-              setName: jest.fn().mockReturnThis(),
+              name: '',
+              required: false,
+              setName: jest.fn().mockImplementation((name) => { option.name = name; return option; }),
               setDescription: jest.fn().mockReturnThis(),
-              setRequired: jest.fn().mockReturnThis()
+              setRequired: jest.fn().mockImplementation((req) => { option.required = req; return option; })
             };
             optionCallback(option);
             subcommand.options.push(option);
@@ -67,9 +73,23 @@ jest.mock('discord.js', () => {
           }),
           addUserOption: jest.fn().mockImplementation((optionCallback) => {
             const option = {
-              setName: jest.fn().mockReturnThis(),
+              name: '',
+              required: false,
+              setName: jest.fn().mockImplementation((name) => { option.name = name; return option; }),
               setDescription: jest.fn().mockReturnThis(),
-              setRequired: jest.fn().mockReturnThis()
+              setRequired: jest.fn().mockImplementation((req) => { option.required = req; return option; })
+            };
+            optionCallback(option);
+            subcommand.options.push(option);
+            return subcommand;
+          }),
+          addBooleanOption: jest.fn().mockImplementation((optionCallback) => {
+            const option = {
+              name: '',
+              required: false,
+              setName: jest.fn().mockImplementation((name) => { option.name = name; return option; }),
+              setDescription: jest.fn().mockReturnThis(),
+              setRequired: jest.fn().mockImplementation((req) => { option.required = req; return option; })
             };
             optionCallback(option);
             subcommand.options.push(option);
@@ -252,6 +272,7 @@ describe('DiscordCommands', () => {
     // Mock MemberManager
     mockMemberManager = {
       getAllMembers: jest.fn(),
+      getAllMembersIncludingInactive: jest.fn(),
       getInactiveMembers: jest.fn(),
       getMemberByDiscordId: jest.fn(),
       removeMemberByDiscordId: jest.fn(),
@@ -290,7 +311,10 @@ describe('DiscordCommands', () => {
       memberManager: mockMemberManager,
       stravaAPI: mockStravaAPI,
       intervalsAPI: mockIntervalsAPI,
-      getStats: jest.fn()
+      getStats: jest.fn(),
+      revokeStravaAccess: jest.fn().mockResolvedValue({ revoked: true }),
+      countStravaSeats: jest.fn().mockResolvedValue({ used: 3, cap: 10, reclaimable: 0 }),
+      getReclaimableStravaMembers: jest.fn().mockResolvedValue([])
     };
 
     discordCommands = new DiscordCommands(mockActivityProcessor);
@@ -301,6 +325,7 @@ describe('DiscordCommands', () => {
       options: {
         getSubcommand: jest.fn(),
         getString: jest.fn(),
+        getBoolean: jest.fn(),
         getFocused: jest.fn()
       },
       user: {
@@ -360,7 +385,7 @@ describe('DiscordCommands', () => {
     it('should return array of slash commands', () => {
       const commands = discordCommands.getCommands();
 
-      expect(commands).toHaveLength(12); // members, register, botstatus, last, race, teamraces, settings, scheduler, pb, help, sync, leaderboard
+      expect(commands).toHaveLength(13); // members, register, disconnect, botstatus, last, race, teamraces, settings, scheduler, pb, help, sync, leaderboard
       expect(commands.every(cmd => cmd instanceof SlashCommandBuilder)).toBe(true);
     });
 
@@ -369,7 +394,45 @@ describe('DiscordCommands', () => {
       const membersCommand = commands.find(cmd => cmd.name === 'members');
 
       expect(membersCommand).toBeDefined();
-      expect(membersCommand.options).toHaveLength(5); // list, inactive, remove, deactivate, reactivate
+      expect(membersCommand.options).toHaveLength(7); // list, inactive, remove, deactivate, reactivate, revoke, connections
+      expect(membersCommand.options.map(o => o.name)).toEqual(
+        expect.arrayContaining(['list', 'inactive', 'remove', 'deactivate', 'reactivate', 'revoke', 'connections'])
+      );
+    });
+
+    it('should include disconnect command with no permission gate and an optional leave_team option', () => {
+      const commands = discordCommands.getCommands();
+      const disconnectCommand = commands.find(cmd => cmd.name === 'disconnect');
+
+      expect(disconnectCommand).toBeDefined();
+      // Mock initialises default_member_permissions to null; setDefaultMemberPermissions
+      // would overwrite it with the stringified bitfield. /disconnect is self-service.
+      expect(disconnectCommand.default_member_permissions).toBeNull();
+      const leaveTeamOption = disconnectCommand.options.find(o => o.name === 'leave_team');
+      expect(leaveTeamOption).toBeDefined();
+      expect(leaveTeamOption.required).toBe(false);
+    });
+
+    it('should gate /members connections and /members revoke behind the members group ManageGuild permission', () => {
+      const commands = discordCommands.getCommands();
+      const membersCommand = commands.find(cmd => cmd.name === 'members');
+
+      expect(membersCommand.default_member_permissions).toBe(String(PermissionFlagsBits.ManageGuild));
+
+      const revokeSub = membersCommand.options.find(o => o.name === 'revoke');
+      expect(revokeSub).toBeDefined();
+      const userOption = revokeSub.options.find(o => o.name === 'user');
+      expect(userOption).toBeDefined();
+      expect(userOption.required).toBe(false);
+      const allReclaimableOption = revokeSub.options.find(o => o.name === 'all_reclaimable');
+      expect(allReclaimableOption).toBeDefined();
+      expect(allReclaimableOption.required).toBe(false);
+
+      const connectionsSub = membersCommand.options.find(o => o.name === 'connections');
+      expect(connectionsSub).toBeDefined();
+      const includeInactiveOption = connectionsSub.options.find(o => o.name === 'include_inactive');
+      expect(includeInactiveOption).toBeDefined();
+      expect(includeInactiveOption.required).toBe(false);
     });
 
     it('should include register command', () => {
@@ -466,6 +529,15 @@ describe('DiscordCommands', () => {
       expect(discordCommands.handleRegisterCommand).toHaveBeenCalledWith(mockInteraction);
     });
 
+    it('should handle disconnect command', async () => {
+      mockInteraction.commandName = 'disconnect';
+      jest.spyOn(discordCommands, 'handleDisconnectCommand').mockResolvedValue();
+
+      await discordCommands.handleCommand(mockInteraction);
+
+      expect(discordCommands.handleDisconnectCommand).toHaveBeenCalledWith(mockInteraction);
+    });
+
     it('should handle botstatus command', async () => {
       mockInteraction.commandName = 'botstatus';
       jest.spyOn(discordCommands, 'handleBotStatusCommand').mockResolvedValue();
@@ -544,8 +616,8 @@ describe('DiscordCommands', () => {
 
   describe('handleMembersCommand', () => {
     it('should route to correct subcommand handlers', async () => {
-      const handlers = ['listMembers', 'listInactiveMembers', 'removeMember', 'deactivateMember', 'reactivateMember'];
-      const subcommands = ['list', 'inactive', 'remove', 'deactivate', 'reactivate'];
+      const handlers = ['listMembers', 'listInactiveMembers', 'removeMember', 'deactivateMember', 'reactivateMember', 'revokeMemberStrava', 'listMemberConnections'];
+      const subcommands = ['list', 'inactive', 'remove', 'deactivate', 'reactivate', 'revoke', 'connections'];
 
       for (let i = 0; i < handlers.length; i++) {
         jest.clearAllMocks();
@@ -831,6 +903,7 @@ describe('DiscordCommands', () => {
     beforeEach(() => {
       mockInteraction.options.getString.mockReturnValue('<@123456789>');
       DiscordUtils.extractUserId.mockReturnValue('123456789');
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue(mockMember);
     });
 
     it('should remove member successfully', async () => {
@@ -839,6 +912,29 @@ describe('DiscordCommands', () => {
       await discordCommands.removeMember(mockInteraction, mockInteraction.options);
 
       expect(DiscordUtils.extractUserId).toHaveBeenCalledWith('<@123456789>');
+      expect(mockMemberManager.removeMemberByDiscordId).toHaveBeenCalledWith('123456789');
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        embeds: [expect.any(Object)]
+      });
+    });
+
+    it('should revoke Strava access before removing the member row', async () => {
+      mockMemberManager.removeMemberByDiscordId.mockResolvedValue(mockMember);
+
+      await discordCommands.removeMember(mockInteraction, mockInteraction.options);
+
+      expect(mockActivityProcessor.revokeStravaAccess).toHaveBeenCalledWith(mockMember);
+      const revokeOrder = mockActivityProcessor.revokeStravaAccess.mock.invocationCallOrder[0];
+      const removeOrder = mockMemberManager.removeMemberByDiscordId.mock.invocationCallOrder[0];
+      expect(revokeOrder).toBeLessThan(removeOrder);
+    });
+
+    it('should still complete the removal when the Strava revoke fails', async () => {
+      mockActivityProcessor.revokeStravaAccess.mockResolvedValue({ revoked: false, reason: 'network error' });
+      mockMemberManager.removeMemberByDiscordId.mockResolvedValue(mockMember);
+
+      await discordCommands.removeMember(mockInteraction, mockInteraction.options);
+
       expect(mockMemberManager.removeMemberByDiscordId).toHaveBeenCalledWith('123456789');
       expect(mockInteraction.editReply).toHaveBeenCalledWith({
         embeds: [expect.any(Object)]
@@ -854,10 +950,11 @@ describe('DiscordCommands', () => {
         content: '❌ Invalid user. Please use @mention or a valid user ID.',
         ephemeral: true
       });
+      expect(mockActivityProcessor.revokeStravaAccess).not.toHaveBeenCalled();
     });
 
     it('should handle non-existent member', async () => {
-      mockMemberManager.removeMemberByDiscordId.mockResolvedValue(null);
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue(null);
 
       await discordCommands.removeMember(mockInteraction, mockInteraction.options);
 
@@ -865,6 +962,8 @@ describe('DiscordCommands', () => {
         content: '❌ User not found in team members.',
         ephemeral: true
       });
+      expect(mockActivityProcessor.revokeStravaAccess).not.toHaveBeenCalled();
+      expect(mockMemberManager.removeMemberByDiscordId).not.toHaveBeenCalled();
     });
 
     it('should handle removal errors', async () => {
@@ -895,6 +994,33 @@ describe('DiscordCommands', () => {
 
       expect(mockMemberManager.getMemberByDiscordId).toHaveBeenCalledWith('123456789');
       expect(mockMemberManager.deactivateMember).toHaveBeenCalledWith(12345);
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        embeds: [expect.any(Object)]
+      });
+    });
+
+    it('should revoke Strava access after a successful deactivation', async () => {
+      mockMemberManager.deactivateMember.mockResolvedValue(true);
+
+      await discordCommands.deactivateMember(mockInteraction, mockInteraction.options);
+
+      expect(mockActivityProcessor.revokeStravaAccess).toHaveBeenCalledWith(mockMember);
+    });
+
+    it('should not revoke Strava access when deactivation fails', async () => {
+      mockMemberManager.deactivateMember.mockResolvedValue(false);
+
+      await discordCommands.deactivateMember(mockInteraction, mockInteraction.options);
+
+      expect(mockActivityProcessor.revokeStravaAccess).not.toHaveBeenCalled();
+    });
+
+    it('should still report deactivation success when the Strava revoke fails', async () => {
+      mockMemberManager.deactivateMember.mockResolvedValue(true);
+      mockActivityProcessor.revokeStravaAccess.mockResolvedValue({ revoked: false, reason: 'network error' });
+
+      await discordCommands.deactivateMember(mockInteraction, mockInteraction.options);
+
       expect(mockInteraction.editReply).toHaveBeenCalledWith({
         embeds: [expect.any(Object)]
       });
@@ -951,6 +1077,26 @@ describe('DiscordCommands', () => {
       expect(mockInteraction.editReply).toHaveBeenCalledWith({
         embeds: [expect.any(Object)]
       });
+    });
+
+    it('should note that a reactivated Strava member must re-run /register (deactivation now revokes)', async () => {
+      mockMemberManager.reactivateMember.mockResolvedValue(true);
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue({ ...mockMember, provider: 'strava' });
+
+      await discordCommands.reactivateMember(mockInteraction, mockInteraction.options);
+
+      const embedInstance = EmbedBuilder.mock.results[EmbedBuilder.mock.results.length - 1].value;
+      expect(embedInstance.setDescription).toHaveBeenCalledWith(expect.stringContaining('/register'));
+    });
+
+    it('should not show the re-register note for an intervals.icu member', async () => {
+      mockMemberManager.reactivateMember.mockResolvedValue(true);
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue({ ...mockMember, provider: 'intervals' });
+
+      await discordCommands.reactivateMember(mockInteraction, mockInteraction.options);
+
+      const embedInstance = EmbedBuilder.mock.results[EmbedBuilder.mock.results.length - 1].value;
+      expect(embedInstance.setDescription).not.toHaveBeenCalledWith(expect.stringContaining('/register'));
     });
 
     it('should handle non-existent member', async () => {
@@ -1073,113 +1219,30 @@ describe('DiscordCommands', () => {
       });
     });
 
-    describe('instant switch-back to Strava (from an active intervals.icu member)', () => {
+    describe('switching back to Strava from an active intervals.icu member (no instant switch-back)', () => {
+      // Strava credentials no longer survive a provider switch (they're revoked
+      // at Strava and cleared on switch to intervals.icu), so switching back to
+      // Strava always goes through the normal OAuth link — never an instant
+      // switch-back using a saved token.
       const intervalsMember = { ...mockMember, provider: 'intervals', isActive: true };
-      const rawStravaAthlete = { id: 12345, firstname: 'John', lastname: 'Doe', profile_medium: null };
 
       beforeEach(() => {
         mockInteraction.options.getString.mockReturnValue(null); // default provider: strava
         mockMemberManager.getMemberByDiscordId.mockResolvedValue(intervalsMember);
-        mockMemberManager.registerMember.mockResolvedValue(mockMember);
-        mockStravaAPI.getAthlete.mockResolvedValue(rawStravaAthlete);
       });
 
-      it('reuses a still-valid saved access token without calling refreshAccessToken', async () => {
-        const futureExpiry = Math.floor(Date.now() / 1000) + 3600;
-        mockMemberManager.getStoredProviderTokens.mockResolvedValue({
-          access_token: 'saved_access_token',
-          refresh_token: 'saved_refresh_token',
-          expires_at: futureExpiry
-        });
-
+      it('never consults saved Strava tokens or calls registerMember — always offers the OAuth link', async () => {
         await discordCommands.handleRegisterCommand(mockInteraction);
 
-        expect(mockMemberManager.getStoredProviderTokens).toHaveBeenCalledWith(intervalsMember, 'strava');
-        expect(mockStravaAPI.refreshAccessToken).not.toHaveBeenCalled();
-        expect(mockStravaAPI.getAthlete).toHaveBeenCalledWith('saved_access_token');
-        expect(mockMemberManager.registerMember).toHaveBeenCalledWith(
-          mockInteraction.user.id,
-          rawStravaAthlete,
-          expect.objectContaining({ access_token: 'saved_access_token' }),
-          mockInteraction.user,
-          'strava'
-        );
-        expect(mockInteraction.editReply).toHaveBeenCalledWith({ embeds: [expect.any(Object)] });
-      });
-
-      it('refreshes an expired saved token and registers with the refreshed token data', async () => {
-        const pastExpiry = Math.floor(Date.now() / 1000) - 60;
-        mockMemberManager.getStoredProviderTokens.mockResolvedValue({
-          access_token: 'stale_access_token',
-          refresh_token: 'saved_refresh_token',
-          expires_at: pastExpiry
-        });
-        const refreshedTokenData = {
-          access_token: 'fresh_access_token',
-          refresh_token: 'new_refresh_token',
-          expires_at: Math.floor(Date.now() / 1000) + 3600
-        };
-        mockStravaAPI.refreshAccessToken.mockResolvedValue(refreshedTokenData);
-
-        await discordCommands.handleRegisterCommand(mockInteraction);
-
-        expect(mockStravaAPI.refreshAccessToken).toHaveBeenCalledWith('saved_refresh_token');
-        expect(mockStravaAPI.getAthlete).toHaveBeenCalledWith('fresh_access_token');
-        expect(mockMemberManager.registerMember).toHaveBeenCalledWith(
-          mockInteraction.user.id,
-          rawStravaAthlete,
-          refreshedTokenData,
-          mockInteraction.user,
-          'strava'
-        );
-        expect(mockInteraction.editReply).toHaveBeenCalledWith({ embeds: [expect.any(Object)] });
-      });
-
-      it('falls back to the OAuth-link flow when nothing was saved', async () => {
-        mockMemberManager.getStoredProviderTokens.mockResolvedValue(null);
-
-        await discordCommands.handleRegisterCommand(mockInteraction);
-
+        expect(mockMemberManager.getStoredProviderTokens).not.toHaveBeenCalledWith(intervalsMember, 'strava');
         expect(mockStravaAPI.getAthlete).not.toHaveBeenCalled();
+        expect(mockStravaAPI.refreshAccessToken).not.toHaveBeenCalled();
         expect(mockMemberManager.registerMember).not.toHaveBeenCalled();
         expect(mockInteraction.editReply).toHaveBeenCalledWith({
           embeds: [expect.any(Object)]
         });
         const embedInstance = EmbedBuilder.mock.results[EmbedBuilder.mock.results.length - 1].value;
         expect(embedInstance.setDescription).toHaveBeenCalledWith(expect.stringContaining('Switching providers'));
-      });
-
-      it('falls back to the OAuth-link flow when the refresh fails', async () => {
-        const pastExpiry = Math.floor(Date.now() / 1000) - 60;
-        mockMemberManager.getStoredProviderTokens.mockResolvedValue({
-          access_token: 'stale_access_token',
-          refresh_token: 'saved_refresh_token',
-          expires_at: pastExpiry
-        });
-        mockStravaAPI.refreshAccessToken.mockRejectedValue(new Error('invalid_grant'));
-
-        await discordCommands.handleRegisterCommand(mockInteraction);
-
-        expect(mockMemberManager.registerMember).not.toHaveBeenCalled();
-        expect(mockInteraction.editReply).toHaveBeenCalledWith({
-          embeds: [expect.any(Object)]
-        });
-      });
-
-      it('falls back to the OAuth-link flow when registerMember fails', async () => {
-        const futureExpiry = Math.floor(Date.now() / 1000) + 3600;
-        mockMemberManager.getStoredProviderTokens.mockResolvedValue({
-          access_token: 'saved_access_token',
-          refresh_token: 'saved_refresh_token',
-          expires_at: futureExpiry
-        });
-        mockMemberManager.registerMember.mockRejectedValue(new Error('DB error'));
-
-        await discordCommands.handleRegisterCommand(mockInteraction);
-
-        expect(mockInteraction.editReply).toHaveBeenCalledWith({
-          embeds: [expect.any(Object)]
-        });
       });
     });
 
@@ -1245,6 +1308,22 @@ describe('DiscordCommands', () => {
         expect(mockInteraction.showModal).not.toHaveBeenCalled();
       });
 
+      it('revokes Strava access only after the intervals.icu switch is saved, using the updated member row', async () => {
+        mockMemberManager.getStoredProviderTokens.mockResolvedValue({ api_key: 'saved_intervals_key' });
+        mockIntervalsAPI.getAthlete.mockResolvedValue({ id: 'i12345', name: 'John Doe' });
+        mockIntervalsAPI.mapAthlete.mockReturnValue({ id: 12345, firstname: 'John', lastname: 'Doe' });
+        mockMemberManager.registerMember.mockResolvedValue(mockMember);
+
+        await discordCommands.handleRegisterCommand(mockInteraction);
+
+        // Must revoke using the row returned by registerMember (post-switch), not
+        // the pre-switch existingMember — a provider switch can renumber athlete_id.
+        expect(mockActivityProcessor.revokeStravaAccess).toHaveBeenCalledWith(mockMember);
+        const registerOrder = mockMemberManager.registerMember.mock.invocationCallOrder[0];
+        const revokeOrder = mockActivityProcessor.revokeStravaAccess.mock.invocationCallOrder[0];
+        expect(registerOrder).toBeLessThan(revokeOrder);
+      });
+
       it('falls back to the instructions/button flow when no key was saved', async () => {
         mockMemberManager.getStoredProviderTokens.mockResolvedValue(null);
 
@@ -1252,6 +1331,7 @@ describe('DiscordCommands', () => {
 
         expect(mockIntervalsAPI.getAthlete).not.toHaveBeenCalled();
         expect(mockMemberManager.registerMember).not.toHaveBeenCalled();
+        expect(mockActivityProcessor.revokeStravaAccess).not.toHaveBeenCalled();
         expect(mockInteraction.editReply).toHaveBeenCalledWith({
           embeds: [expect.any(Object)],
           components: [expect.any(Object)]
@@ -1265,6 +1345,7 @@ describe('DiscordCommands', () => {
         await discordCommands.handleRegisterCommand(mockInteraction);
 
         expect(mockMemberManager.registerMember).not.toHaveBeenCalled();
+        expect(mockActivityProcessor.revokeStravaAccess).not.toHaveBeenCalled();
         expect(mockInteraction.editReply).toHaveBeenCalledWith({
           embeds: [expect.any(Object)],
           components: [expect.any(Object)]
@@ -1279,6 +1360,7 @@ describe('DiscordCommands', () => {
 
         await discordCommands.handleRegisterCommand(mockInteraction);
 
+        expect(mockActivityProcessor.revokeStravaAccess).not.toHaveBeenCalled();
         expect(mockInteraction.editReply).toHaveBeenCalledWith({
           embeds: [expect.any(Object)],
           components: [expect.any(Object)]
@@ -1322,6 +1404,20 @@ describe('DiscordCommands', () => {
       });
       expect(mockInteraction.reply).not.toHaveBeenCalled();
       expect(mockInteraction.showModal).not.toHaveBeenCalled();
+    });
+
+    it('warns that switching disconnects Strava when isProviderSwitch is true', async () => {
+      await discordCommands.showIntervalsRegisterInstructions(mockInteraction, true);
+
+      const embedInstance = EmbedBuilder.mock.results[EmbedBuilder.mock.results.length - 1].value;
+      expect(embedInstance.setDescription).toHaveBeenCalledWith(expect.stringContaining('disconnect'));
+    });
+
+    it('does not warn about disconnecting Strava for a fresh (non-switch) registration', async () => {
+      await discordCommands.showIntervalsRegisterInstructions(mockInteraction, false);
+
+      const embedInstance = EmbedBuilder.mock.results[EmbedBuilder.mock.results.length - 1].value;
+      expect(embedInstance.setDescription).not.toHaveBeenCalledWith(expect.stringContaining('disconnect'));
     });
   });
 
@@ -1413,6 +1509,22 @@ describe('DiscordCommands', () => {
       expect(mockInteraction.editReply).toHaveBeenCalledWith({ embeds: [expect.any(Object)] });
     });
 
+    it('revokes Strava access only after registration succeeds, using the newly registered member row', async () => {
+      const rawAthlete = { id: 'i12345', name: 'John Doe' };
+      const mappedAthlete = { id: 12345, firstname: 'John', lastname: 'Doe', profile_medium: null };
+      mockIntervalsAPI.getAthlete.mockResolvedValue(rawAthlete);
+      mockIntervalsAPI.mapAthlete.mockReturnValue(mappedAthlete);
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue({ ...mockMember, provider: 'strava', isActive: true });
+      mockMemberManager.registerMember.mockResolvedValue(mockMember);
+
+      await discordCommands.handleIntervalsRegisterModal(mockInteraction);
+
+      expect(mockActivityProcessor.revokeStravaAccess).toHaveBeenCalledWith(mockMember);
+      const registerOrder = mockMemberManager.registerMember.mock.invocationCallOrder[0];
+      const revokeOrder = mockActivityProcessor.revokeStravaAccess.mock.invocationCallOrder[0];
+      expect(registerOrder).toBeLessThan(revokeOrder);
+    });
+
     it('should mention the provider switch when the member was previously an active Strava member', async () => {
       const rawAthlete = { id: 'i12345', name: 'John Doe' };
       const mappedAthlete = { id: 12345, firstname: 'John', lastname: 'Doe', profile_medium: null };
@@ -1462,6 +1574,7 @@ describe('DiscordCommands', () => {
         content: expect.stringContaining('Could not validate that intervals.icu API key')
       });
       expect(mockMemberManager.registerMember).not.toHaveBeenCalled();
+      expect(mockActivityProcessor.revokeStravaAccess).not.toHaveBeenCalled();
     });
 
     it('should reply with an error when the mapped athlete id is not finite', async () => {
@@ -1471,6 +1584,7 @@ describe('DiscordCommands', () => {
       await discordCommands.handleIntervalsRegisterModal(mockInteraction);
 
       expect(mockMemberManager.registerMember).not.toHaveBeenCalled();
+      expect(mockActivityProcessor.revokeStravaAccess).not.toHaveBeenCalled();
       expect(mockInteraction.editReply).toHaveBeenCalledWith({
         content: expect.any(String)
       });
@@ -1483,6 +1597,7 @@ describe('DiscordCommands', () => {
 
       await discordCommands.handleIntervalsRegisterModal(mockInteraction);
 
+      expect(mockActivityProcessor.revokeStravaAccess).not.toHaveBeenCalled();
       expect(mockInteraction.editReply).toHaveBeenCalledWith({
         content: expect.stringContaining('already registered')
       });
@@ -1496,6 +1611,7 @@ describe('DiscordCommands', () => {
       await discordCommands.handleIntervalsRegisterModal(mockInteraction);
 
       expect(logger.discord.error).toHaveBeenCalled();
+      expect(mockActivityProcessor.revokeStravaAccess).not.toHaveBeenCalled();
       expect(mockInteraction.editReply).toHaveBeenCalledWith({
         content: expect.stringMatching(/failed/i)
       });
@@ -1529,6 +1645,7 @@ describe('DiscordCommands', () => {
       expect(fields).toContain('/my-races');
       expect(fields).toContain('/sync');
       expect(fields).toContain('/leaderboard');
+      expect(fields).toContain('/disconnect');
       // Admin-only commands hidden
       expect(fields).not.toContain('/members');
       expect(fields).not.toContain('/all-races');
@@ -1549,6 +1666,8 @@ describe('DiscordCommands', () => {
 
       const fields = readFields();
       expect(fields).toContain('/members');
+      expect(fields).toContain('/members revoke');
+      expect(fields).toContain('/members connections');
       expect(fields).toContain('/all-races');
       expect(fields).toContain('/settings');
       expect(fields).toContain('/scheduler');
@@ -3181,6 +3300,514 @@ describe('DiscordCommands', () => {
       expect(statusInteraction.editReply).toHaveBeenCalledWith(
         expect.objectContaining({ embeds: expect.any(Array) })
       );
+    });
+  });
+
+  describe('handleDisconnectCommand', () => {
+    beforeEach(() => {
+      mockInteraction.options.getBoolean.mockReturnValue(false);
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue(mockMember);
+    });
+
+    it('should reply that the user is not registered when no member is found', async () => {
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue(null);
+
+      await discordCommands.handleDisconnectCommand(mockInteraction);
+
+      expect(mockInteraction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        content: '❌ You\'re not registered.',
+        ephemeral: true
+      });
+      expect(mockActivityProcessor.revokeStravaAccess).not.toHaveBeenCalled();
+    });
+
+    it('should revoke Strava access and preserve membership by default (leave_team not set)', async () => {
+      await discordCommands.handleDisconnectCommand(mockInteraction);
+
+      expect(mockActivityProcessor.revokeStravaAccess).toHaveBeenCalledWith(mockMember);
+      expect(mockMemberManager.deactivateMember).not.toHaveBeenCalled();
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({ embeds: [expect.any(Object)] });
+
+      const embedInstance = EmbedBuilder.mock.results[EmbedBuilder.mock.results.length - 1].value;
+      expect(embedInstance.setDescription).toHaveBeenCalledWith(expect.stringContaining('preserved'));
+    });
+
+    it('should also deactivate membership when leave_team is true', async () => {
+      mockInteraction.options.getBoolean.mockReturnValue(true);
+      mockMemberManager.deactivateMember.mockResolvedValue(true);
+
+      await discordCommands.handleDisconnectCommand(mockInteraction);
+
+      expect(mockMemberManager.deactivateMember).toHaveBeenCalledWith(mockMember.athleteId);
+      const embedInstance = EmbedBuilder.mock.results[EmbedBuilder.mock.results.length - 1].value;
+      expect(embedInstance.setDescription).toHaveBeenCalledWith(expect.stringContaining('/members reactivate'));
+    });
+
+    it('should explain there is nothing to revoke for an intervals.icu member instead of erroring', async () => {
+      const intervalsMember = { ...mockMember, provider: 'intervals' };
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue(intervalsMember);
+      mockActivityProcessor.revokeStravaAccess.mockResolvedValue({ revoked: false, reason: 'no_credentials' });
+
+      await discordCommands.handleDisconnectCommand(mockInteraction);
+
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({ embeds: [expect.any(Object)] });
+      const embedInstance = EmbedBuilder.mock.results[EmbedBuilder.mock.results.length - 1].value;
+      expect(embedInstance.addFields).toHaveBeenCalledWith([
+        expect.objectContaining({ name: expect.stringMatching(/No Strava/i) })
+      ]);
+      // Continues to step 3 (leave_team handling) rather than erroring out.
+      expect(mockMemberManager.deactivateMember).not.toHaveBeenCalled();
+    });
+
+    it('should reply cleanly rather than erroring when the Strava revoke fails', async () => {
+      mockActivityProcessor.revokeStravaAccess.mockResolvedValue({ revoked: false, reason: 'network error' });
+
+      await discordCommands.handleDisconnectCommand(mockInteraction);
+
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({ embeds: [expect.any(Object)] });
+    });
+
+    it('should handle unexpected errors gracefully', async () => {
+      mockActivityProcessor.revokeStravaAccess.mockRejectedValue(new Error('boom'));
+
+      await discordCommands.handleDisconnectCommand(mockInteraction);
+
+      expect(logger.discord.error).toHaveBeenCalled();
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        content: '❌ Failed to disconnect.',
+        ephemeral: true
+      });
+    });
+  });
+
+  describe('revokeMemberStrava', () => {
+    beforeEach(() => {
+      mockInteraction.options.getString.mockReturnValue('<@123456789>');
+      mockInteraction.options.getBoolean.mockReturnValue(false);
+      DiscordUtils.extractUserId.mockReturnValue('123456789');
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue(mockMember);
+    });
+
+    it('should reject when neither user nor all_reclaimable is supplied', async () => {
+      mockInteraction.options.getString.mockReturnValue(null);
+      mockInteraction.options.getBoolean.mockReturnValue(false);
+
+      await discordCommands.revokeMemberStrava(mockInteraction, mockInteraction.options);
+
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        content: expect.stringContaining('exactly one'),
+        ephemeral: true
+      });
+      expect(mockActivityProcessor.revokeStravaAccess).not.toHaveBeenCalled();
+      expect(mockActivityProcessor.getReclaimableStravaMembers).not.toHaveBeenCalled();
+    });
+
+    it('should reject when both user and all_reclaimable are supplied', async () => {
+      mockInteraction.options.getString.mockReturnValue('<@123456789>');
+      mockInteraction.options.getBoolean.mockReturnValue(true);
+
+      await discordCommands.revokeMemberStrava(mockInteraction, mockInteraction.options);
+
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        content: expect.stringContaining('exactly one'),
+        ephemeral: true
+      });
+      expect(mockActivityProcessor.revokeStravaAccess).not.toHaveBeenCalled();
+      expect(mockActivityProcessor.getReclaimableStravaMembers).not.toHaveBeenCalled();
+    });
+
+    it('should handle invalid user input', async () => {
+      DiscordUtils.extractUserId.mockReturnValue(null);
+
+      await discordCommands.revokeMemberStrava(mockInteraction, mockInteraction.options);
+
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        content: '❌ Invalid user. Please use @mention or a valid user ID.',
+        ephemeral: true
+      });
+      expect(mockActivityProcessor.revokeStravaAccess).not.toHaveBeenCalled();
+    });
+
+    it('should handle a member not found', async () => {
+      mockMemberManager.getMemberByDiscordId.mockResolvedValue(null);
+
+      await discordCommands.revokeMemberStrava(mockInteraction, mockInteraction.options);
+
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        content: '❌ User not found in team members.',
+        ephemeral: true
+      });
+      expect(mockActivityProcessor.revokeStravaAccess).not.toHaveBeenCalled();
+    });
+
+    it('should revoke and report the updated seat count (single user, unchanged behavior)', async () => {
+      mockActivityProcessor.revokeStravaAccess.mockResolvedValue({ revoked: true });
+      mockActivityProcessor.countStravaSeats.mockResolvedValue({ used: 2, cap: 10, reclaimable: 0 });
+
+      await discordCommands.revokeMemberStrava(mockInteraction, mockInteraction.options);
+
+      expect(mockActivityProcessor.revokeStravaAccess).toHaveBeenCalledWith(mockMember);
+      expect(mockActivityProcessor.countStravaSeats).toHaveBeenCalled();
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({ embeds: [expect.any(Object)] });
+
+      const embedInstance = EmbedBuilder.mock.results[EmbedBuilder.mock.results.length - 1].value;
+      expect(embedInstance.addFields).toHaveBeenCalledWith(
+        expect.arrayContaining([expect.objectContaining({ value: expect.stringContaining('2/10') })])
+      );
+    });
+
+    it('should not touch membership (single user)', async () => {
+      await discordCommands.revokeMemberStrava(mockInteraction, mockInteraction.options);
+
+      expect(mockMemberManager.deactivateMember).not.toHaveBeenCalled();
+      expect(mockMemberManager.removeMemberByDiscordId).not.toHaveBeenCalled();
+    });
+
+    it('should reply cleanly rather than throwing when the revoke fails (single user)', async () => {
+      mockActivityProcessor.revokeStravaAccess.mockResolvedValue({ revoked: false, reason: 'network error' });
+
+      await discordCommands.revokeMemberStrava(mockInteraction, mockInteraction.options);
+
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({ embeds: [expect.any(Object)] });
+    });
+
+    it('should handle unexpected errors gracefully (single user)', async () => {
+      mockActivityProcessor.revokeStravaAccess.mockRejectedValue(new Error('boom'));
+
+      await discordCommands.revokeMemberStrava(mockInteraction, mockInteraction.options);
+
+      expect(logger.discord.error).toHaveBeenCalled();
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        content: '❌ Failed to revoke Strava access.',
+        ephemeral: true
+      });
+    });
+
+    describe('all_reclaimable (bulk)', () => {
+      beforeEach(() => {
+        mockInteraction.options.getString.mockReturnValue(null);
+        mockInteraction.options.getBoolean.mockReturnValue(true);
+      });
+
+      it('should make no revoke/seat-count calls and say plainly there is nothing to do when the list is empty', async () => {
+        mockActivityProcessor.getReclaimableStravaMembers.mockResolvedValue([]);
+
+        await discordCommands.revokeMemberStrava(mockInteraction, mockInteraction.options);
+
+        expect(mockActivityProcessor.getReclaimableStravaMembers).toHaveBeenCalled();
+        expect(mockActivityProcessor.revokeStravaAccess).not.toHaveBeenCalled();
+        expect(mockActivityProcessor.countStravaSeats).not.toHaveBeenCalled();
+        expect(mockInteraction.editReply).toHaveBeenCalledWith({
+          content: expect.stringContaining('No reclaimable Strava seats'),
+          ephemeral: true
+        });
+      });
+
+      it('should revoke every reclaimable member sequentially and report mixed success/failure without aborting', async () => {
+        const memberA = { ...mockMember, athleteId: 1, discordUserId: 'a', athlete: { firstname: 'Alice', lastname: 'A' } };
+        const memberB = { ...mockMember, athleteId: 2, discordUserId: 'b', athlete: { firstname: 'Bob', lastname: 'B' } };
+        const memberC = { ...mockMember, athleteId: 3, discordUserId: 'c', athlete: { firstname: 'Carol', lastname: 'C' } };
+        mockActivityProcessor.getReclaimableStravaMembers.mockResolvedValue([memberA, memberB, memberC]);
+        mockActivityProcessor.revokeStravaAccess.mockImplementation(async (member) => {
+          if (member.athleteId === 2) return { revoked: false, reason: 'network error' };
+          return { revoked: true };
+        });
+        mockActivityProcessor.countStravaSeats.mockResolvedValue({ used: 8, cap: 10, reclaimable: 0 });
+
+        await discordCommands.revokeMemberStrava(mockInteraction, mockInteraction.options);
+
+        expect(mockActivityProcessor.revokeStravaAccess).toHaveBeenCalledTimes(3);
+        expect(mockActivityProcessor.revokeStravaAccess).toHaveBeenNthCalledWith(1, memberA);
+        expect(mockActivityProcessor.revokeStravaAccess).toHaveBeenNthCalledWith(2, memberB);
+        expect(mockActivityProcessor.revokeStravaAccess).toHaveBeenNthCalledWith(3, memberC);
+        expect(mockActivityProcessor.countStravaSeats).toHaveBeenCalled();
+        expect(mockInteraction.editReply).toHaveBeenCalledWith({ embeds: [expect.any(Object)] });
+
+        const embedInstance = EmbedBuilder.mock.results[EmbedBuilder.mock.results.length - 1].value;
+        const description = embedInstance.setDescription.mock.calls[embedInstance.setDescription.mock.calls.length - 1][0];
+        expect(description).toContain('2');
+        expect(description).toContain('1');
+      });
+
+      it('should not touch membership in the bulk path', async () => {
+        mockActivityProcessor.getReclaimableStravaMembers.mockResolvedValue([mockMember]);
+
+        await discordCommands.revokeMemberStrava(mockInteraction, mockInteraction.options);
+
+        expect(mockMemberManager.deactivateMember).not.toHaveBeenCalled();
+        expect(mockMemberManager.removeMemberByDiscordId).not.toHaveBeenCalled();
+      });
+
+      it('should handle unexpected errors gracefully (bulk)', async () => {
+        mockActivityProcessor.getReclaimableStravaMembers.mockRejectedValue(new Error('boom'));
+
+        await discordCommands.revokeMemberStrava(mockInteraction, mockInteraction.options);
+
+        expect(logger.discord.error).toHaveBeenCalled();
+        expect(mockInteraction.editReply).toHaveBeenCalledWith({
+          content: '❌ Failed to revoke Strava access.',
+          ephemeral: true
+        });
+      });
+
+      it('should summarize with "…and N more" instead of listing every name past ~15', async () => {
+        const many = Array.from({ length: 20 }, (_, i) => ({
+          ...mockMember,
+          athleteId: i,
+          discordUserId: `many${i}`,
+          athlete: { firstname: `Runner${i}`, lastname: 'X' }
+        }));
+        mockActivityProcessor.getReclaimableStravaMembers.mockResolvedValue(many);
+        mockActivityProcessor.revokeStravaAccess.mockResolvedValue({ revoked: true });
+        mockActivityProcessor.countStravaSeats.mockResolvedValue({ used: 0, cap: 10, reclaimable: 0 });
+
+        await discordCommands.revokeMemberStrava(mockInteraction, mockInteraction.options);
+
+        const embedInstance = EmbedBuilder.mock.results[EmbedBuilder.mock.results.length - 1].value;
+        const fieldsCalls = embedInstance.addFields.mock.calls.flatMap(call => call[0]);
+        const succeededField = fieldsCalls.find(f => /Revoked/i.test(f.name));
+        expect(succeededField).toBeDefined();
+        expect(succeededField.value).toMatch(/and \d+ more/i);
+        expect(succeededField.value.length).toBeLessThanOrEqual(1024);
+      });
+    });
+  });
+
+  describe('listMemberConnections', () => {
+    const stravaOkMember = {
+      ...mockMember, athleteId: 1, discordUserId: '123456789', provider: 'strava', isActive: true,
+      tokens: { expires_at: Math.floor(Date.now() / 1000) + 14400 }
+    };
+    const intervalsOkMember = { ...mockMember, athleteId: 2, discordUserId: 'u2', provider: 'intervals', isActive: true };
+    const intervalsZeroMember = { ...mockMember, athleteId: 3, discordUserId: 'u3', provider: 'intervals', isActive: true };
+    const stravaBrokenMember = { ...mockMember, athleteId: 4, discordUserId: 'u4', provider: 'strava', isActive: true };
+    const inactiveMember = { ...mockMember, athleteId: 5, discordUserId: 'u5', provider: 'strava', isActive: false };
+
+    const lastDescription = () => {
+      const embedInstance = EmbedBuilder.mock.results[EmbedBuilder.mock.results.length - 1].value;
+      const calls = embedInstance.setDescription.mock.calls;
+      return calls[calls.length - 1][0];
+    };
+
+    beforeEach(() => {
+      mockInteraction.options.getBoolean.mockReturnValue(false);
+      DiscordUtils.chunkArray.mockImplementation((arr, size) => {
+        if (!arr.length) return [];
+        const chunks = [];
+        for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));
+        return chunks;
+      });
+      mockActivityProcessor.countStravaSeats.mockResolvedValue({ used: 3, cap: 10, reclaimable: 0 });
+      mockActivityProcessor.getReclaimableStravaMembers.mockResolvedValue([]);
+    });
+
+    it('should show a friendly message when there are no members to audit', async () => {
+      mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue([]);
+
+      await discordCommands.listMemberConnections(mockInteraction, mockInteraction.options);
+
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        content: '📭 No team members registered yet.',
+        ephemeral: true
+      });
+    });
+
+    it('renders all five status classes (strava ok, intervals ok, intervals zero-activity, strava broken, inactive)', async () => {
+      mockInteraction.options.getBoolean.mockReturnValue(true);
+      mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue([
+        stravaOkMember, intervalsOkMember, intervalsZeroMember, stravaBrokenMember, inactiveMember
+      ]);
+      mockMemberManager.getValidAccessToken.mockImplementation(async (member) => {
+        if (member.athleteId === 1) return 'valid_token';
+        return null; // athleteId 4 -> refresh failed
+      });
+      mockMemberManager.getStoredProviderTokens.mockImplementation(async (member) => {
+        if (member.athleteId === 2) return { api_key: 'key2' };
+        if (member.athleteId === 3) return { api_key: 'key3' };
+        return null;
+      });
+      mockIntervalsAPI.getAthlete.mockResolvedValue({ id: 1 });
+      mockIntervalsAPI.getAthleteActivities.mockImplementation(async (apiKey) => {
+        if (apiKey === 'key2') return [{ id: 1, source: 'GARMIN' }, { id: 2 }];
+        if (apiKey === 'key3') return [];
+        return [];
+      });
+
+      await discordCommands.listMemberConnections(mockInteraction, mockInteraction.options);
+
+      expect(mockInteraction.deferReply).toHaveBeenCalledWith({ ephemeral: true });
+      const description = lastDescription();
+      expect(description).toContain('✅');
+      expect(description).toContain('⚠️');
+      expect(description).toContain('❌');
+      expect(description).toContain('⚫');
+      expect(description).toContain('Strava-fed?');
+      expect(description).toMatch(/Strava seats used: \d+\/\d+/);
+      // getValidAccessToken must not be consulted for the inactive member
+      expect(mockMemberManager.getValidAccessToken).not.toHaveBeenCalledWith(inactiveMember);
+    });
+
+    it('excludes inactive members by default (include_inactive not set)', async () => {
+      mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue([stravaOkMember, inactiveMember]);
+      mockMemberManager.getValidAccessToken.mockResolvedValue('valid_token');
+
+      await discordCommands.listMemberConnections(mockInteraction, mockInteraction.options);
+
+      expect(lastDescription()).not.toContain('⚫');
+      expect(mockMemberManager.getValidAccessToken).not.toHaveBeenCalledWith(inactiveMember);
+    });
+
+    it('renders an invalid-key status for an intervals.icu member whose key fails validation', async () => {
+      const brokenIntervalsMember = { ...mockMember, athleteId: 9, discordUserId: 'u9', provider: 'intervals', isActive: true };
+      mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue([brokenIntervalsMember]);
+      mockMemberManager.getStoredProviderTokens.mockResolvedValue({ api_key: 'bad_key' });
+      mockIntervalsAPI.getAthlete.mockRejectedValue(new Error('Unauthorized'));
+
+      await discordCommands.listMemberConnections(mockInteraction, mockInteraction.options);
+
+      expect(lastDescription()).toContain('invalid key');
+    });
+
+    it('reports the seat count from countStravaSeats, not a local tally', async () => {
+      mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue([stravaOkMember]);
+      mockMemberManager.getValidAccessToken.mockResolvedValue('valid_token');
+      mockActivityProcessor.countStravaSeats.mockResolvedValue({ used: 7, cap: 10, reclaimable: 0 });
+
+      await discordCommands.listMemberConnections(mockInteraction, mockInteraction.options);
+
+      expect(lastDescription()).toContain('7/10');
+    });
+
+    it('omits the "(N reclaimable)" parenthetical when reclaimable is 0', async () => {
+      mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue([stravaOkMember]);
+      mockMemberManager.getValidAccessToken.mockResolvedValue('valid_token');
+      mockActivityProcessor.countStravaSeats.mockResolvedValue({ used: 5, cap: 10, reclaimable: 0 });
+
+      await discordCommands.listMemberConnections(mockInteraction, mockInteraction.options);
+
+      expect(lastDescription()).toContain('Strava seats used: 5/10 ·');
+      expect(lastDescription()).not.toContain('reclaimable)');
+    });
+
+    it('includes the "(N reclaimable)" parenthetical in the footer line when reclaimable > 0', async () => {
+      mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue([stravaOkMember]);
+      mockMemberManager.getValidAccessToken.mockResolvedValue('valid_token');
+      mockActivityProcessor.countStravaSeats.mockResolvedValue({ used: 5, cap: 10, reclaimable: 1 });
+
+      await discordCommands.listMemberConnections(mockInteraction, mockInteraction.options);
+
+      expect(lastDescription()).toContain('Strava seats used: 5/10 (1 reclaimable) ·');
+    });
+
+    it('marks a reclaimable inactive member with the 🔑 seat marker, driven by getReclaimableStravaMembers', async () => {
+      mockInteraction.options.getBoolean.mockReturnValue(true); // include_inactive
+      mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue([inactiveMember]);
+      mockActivityProcessor.getReclaimableStravaMembers.mockResolvedValue([inactiveMember]);
+      mockActivityProcessor.countStravaSeats.mockResolvedValue({ used: 1, cap: 10, reclaimable: 1 });
+
+      await discordCommands.listMemberConnections(mockInteraction, mockInteraction.options);
+
+      const description = lastDescription();
+      expect(description).toContain('⚫');
+      expect(description).toContain('inactive · 🔑 still holds a seat');
+    });
+
+    it('marks a reclaimable ACTIVE intervals.icu member (not just inactive members)', async () => {
+      mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue([intervalsOkMember]);
+      mockMemberManager.getStoredProviderTokens.mockResolvedValue({ api_key: 'key2' });
+      mockIntervalsAPI.getAthlete.mockResolvedValue({ id: 2 });
+      mockIntervalsAPI.getAthleteActivities.mockResolvedValue([{ id: 1 }]);
+      mockActivityProcessor.getReclaimableStravaMembers.mockResolvedValue([intervalsOkMember]);
+      mockActivityProcessor.countStravaSeats.mockResolvedValue({ used: 1, cap: 10, reclaimable: 1 });
+
+      await discordCommands.listMemberConnections(mockInteraction, mockInteraction.options);
+
+      expect(lastDescription()).toContain('🔑 still holds a seat');
+    });
+
+    it('does NOT mark a member absent from getReclaimableStravaMembers, even if inactive', async () => {
+      mockInteraction.options.getBoolean.mockReturnValue(true); // include_inactive
+      mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue([inactiveMember]);
+      mockActivityProcessor.getReclaimableStravaMembers.mockResolvedValue([]); // no Strava creds left
+      mockActivityProcessor.countStravaSeats.mockResolvedValue({ used: 0, cap: 10, reclaimable: 0 });
+
+      await discordCommands.listMemberConnections(mockInteraction, mockInteraction.options);
+
+      expect(lastDescription()).not.toContain('🔑');
+    });
+
+    it('does not fire a live probe for an inactive member just because it is reclaimable', async () => {
+      mockInteraction.options.getBoolean.mockReturnValue(true); // include_inactive
+      mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue([inactiveMember]);
+      mockActivityProcessor.getReclaimableStravaMembers.mockResolvedValue([inactiveMember]);
+
+      await discordCommands.listMemberConnections(mockInteraction, mockInteraction.options);
+
+      expect(mockMemberManager.getValidAccessToken).not.toHaveBeenCalled();
+      expect(mockMemberManager.getStoredProviderTokens).not.toHaveBeenCalled();
+    });
+
+    it('includes a footer explaining the zero-activity warning', async () => {
+      mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue([intervalsZeroMember]);
+      mockMemberManager.getStoredProviderTokens.mockResolvedValue({ api_key: 'key3' });
+      mockIntervalsAPI.getAthlete.mockResolvedValue({ id: 3 });
+      mockIntervalsAPI.getAthleteActivities.mockResolvedValue([]);
+
+      await discordCommands.listMemberConnections(mockInteraction, mockInteraction.options);
+
+      const embedInstance = EmbedBuilder.mock.results[EmbedBuilder.mock.results.length - 1].value;
+      expect(embedInstance.setFooter).toHaveBeenCalledWith(
+        expect.objectContaining({ text: expect.stringMatching(/strava/i) })
+      );
+    });
+
+    it('probes only the first chunk of members and notes the truncation', async () => {
+      const manyMembers = Array.from({ length: 30 }, (_, i) => ({
+        ...mockMember, athleteId: i, discordUserId: `many${i}`, provider: 'strava', isActive: true
+      }));
+      mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue(manyMembers);
+      mockMemberManager.getValidAccessToken.mockResolvedValue('valid_token');
+
+      await discordCommands.listMemberConnections(mockInteraction, mockInteraction.options);
+
+      expect(DiscordUtils.chunkArray).toHaveBeenCalledWith(manyMembers, expect.any(Number));
+      const chunkSizeUsed = DiscordUtils.chunkArray.mock.calls[DiscordUtils.chunkArray.mock.calls.length - 1][1];
+      expect(mockMemberManager.getValidAccessToken).toHaveBeenCalledTimes(Math.min(chunkSizeUsed, 30));
+    });
+
+    it('probes with a small concurrency cap rather than firing every request at once', async () => {
+      const members = Array.from({ length: 5 }, (_, i) => ({
+        ...mockMember, athleteId: i, discordUserId: `c${i}`, provider: 'strava', isActive: true
+      }));
+      mockMemberManager.getAllMembersIncludingInactive.mockResolvedValue(members);
+
+      let inFlight = 0;
+      let maxInFlight = 0;
+      mockMemberManager.getValidAccessToken.mockImplementation(async () => {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await Promise.resolve();
+        inFlight--;
+        return 'valid_token';
+      });
+
+      await discordCommands.listMemberConnections(mockInteraction, mockInteraction.options);
+
+      expect(maxInFlight).toBeGreaterThan(1);
+      expect(maxInFlight).toBeLessThanOrEqual(3);
+    });
+
+    it('should handle errors gracefully', async () => {
+      mockMemberManager.getAllMembersIncludingInactive.mockRejectedValue(new Error('DB down'));
+
+      await discordCommands.listMemberConnections(mockInteraction, mockInteraction.options);
+
+      expect(logger.discord.error).toHaveBeenCalled();
+      expect(mockInteraction.editReply).toHaveBeenCalledWith({
+        content: '❌ Failed to audit member connections.',
+        ephemeral: true
+      });
     });
   });
 });

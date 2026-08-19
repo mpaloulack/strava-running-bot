@@ -10,6 +10,13 @@ const config = require('../../config/config');
 const { TIME, DISCORD, CATEGORY_DISTANCES } = require('../constants');
 const DateUtils = require('../utils/DateUtils');
 
+// /members connections fires live provider API calls per member, sharing rate
+// limiters with normal bot traffic — chunk the member list and only probe/render
+// the first chunk (like listMembers), and cap probe concurrency instead of
+// firing every request at once.
+const CONNECTIONS_CHUNK_SIZE = 25;
+const CONNECTIONS_PROBE_CONCURRENCY = 3;
+
 function findClosestPBCategory(distanceM) {
   let closest = null;
   let minDiff = Infinity;
@@ -94,6 +101,34 @@ class DiscordCommands {
                 .setRequired(true)
             )
         )
+        .addSubcommand(subcommand =>
+          subcommand
+            .setName('revoke')
+            .setDescription('Revoke a member\'s Strava access to free their athlete seat (admin only)')
+            .addStringOption(option =>
+              option
+                .setName('user')
+                .setDescription('Discord user whose Strava access to revoke (@mention or user ID)')
+                .setRequired(false)
+            )
+            .addBooleanOption(option =>
+              option
+                .setName('all_reclaimable')
+                .setDescription('Revoke every reclaimable Strava seat (deactivated or switched to intervals.icu) instead of one user')
+                .setRequired(false)
+            )
+        )
+        .addSubcommand(subcommand =>
+          subcommand
+            .setName('connections')
+            .setDescription('Audit every member\'s provider and connection health (admin only)')
+            .addBooleanOption(option =>
+              option
+                .setName('include_inactive')
+                .setDescription('Include inactive members in the audit (default: false)')
+                .setRequired(false)
+            )
+        )
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
       // Register command
@@ -109,6 +144,18 @@ class DiscordCommands {
               { name: 'Strava', value: 'strava' },
               { name: 'intervals.icu', value: 'intervals' }
             )
+        ),
+
+      // Disconnect command — self-service, no permission gate. Revokes Strava
+      // access (freeing the athlete seat) and optionally leaves the team.
+      new SlashCommandBuilder()
+        .setName('disconnect')
+        .setDescription('Disconnect your Strava access (optionally leave the team)')
+        .addBooleanOption(option =>
+          option
+            .setName('leave_team')
+            .setDescription('Also deactivate your membership (default: false)')
+            .setRequired(false)
         ),
 
       // Bot status command
@@ -508,6 +555,9 @@ class DiscordCommands {
       case 'register':
         await this.handleRegisterCommand(interaction);
         break;
+      case 'disconnect':
+        await this.handleDisconnectCommand(interaction);
+        break;
       case 'botstatus':
         await this.handleBotStatusCommand(interaction);
         break;
@@ -582,6 +632,12 @@ class DiscordCommands {
       break;
     case 'reactivate':
       await this.reactivateMember(interaction, options);
+      break;
+    case 'revoke':
+      await this.revokeMemberStrava(interaction, options);
+      break;
+    case 'connections':
+      await this.listMemberConnections(interaction, options);
       break;
     }
   }
@@ -845,6 +901,48 @@ class DiscordCommands {
       .setTimestamp();
   }
 
+  // Build the embed field reporting the outcome of a Strava revocation attempt.
+  // Always returns a field, including a distinct "nothing to revoke" case for a
+  // member with no stored Strava credentials (e.g. an intervals.icu-only member).
+  // Used by the explicit /disconnect and /members revoke commands, where the
+  // outcome is the whole point of the reply.
+  _revokeOutcomeField(revokeResult) {
+    if (!revokeResult) {
+      return { name: '⚠️ Could not revoke Strava access', value: 'Unknown error', inline: false };
+    }
+
+    if (revokeResult.reason === 'no_credentials') {
+      return { name: 'ℹ️ No Strava connection', value: 'No stored Strava credentials — nothing to revoke.', inline: false };
+    }
+
+    if (revokeResult.revoked) {
+      return {
+        name: '🔓 Strava access revoked',
+        value: revokeResult.reason === 'already_revoked'
+          ? 'Already revoked — the athlete seat was already free.'
+          : 'Athlete seat freed.',
+        inline: false
+      };
+    }
+
+    return {
+      name: '⚠️ Could not revoke Strava access',
+      value: revokeResult.reason || 'Unknown error',
+      inline: false
+    };
+  }
+
+  // Same as _revokeOutcomeField, but returns null for the "nothing to revoke"
+  // case. Used by the automatic wiring in removeMember/deactivateMember/provider
+  // switches, where showing a Strava-specific field for a member who never had
+  // Strava credentials (e.g. an intervals.icu member) would just be noise.
+  _revokeOutcomeFieldOrNull(revokeResult) {
+    if (revokeResult?.reason === 'no_credentials') {
+      return null;
+    }
+    return this._revokeOutcomeField(revokeResult);
+  }
+
   // Remove a member
   async removeMember(interaction, options) {
     await interaction.deferReply({ ephemeral: true });
@@ -861,6 +959,22 @@ class DiscordCommands {
         return;
       }
 
+      const member = await this.activityProcessor.memberManager.getMemberByDiscordId(userId);
+
+      if (!member) {
+        await interaction.editReply({
+          content: '❌ User not found in team members.',
+          ephemeral: true
+        });
+        return;
+      }
+
+      // Revoke BEFORE removing the row — the member and its stored tokens are
+      // gone afterwards, so this is the last chance to free the Strava seat.
+      // A failed revoke must never block the removal the admin asked for.
+      const revokeResult = await this.activityProcessor.revokeStravaAccess(member);
+      const revokeField = this._revokeOutcomeFieldOrNull(revokeResult);
+
       const removedMember = await this.activityProcessor.memberManager.removeMemberByDiscordId(userId);
 
       if (removedMember) {
@@ -869,11 +983,10 @@ class DiscordCommands {
           .setTitle('🗑️ Member Removed')
           .setColor('#FF4444')
           .setDescription(`Successfully removed **${memberName}** from the team.`)
-          .addFields([{
-            name: 'Discord User',
-            value: `<@${userId}>`,
-            inline: true
-          }])
+          .addFields([
+            { name: 'Discord User', value: `<@${userId}>`, inline: true },
+            ...(revokeField ? [revokeField] : [])
+          ])
           .setTimestamp();
 
         await interaction.editReply({ embeds: [embed] });
@@ -926,16 +1039,21 @@ class DiscordCommands {
       const success = await this.activityProcessor.memberManager.deactivateMember(member.athleteId);
 
       if (success) {
+        // Revoke only after a successful deactivation — a failed deactivation
+        // means the member is still active, so there's nothing to free yet.
+        // A failed revoke must never block the deactivation the admin asked for.
+        const revokeResult = await this.activityProcessor.revokeStravaAccess(member);
+        const revokeField = this._revokeOutcomeFieldOrNull(revokeResult);
+
         const memberName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
         const embed = new EmbedBuilder()
           .setTitle('🔴 Member Deactivated')
           .setColor('#FF8800')
           .setDescription(`**${memberName}** has been deactivated. Their activities will no longer be posted.`)
-          .addFields([{
-            name: 'Discord User',
-            value: `<@${userId}>`,
-            inline: true
-          }])
+          .addFields([
+            { name: 'Discord User', value: `<@${userId}>`, inline: true },
+            ...(revokeField ? [revokeField] : [])
+          ])
           .setTimestamp();
 
         await interaction.editReply({ embeds: [embed] });
@@ -990,10 +1108,16 @@ class DiscordCommands {
 
       if (success) {
         const memberName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
+        // Deactivation now revokes Strava access, so a reactivated Strava member
+        // doesn't have working credentials to resume from — they need a fresh
+        // /register. intervals.icu credentials aren't touched by deactivation.
+        const reRegisterNote = (member.provider || 'strava') === 'intervals'
+          ? ''
+          : '\n\n**Note:** Deactivation revokes Strava access — they\'ll need to run `/register` again to reconnect.';
         const embed = new EmbedBuilder()
           .setTitle('🟢 Member Reactivated')
           .setColor('#44FF44')
-          .setDescription(`**${memberName}** has been reactivated. Their activities will now be posted again.`)
+          .setDescription(`**${memberName}** has been reactivated. Their activities will now be posted again.${reRegisterNote}`)
           .addFields([{
             name: 'Discord User',
             value: `<@${userId}>`,
@@ -1017,6 +1141,430 @@ class DiscordCommands {
       });
       await interaction.editReply({
         content: '❌ Failed to reactivate member.',
+        ephemeral: true
+      });
+    }
+  }
+
+  // Revoke a member's Strava access without touching membership — admins already
+  // have /members deactivate and /members remove (both of which now revoke too)
+  // for anything beyond that. Either a single `user`, or `all_reclaimable:True`
+  // to bulk-revoke every seat-holder that doesn't need one — never both, never
+  // neither.
+  async revokeMemberStrava(interaction, options) {
+    await interaction.deferReply({ ephemeral: true });
+
+    try {
+      const userInput = options.getString('user');
+      const allReclaimable = options.getBoolean('all_reclaimable') ?? false;
+
+      if (Boolean(userInput) === allReclaimable) {
+        await interaction.editReply({
+          content: '❌ Specify exactly one of `user` or `all_reclaimable:True`.',
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (allReclaimable) {
+        await this._revokeAllReclaimableStrava(interaction);
+        return;
+      }
+
+      const userId = DiscordUtils.extractUserId(userInput);
+
+      if (!userId) {
+        await interaction.editReply({
+          content: '❌ Invalid user. Please use @mention or a valid user ID.',
+          ephemeral: true
+        });
+        return;
+      }
+
+      const member = await this.activityProcessor.memberManager.getMemberByDiscordId(userId);
+
+      if (!member) {
+        await interaction.editReply({
+          content: '❌ User not found in team members.',
+          ephemeral: true
+        });
+        return;
+      }
+
+      const revokeResult = await this.activityProcessor.revokeStravaAccess(member);
+      const seatInfo = await this.activityProcessor.countStravaSeats();
+      const revokeField = this._revokeOutcomeField(revokeResult);
+
+      const memberName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
+
+      const embed = new EmbedBuilder()
+        .setTitle('🔒 Strava Access Revoke')
+        .setColor(revokeResult?.revoked ? '#44FF44' : '#FF8800')
+        .setDescription(`Revocation requested for **${memberName}**. Membership is unchanged.`)
+        .addFields([
+          { name: 'Discord User', value: `<@${userId}>`, inline: true },
+          { name: 'Strava seats used', value: `${seatInfo.used}/${seatInfo.cap}`, inline: true },
+          revokeField
+        ])
+        .setTimestamp();
+
+      await interaction.editReply({ embeds: [embed] });
+
+    } catch (error) {
+      logger.discord.error('Error revoking member Strava access', {
+        user: interaction.user.tag,
+        targetUser: options.getString('user'),
+        error: error.message
+      });
+      await interaction.editReply({
+        content: '❌ Failed to revoke Strava access.',
+        ephemeral: true
+      });
+    }
+  }
+
+  // Render a name list capped at ~15 entries — Discord's 1024-char field-value
+  // limit means an unbounded member list isn't an option once the team is large.
+  _summarizeNames(names, maxNames = 15) {
+    if (names.length <= maxNames) {
+      return names.join(', ');
+    }
+    return `${names.slice(0, maxNames).join(', ')}, …and ${names.length - maxNames} more`;
+  }
+
+  // Bulk-revoke every reclaimable Strava seat (deactivated members, or active
+  // intervals.icu members who switched before automatic revocation existed —
+  // see ActivityProcessor#getReclaimableStravaMembers). Sequential, concurrency
+  // 1: these are write operations against Strava, not read-only probes, so
+  // they're never parallelized. A single failure doesn't abort the rest — all
+  // outcomes are collected and reported together at the end. Errors propagate
+  // to the caller's try/catch rather than being swallowed here.
+  async _revokeAllReclaimableStrava(interaction) {
+    const members = await this.activityProcessor.getReclaimableStravaMembers();
+
+    if (members.length === 0) {
+      await interaction.editReply({
+        content: '✅ No reclaimable Strava seats — nothing to do.',
+        ephemeral: true
+      });
+      return;
+    }
+
+    const succeeded = [];
+    const failed = [];
+
+    for (const member of members) {
+      const memberName = member.discordUser ? member.discordUser.displayName : `${member.athlete.firstname} ${member.athlete.lastname}`;
+      const revokeResult = await this.activityProcessor.revokeStravaAccess(member);
+
+      if (revokeResult?.revoked) {
+        succeeded.push(memberName);
+      } else {
+        failed.push(memberName);
+      }
+    }
+
+    const seatInfo = await this.activityProcessor.countStravaSeats();
+    const reclaimableNote = seatInfo.reclaimable > 0 ? ` (${seatInfo.reclaimable} reclaimable)` : '';
+
+    const embed = new EmbedBuilder()
+      .setTitle('🔓 Bulk Strava Revoke')
+      .setColor(failed.length === 0 ? '#44FF44' : '#FF8800')
+      .setDescription(
+        `Bulk revoke complete: **${succeeded.length}** succeeded, **${failed.length}** failed.\n\n` +
+        `Strava seats used: ${seatInfo.used}/${seatInfo.cap}${reclaimableNote}`
+      )
+      .setTimestamp();
+
+    if (succeeded.length > 0) {
+      embed.addFields([{
+        name: `✅ Revoked (${succeeded.length})`,
+        value: this._summarizeNames(succeeded),
+        inline: false
+      }]);
+    }
+    if (failed.length > 0) {
+      embed.addFields([{
+        name: `⚠️ Failed (${failed.length})`,
+        value: this._summarizeNames(failed),
+        inline: false
+      }]);
+    }
+
+    await interaction.editReply({ embeds: [embed] });
+  }
+
+  // Load the JSON member-data fallback used to resolve a Discord display name
+  // when the guild cache doesn't have the member (e.g. they've left the server).
+  // Mirrors the fallback already used by listMembers/handleLastActivityCommand.
+  async _loadJsonMemberFallback() {
+    const jsonMemberData = {};
+    try {
+      const fs = require('node:fs').promises;
+      const path = require('node:path');
+      const jsonPath = path.join(__dirname, '../../data/members.json');
+      const jsonData = await fs.readFile(jsonPath, 'utf8');
+      const memberDataJson = JSON.parse(jsonData);
+
+      for (const jsonMember of memberDataJson.members) {
+        jsonMemberData[jsonMember.discordUserId] = jsonMember.discordUser;
+      }
+    } catch (error) {
+      logger.discord.debug('Could not load JSON member data for fallback', { error: error.message });
+    }
+    return jsonMemberData;
+  }
+
+  // Resolve a Discord display name: guild cache -> data/members.json -> athlete name.
+  _resolveConnectionsDisplayName(interaction, member, jsonMemberData) {
+    const user = interaction.guild?.members.cache.get(member.discordUserId);
+    if (user?.displayName) {
+      return user.displayName;
+    } else if (jsonMemberData[member.discordUserId]) {
+      return jsonMemberData[member.discordUserId].displayName || jsonMemberData[member.discordUserId].username;
+    } else if (member.discordUser) {
+      return member.discordUser.displayName;
+    } else if (member.athlete) {
+      return `${member.athlete.firstname} ${member.athlete.lastname}`;
+    }
+    return `User ${member.discordUserId.slice(-4)}`;
+  }
+
+  // Render remaining token lifetime as whole hours, best-effort. member.tokens may
+  // be a stale local snapshot (getValidAccessToken can refresh without mutating the
+  // object passed in), so this is illustrative, not authoritative.
+  _formatExpiryHours(expiresAt) {
+    const secondsRemaining = expiresAt - Math.floor(Date.now() / 1000);
+    const hours = Math.max(0, Math.round(secondsRemaining / 3600));
+    return `${hours}h`;
+  }
+
+  // Probe a single Strava-provider member's connection health.
+  async _probeStravaConnection(member) {
+    try {
+      const token = await this.activityProcessor.memberManager.getValidAccessToken(member);
+      if (!token) {
+        return { statusEmoji: '❌', statusText: 'refresh failed — needs /register', isIntervals: false, isBroken: true };
+      }
+
+      const expiresAt = member.tokens?.expires_at;
+      const expText = expiresAt ? ` (exp ${this._formatExpiryHours(expiresAt)})` : '';
+      return { statusEmoji: '✅', statusText: `token ok${expText}`, isIntervals: false, isBroken: false };
+    } catch (error) {
+      logger.discord.warn('Strava connection probe failed', {
+        athleteId: member.athleteId,
+        error: error.message
+      });
+      return { statusEmoji: '❌', statusText: 'refresh failed — needs /register', isIntervals: false, isBroken: true };
+    }
+  }
+
+  // Probe a single intervals.icu-provider member's connection health. The ⚠️
+  // zero-activity case is the whole point of /members connections: intervals.icu
+  // cannot serve Strava-sourced activities via its API, so a member whose
+  // intervals.icu account is fed by Strava will silently show zero activities —
+  // this is the only visible symptom (see docs/STRAVA_COMPLIANCE.md).
+  async _probeIntervalsConnection(member) {
+    try {
+      const stored = await this.activityProcessor.memberManager.getStoredProviderTokens(member, 'intervals');
+      const apiKey = stored?.api_key;
+      if (!apiKey) {
+        return { statusEmoji: '❌', statusText: 'invalid key', isIntervals: true, isBroken: true };
+      }
+
+      await this.activityProcessor.intervalsAPI.getAthlete(apiKey);
+
+      const oldest = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const activities = await this.activityProcessor.intervalsAPI.getAthleteActivities(apiKey, oldest);
+      const count = Array.isArray(activities) ? activities.length : 0;
+
+      if (count === 0) {
+        return { statusEmoji: '⚠️', statusText: 'key ok · 0 acts/30d · Strava-fed?', isIntervals: true, isBroken: false };
+      }
+
+      // Whether intervals.icu activity JSON exposes a `source` field is
+      // unverified — render it when present, omit otherwise (best-effort).
+      const sources = [...new Set(activities.map(a => a.source).filter(Boolean))];
+      const srcText = sources.length > 0 ? ` · src ${sources.join(',')}` : '';
+
+      return { statusEmoji: '✅', statusText: `key ok · ${count} acts/30d${srcText}`, isIntervals: true, isBroken: false };
+    } catch (error) {
+      logger.discord.warn('intervals.icu connection probe failed', {
+        athleteId: member.athleteId,
+        error: error.message
+      });
+      return { statusEmoji: '❌', statusText: 'invalid key', isIntervals: true, isBroken: true };
+    }
+  }
+
+  // Probe one member's connection health without firing any API calls for
+  // inactive members (they're excluded from the audit entirely by default,
+  // and shown as ⚫ without a live check when include_inactive is set).
+  async _probeMemberConnection(member) {
+    if (!member.isActive) {
+      return { statusEmoji: '⚫', statusText: 'inactive', isIntervals: false, isBroken: false };
+    }
+
+    return member.provider === 'intervals'
+      ? this._probeIntervalsConnection(member)
+      : this._probeStravaConnection(member);
+  }
+
+  // Probe every member's connection with a small concurrency cap — this fires
+  // live provider API calls that share rate limiters with normal bot traffic,
+  // so probing everyone at once isn't an option.
+  async _probeMemberConnections(members, concurrency) {
+    const results = new Array(members.length);
+    let nextIndex = 0;
+
+    const worker = async () => {
+      while (nextIndex < members.length) {
+        const i = nextIndex++;
+        results[i] = await this._probeMemberConnection(members[i]);
+      }
+    };
+
+    const workerCount = Math.min(concurrency, members.length);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+    return results;
+  }
+
+  // Audit every member's provider and connection health (admin only).
+  async listMemberConnections(interaction, options) {
+    await interaction.deferReply({ ephemeral: true });
+
+    try {
+      const includeInactive = options.getBoolean('include_inactive') ?? false;
+      const allMembers = await this.activityProcessor.memberManager.getAllMembersIncludingInactive();
+      const members = includeInactive ? allMembers : allMembers.filter(member => member.isActive);
+
+      if (members.length === 0) {
+        await interaction.editReply({
+          content: '📭 No team members registered yet.',
+          ephemeral: true
+        });
+        return;
+      }
+
+      const jsonMemberData = await this._loadJsonMemberFallback();
+      const memberChunks = DiscordUtils.chunkArray(members, CONNECTIONS_CHUNK_SIZE);
+      const chunkToShow = memberChunks[0] || members;
+
+      const probeResults = await this._probeMemberConnections(chunkToShow, CONNECTIONS_PROBE_CONCURRENCY);
+
+      // Whether a row still holds a Strava seat it doesn't need is derived from
+      // stored state (getReclaimableStravaMembers), never re-derived here — the
+      // two must never disagree. Matched by athleteId, not by re-running the
+      // active/provider predicate locally.
+      const reclaimableMembers = await this.activityProcessor.getReclaimableStravaMembers();
+      const reclaimableIds = new Set(reclaimableMembers.map(member => member.athleteId));
+
+      let intervalsCount = 0;
+      let brokenCount = 0;
+      const lines = chunkToShow.map((member, index) => {
+        const result = probeResults[index];
+        if (result.isIntervals) intervalsCount++;
+        if (result.isBroken) brokenCount++;
+
+        const displayName = this._resolveConnectionsDisplayName(interaction, member, jsonMemberData);
+        const providerLabel = (member.provider === 'intervals' ? 'intervals' : 'strava').padEnd(10);
+        const reclaimableMark = reclaimableIds.has(member.athleteId) ? ' · 🔑 still holds a seat' : '';
+        return `${result.statusEmoji} @${displayName}`.padEnd(24) + `${providerLabel} ${result.statusText}${reclaimableMark}`;
+      });
+
+      const seatInfo = await this.activityProcessor.countStravaSeats();
+      const reclaimableNote = seatInfo.reclaimable > 0 ? ` (${seatInfo.reclaimable} reclaimable)` : '';
+
+      const bodyLines = [
+        `🔌 Connection Audit — ${members.length} members`,
+        '',
+        ...lines,
+        '',
+        `Strava seats used: ${seatInfo.used}/${seatInfo.cap}${reclaimableNote} · ${intervalsCount} intervals · ${brokenCount} broken`
+      ];
+
+      const embed = new EmbedBuilder()
+        .setTitle('🔌 Connection Audit')
+        .setColor('#FC4C02')
+        .setDescription('```\n' + bodyLines.join('\n') + '\n```')
+        .setFooter({
+          text: '⚠️ = intervals.icu key valid but 0 activities in the last 30 days — likely fed from Strava, ' +
+            'which intervals.icu cannot serve back via its API. Ask them to sync directly from Garmin/Coros/Polar/manual upload.'
+        })
+        .setTimestamp();
+
+      if (memberChunks.length > 1) {
+        embed.addFields([{
+          name: 'Note',
+          value: `Showing first ${chunkToShow.length} of ${members.length} members`,
+          inline: false
+        }]);
+      }
+
+      await interaction.editReply({ embeds: [embed] });
+
+    } catch (error) {
+      logger.discord.error('Error auditing member connections', {
+        user: interaction.user.tag,
+        error: error.message
+      });
+      await interaction.editReply({
+        content: '❌ Failed to audit member connections.',
+        ephemeral: true
+      });
+    }
+  }
+
+  // Handle the self-service /disconnect command: revoke Strava access and,
+  // optionally, leave the team entirely.
+  async handleDisconnectCommand(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+
+    try {
+      const member = await this.activityProcessor.memberManager.getMemberByDiscordId(interaction.user.id);
+
+      if (!member) {
+        await interaction.editReply({
+          content: '❌ You\'re not registered.',
+          ephemeral: true
+        });
+        return;
+      }
+
+      const leaveTeam = interaction.options.getBoolean('leave_team') ?? false;
+
+      // Never throws — a no_credentials result (e.g. an intervals.icu-only member
+      // with nothing to revoke) is reported, not treated as an error, and we
+      // continue to the leave_team step regardless of the outcome.
+      const revokeResult = await this.activityProcessor.revokeStravaAccess(member);
+      const revokeField = this._revokeOutcomeField(revokeResult);
+
+      let nextStepText;
+      if (leaveTeam) {
+        await this.activityProcessor.memberManager.deactivateMember(member.athleteId);
+        nextStepText = 'You have left the team. Ask an admin to run `/members reactivate`, then run `/register` again to come back.';
+      } else {
+        nextStepText = 'Your membership, races and personal bests are preserved. You\'ll show as disconnected in ' +
+          '`/members connections` until you `/register` again or switch to intervals.icu.';
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('🔌 Disconnected')
+        .setColor('#FF8800')
+        .setDescription(nextStepText)
+        .addFields([revokeField])
+        .setTimestamp();
+
+      await interaction.editReply({ embeds: [embed] });
+
+    } catch (error) {
+      logger.discord.error('Error disconnecting member', {
+        user: interaction.user.tag,
+        error: error.message
+      });
+      await interaction.editReply({
+        content: '❌ Failed to disconnect.',
         ephemeral: true
       });
     }
@@ -1049,7 +1597,7 @@ class DiscordCommands {
       // Discord modals can't contain links, so intervals.icu registration shows an
       // ephemeral embed explaining where to find the API key, with a button that
       // opens the modal (button interactions accept showModal as their first response).
-      await this.showIntervalsRegisterInstructions(interaction);
+      await this.showIntervalsRegisterInstructions(interaction, isProviderSwitch);
       return;
     }
 
@@ -1075,14 +1623,10 @@ class DiscordCommands {
         return;
       }
 
-      // Switching from an active intervals.icu connection: try to reuse a previously
-      // saved Strava token (e.g. from before switching to intervals.icu), refreshing it
-      // if expired, so the member doesn't have to re-authorize. Any failure falls back
-      // to the normal OAuth-link flow.
-      if (isProviderSwitch) {
-        const switched = await this._tryInstantStravaSwitch(interaction, existingMember);
-        if (switched) return;
-      }
+      // No instant switch-back to Strava: Strava credentials no longer survive a
+      // switch away (they're revoked at Strava and cleared, see revokeStravaAccess),
+      // so switching back always goes through the normal OAuth link below and
+      // re-consumes an athlete seat.
     }
 
     const registerUrl = `${config.server.baseUrl}/auth/strava?user_id=${userId}`;
@@ -1121,13 +1665,21 @@ class DiscordCommands {
       const athlete = this.activityProcessor.intervalsAPI.mapAthlete(rawAthlete);
       if (!Number.isFinite(athlete.id)) return false;
 
-      await this.activityProcessor.memberManager.registerMember(
+      const updatedMember = await this.activityProcessor.memberManager.registerMember(
         interaction.user.id,
         athlete,
         { api_key: saved.api_key },
         interaction.user,
         'intervals'
       );
+
+      // Free the Strava seat now that intervals.icu is confirmed working — never
+      // before, or a failed registration would strand the member with no working
+      // provider. Uses the row registerMember just returned (not existingMember):
+      // a provider switch can renumber athlete_id, so the pre-switch object may
+      // no longer point at the current row.
+      const revokeResult = await this.activityProcessor.revokeStravaAccess(updatedMember);
+      const revokeField = this._revokeOutcomeFieldOrNull(revokeResult);
 
       const embed = new EmbedBuilder()
         .setTitle('✅ Connected to intervals.icu')
@@ -1138,6 +1690,10 @@ class DiscordCommands {
           'Your activities will sync automatically about every 5 minutes.'
         )
         .setTimestamp();
+
+      if (revokeField) {
+        embed.addFields([revokeField]);
+      }
 
       await interaction.editReply({ embeds: [embed] });
       return true;
@@ -1150,56 +1706,15 @@ class DiscordCommands {
     }
   }
 
-  // Instant switch-back to Strava using a previously saved token, refreshing it if
-  // expired. Returns true (and has already replied) on success, false on any failure
-  // so the caller can fall back to the normal OAuth-link flow.
-  async _tryInstantStravaSwitch(interaction, existingMember) {
-    try {
-      const saved = await this.activityProcessor.memberManager.getStoredProviderTokens(existingMember, 'strava');
-      if (!saved?.access_token && !saved?.refresh_token) return false;
-
-      const nowSeconds = Math.floor(Date.now() / 1000);
-      const isExpired = !saved.expires_at || saved.expires_at <= nowSeconds;
-
-      const tokenData = isExpired
-        ? await this.activityProcessor.stravaAPI.refreshAccessToken(saved.refresh_token)
-        : saved;
-
-      if (!tokenData?.access_token) return false;
-
-      const rawAthlete = await this.activityProcessor.stravaAPI.getAthlete(tokenData.access_token);
-
-      await this.activityProcessor.memberManager.registerMember(
-        interaction.user.id,
-        rawAthlete,
-        tokenData,
-        interaction.user,
-        'strava'
-      );
-
-      const embed = new EmbedBuilder()
-        .setTitle('✅ Reconnected to Strava')
-        .setColor('#FC4C02')
-        .setDescription(
-          `**${rawAthlete.firstname} ${rawAthlete.lastname}**, your saved Strava connection has been restored — ` +
-          'no need to re-authorize. Your activities will be posted as before.'
-        )
-        .setTimestamp();
-
-      await interaction.editReply({ embeds: [embed] });
-      return true;
-    } catch (error) {
-      logger.discord.warn('Instant Strava provider switch-back failed, falling back to the OAuth flow', {
-        user: interaction.user.tag,
-        error: error.message
-      });
-      return false;
-    }
-  }
-
   // Explain where to find the intervals.icu API key and offer a button that opens the modal.
   // Modals can't contain links, and the caller always defers first, so this uses editReply.
-  async showIntervalsRegisterInstructions(interaction) {
+  // isProviderSwitch warns upfront that completing registration will disconnect Strava —
+  // nothing has happened yet at this point, unlike the post-registration revoke field.
+  async showIntervalsRegisterInstructions(interaction, isProviderSwitch = false) {
+    const switchWarning = isProviderSwitch
+      ? '\n\n**Switching from Strava:** Completing this will disconnect your Strava account and free your athlete seat — reconnecting to Strava later will require a fresh authorization via `/register`.'
+      : '';
+
     const embed = new EmbedBuilder()
       .setTitle('🔗 Connect intervals.icu')
       .setColor('#03DAC6')
@@ -1207,7 +1722,8 @@ class DiscordCommands {
         '1. Open [intervals.icu Settings](https://intervals.icu/settings) (you must be logged in)\n' +
         '2. Scroll to the **Developer Settings** section and copy your **API Key** (generate one if empty)\n' +
         '3. Click the button below and paste the key\n\n' +
-        'Your key only grants access to your own intervals.icu data and is stored encrypted.'
+        'Your key only grants access to your own intervals.icu data and is stored encrypted.' +
+        switchWarning
       )
       .setTimestamp();
 
@@ -1300,13 +1816,20 @@ class DiscordCommands {
       const existingMember = await this.activityProcessor.memberManager.getMemberByDiscordId(interaction.user.id);
       const isProviderSwitch = existingMember?.isActive && (existingMember.provider || 'strava') === 'strava';
 
-      await this.activityProcessor.memberManager.registerMember(
+      const updatedMember = await this.activityProcessor.memberManager.registerMember(
         interaction.user.id,
         athlete,
         { api_key: apiKey },
         interaction.user,
         'intervals'
       );
+
+      // Free the Strava seat now that intervals.icu is confirmed working — after
+      // the key is validated and the member saved, never before. A no-op (e.g.
+      // brand-new member, no stored Strava creds) is harmless: revokeStravaAccess
+      // never throws and this._revokeOutcomeFieldOrNull hides the field for it.
+      const revokeResult = await this.activityProcessor.revokeStravaAccess(updatedMember);
+      const revokeField = this._revokeOutcomeFieldOrNull(revokeResult);
 
       const switchNote = isProviderSwitch
         ? ' You were previously connected via Strava — that connection has been switched to intervals.icu.'
@@ -1320,6 +1843,10 @@ class DiscordCommands {
           `Your activities will sync automatically about every 5 minutes.${switchNote}`
         )
         .setTimestamp();
+
+      if (revokeField) {
+        embed.addFields([revokeField]);
+      }
 
       await interaction.editReply({ embeds: [embed] });
     } catch (error) {
@@ -1350,7 +1877,7 @@ class DiscordCommands {
       {
         name: '🔗 1. Se connecter',
         value:
-          '`/register` — Connecte ton compte Strava pour rejoindre l\'équipe. Tu recevras un lien personnel pour autoriser l\'accès à tes activités publiques.\n`/register provider:intervals.icu` — Connecte plutôt un compte intervals.icu via une clé API.',
+          '`/register` — Connecte ton compte Strava pour rejoindre l\'équipe. Tu recevras un lien personnel pour autoriser l\'accès à tes activités publiques.\n`/register provider:intervals.icu` — Connecte plutôt un compte intervals.icu via une clé API.\n`/disconnect` — Déconnecte ton accès Strava (libère ta place). Ajoute `leave_team:True` pour quitter complètement l\'équipe.',
         inline: false,
       },
       {
@@ -1383,7 +1910,7 @@ class DiscordCommands {
       fields.push({
         name: '⚙️ 6. Commandes admin',
         value:
-          '`/members list` · `/members inactive` · `/members remove` · `/members deactivate` · `/members reactivate`\n`/all-races list` · `/all-races upcoming`\n`/settings channel` · `/settings view`\n`/scheduler weekly` · `/scheduler monthly` · `/scheduler status`\n`/pb status`',
+          '`/members list` · `/members inactive` · `/members remove` · `/members deactivate` · `/members reactivate` · `/members revoke` · `/members connections`\n`/members revoke all_reclaimable:True` — Révoque en une fois tous les accès Strava inutilisés (membres désactivés ou passés à intervals.icu).\n`/all-races list` · `/all-races upcoming`\n`/settings channel` · `/settings view`\n`/scheduler weekly` · `/scheduler monthly` · `/scheduler status`\n`/pb status`',
         inline: false,
       });
     }
