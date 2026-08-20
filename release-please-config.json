@@ -1,0 +1,74 @@
+{
+  "_comment": "No v* tag existed when versioning was introduced, so last-release-sha anchors the first release PR to that point instead of letting release-please walk the whole history. It stops mattering once the first real release tag exists.",
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "packages": {
+    ".": {
+      "release-type": "node",
+      "package-name": "strava-running-bot",
+      "changelog-path": "CHANGELOG.md",
+      "include-component-in-tag": false,
+      "bump-minor-pre-major": false,
+      "draft": false,
+      "prerelease": false,
+      "changelog-sections": [
+        {
+          "type": "feat",
+          "section": "Features"
+        },
+        {
+          "type": "fix",
+          "section": "Bug Fixes"
+        },
+        {
+          "type": "perf",
+          "section": "Performance"
+        },
+        {
+          "type": "revert",
+          "section": "Reverts"
+        },
+        {
+          "type": "docs",
+          "section": "Documentation",
+          "hidden": true
+        },
+        {
+          "type": "chore",
+          "section": "Chores",
+          "hidden": true
+        },
+        {
+          "type": "ci",
+          "section": "CI",
+          "hidden": true
+        },
+        {
+          "type": "test",
+          "section": "Tests",
+          "hidden": true
+        },
+        {
+          "type": "refactor",
+          "section": "Refactors",
+          "hidden": true
+        },
+        {
+          "type": "deps",
+          "section": "Dependencies",
+          "hidden": true
+        },
+        {
+          "type": "deps-dev",
+          "section": "Dev Dependencies",
+          "hidden": true
+        },
+        {
+          "type": "docker",
+          "section": "Docker",
+          "hidden": true
+        }
+      ]
+    }
+  },
+  "last-release-sha": "4811fa3edda7641c57f7b494cf9a9a7abf24368e"
+}

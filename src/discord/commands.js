@@ -1982,6 +1982,9 @@ class DiscordCommands {
             inline: true
           }
         ])
+        // Which build is actually running - the first thing worth knowing when
+        // checking whether a fix has shipped.
+        .setFooter({ text: `${config.app.name} v${config.app.version}` })
         .setTimestamp();
 
       await interaction.editReply({ embeds: [embed] });

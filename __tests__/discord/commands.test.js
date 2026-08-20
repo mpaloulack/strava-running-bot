@@ -227,6 +227,10 @@ jest.mock('../../src/utils/Logger', () => ({
 jest.mock('../../config/config', () => ({
   server: {
     baseUrl: 'https://test.example.com'
+  },
+  app: {
+    name: 'Strava Running Bot',
+    version: jest.requireActual('../../package.json').version
   }
 }));
 
@@ -1716,6 +1720,19 @@ describe('DiscordCommands', () => {
       expect(mockStravaAPI.getRateLimiterStats).toHaveBeenCalled();
       expect(mockInteraction.editReply).toHaveBeenCalledWith({
         embeds: [expect.any(Object)]
+      });
+    });
+
+    // The deployed version is the first thing you need when triaging "is my fix
+    // live?", so it has to be visible in the status embed rather than inferred
+    // from an image digest.
+    it('should show the running version in the status embed', async () => {
+      await discordCommands.handleBotStatusCommand(mockInteraction);
+
+      const embedInstance = EmbedBuilder.mock.results[EmbedBuilder.mock.results.length - 1].value;
+
+      expect(embedInstance.setFooter).toHaveBeenCalledWith({
+        text: expect.stringContaining(jest.requireActual('../../package.json').version)
       });
     });
 
