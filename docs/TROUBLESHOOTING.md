@@ -574,6 +574,42 @@ docker-compose exec strava-running-bot node --expose-gc -e "
 
 ## Data and Storage Issues
 
+### Restoring a Pre-Migration Backup
+
+Before applying any pending migration, the bot snapshots the database to
+`<data dir>/backups/bot.db.<timestamp>.bak` (the five most recent are kept).
+Migrations that rebuild a table cannot be undone by re-running anything, so
+this snapshot is the only way back.
+
+If the bot refuses to start with `Could not back up the database before
+migrating`, the migration did **not** run — the database is untouched. Free up
+disk space or fix permissions on the data directory and restart.
+
+To roll back a migration that went wrong:
+
+```bash
+# 1. Stop the bot so nothing is writing to the database
+docker compose stop strava-running-bot
+
+# 2. List the available restore points (newest last)
+ls -lh /path/to/data/backups/
+
+# 3. Keep the bad database aside rather than deleting it
+mv /path/to/data/bot.db /path/to/data/bot.db.broken
+
+# 4. Restore the snapshot taken before the migration
+cp /path/to/data/backups/bot.db.<timestamp>.bak /path/to/data/bot.db
+
+# 5. Verify it before starting up again
+sqlite3 /path/to/data/bot.db "PRAGMA integrity_check; SELECT COUNT(*) FROM members;"
+
+docker compose start strava-running-bot
+```
+
+Note the restored database still has the failed migration marked as pending, so
+it will be attempted again on the next start. Fix or remove the migration file
+first, or the same failure repeats.
+
 ### Member Data Corruption
 
 #### Symptoms
