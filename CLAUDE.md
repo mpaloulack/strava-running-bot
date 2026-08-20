@@ -157,6 +157,12 @@ Releases are automated by **release-please** — never bump `package.json`, writ
   enforces it. It is the only text release-please ever reads, so a bad title
   means no changelog entry and no bump, silently.
 - Never edit `.release-please-manifest.json` by hand; release-please owns it.
+- **⚠ Pending cleanup:** `release-as: "1.0.0"` is set in `release-please-config.json`
+  to force the first release to be exactly `1.0.0`. It is **sticky** — the moment
+  `v1.0.0` is published, delete both `release-as` and `_comment_release_as`, or
+  every later release stays pinned at 1.0.0 and no new version ever ships.
+  `last-release-sha` can go at the same time; the `v1.0.0` tag replaces it as the
+  anchor. Delete this bullet too once that's done.
 - `config.app.version` reads `package.json`, so `/botstatus` and `/health`
   report the running version automatically. Don't hardcode a version anywhere.
 

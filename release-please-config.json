@@ -3,6 +3,8 @@
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "packages": {
     ".": {
+      "_comment_release_as": "ONE-SHOT: forces the first release to be exactly 1.0.0 so it lands as a real tag rather than the 1.0.1 that the already-merged #69 fix would otherwise produce. This setting is STICKY - remove it as soon as v1.0.0 is published, or every later release will be pinned to 1.0.0 too.",
+      "release-as": "1.0.0",
       "release-type": "node",
       "package-name": "strava-running-bot",
       "changelog-path": "CHANGELOG.md",
