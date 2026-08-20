@@ -34,7 +34,7 @@ const mockDb = {
   set: jest.fn(),
   delete: jest.fn(),
   run: jest.fn().mockReturnValue({ changes: 1 }),
-  transaction: jest.fn((callback) => () => callback())
+  transaction: jest.fn((callback) => callback(mockDb))
 };
 
 // Set up chaining for mockDb methods
@@ -50,6 +50,7 @@ mockDb.delete.mockReturnValue(mockDb);
 
 jest.mock('../../src/database/connection', () => ({
   initialize: jest.fn().mockResolvedValue(mockDb),
+  getRawDb: jest.fn(() => ({ pragma: jest.fn() })),
   close: jest.fn().mockResolvedValue(),
   backup: jest.fn().mockResolvedValue(),
   healthCheck: jest.fn().mockResolvedValue({ status: 'healthy' })
@@ -125,7 +126,7 @@ describe('DatabaseManager', () => {
     mockDb.set.mockReturnValue(mockDb);
     mockDb.delete.mockReturnValue(mockDb);
     mockDb.run.mockReturnValue({ changes: 1 });
-    mockDb.transaction.mockImplementation((callback) => () => callback());
+    mockDb.transaction.mockImplementation((callback) => callback(mockDb));
 
     // Reset DatabaseManager singleton state
     DatabaseManager.isInitialized = false;
@@ -1382,10 +1383,8 @@ describe('DatabaseManager', () => {
       DatabaseManager.isInitialized = true;
       DatabaseManager.db = mockDb;
       
-      // Mock transaction to return a function that executes the callback
-      mockDb.transaction = jest.fn((callback) => {
-        return async () => await callback();
-      });
+      // drizzle runs the callback inline with a tx handle and returns its result.
+      mockDb.transaction = jest.fn((callback) => callback(mockDb));
     });
 
     it('should remove member with transaction', async () => {
