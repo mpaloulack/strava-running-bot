@@ -5,6 +5,12 @@ const config = require('../../config/config');
 const path = require('node:path');
 const fs = require('node:fs');
 
+// How many pre-migration snapshots to keep. Migrations are rare and the
+// database is small (single-digit MB), so a handful of restore points costs
+// almost nothing and covers the window where a bad migration is noticed.
+const BACKUP_RETENTION = 5;
+const BACKUP_SUFFIX = '.bak';
+
 class DatabaseConnection {
   db = null;
   drizzle = null;
@@ -83,6 +89,108 @@ class DatabaseConnection {
     }
   }
 
+  /**
+   * Snapshot the database to destPath using SQLite's online backup API, which
+   * produces a consistent copy even with the connection open.
+   */
+  async backup(destPath) {
+    if (!this.db) {
+      throw new Error('Database not initialized. Call initialize() first.');
+    }
+
+    fs.mkdirSync(path.dirname(destPath), { recursive: true });
+    await this.db.backup(destPath);
+
+    return destPath;
+  }
+
+  backupDir() {
+    const dbPath = config.database.path || path.join(process.cwd(), 'data', 'data.db');
+    return path.join(path.dirname(dbPath), 'backups');
+  }
+
+  /**
+   * True once the database holds real tables. A brand-new install runs every
+   * migration at once against an empty file, and there is nothing to restore
+   * from, so snapshotting it would only add noise.
+   */
+  hasUserData() {
+    const { count } = this.db.prepare(`
+      SELECT COUNT(*) AS count FROM sqlite_master
+      WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != 'migration_log'
+    `).get();
+
+    return count > 0;
+  }
+
+  /**
+   * Take a restore point before applying pending migrations.
+   *
+   * A migration that rebuilds a table (007) cannot be undone by re-running
+   * anything, so the only real rollback is a copy of the file as it was. This
+   * fails closed: if the snapshot can't be written, the migrations don't run.
+   * Refusing to start is recoverable; an unrecoverable schema change is not.
+   */
+  async backupBeforeMigrations(pendingNames) {
+    const dbPath = config.database.path;
+
+    if (!dbPath || dbPath === ':memory:') {
+      return null;
+    }
+
+    if (!this.hasUserData()) {
+      logger.database.info('Fresh database - skipping pre-migration backup', {
+        pending: pendingNames
+      });
+      return null;
+    }
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const destPath = path.join(this.backupDir(), `${path.basename(dbPath)}.${stamp}${BACKUP_SUFFIX}`);
+
+    try {
+      await this.backup(destPath);
+      logger.database.info('Pre-migration backup written', {
+        path: destPath,
+        sizeBytes: fs.statSync(destPath).size,
+        pending: pendingNames
+      });
+    } catch (error) {
+      logger.database.error('Pre-migration backup failed - refusing to run migrations', {
+        path: destPath,
+        error: error.message
+      });
+      throw new Error(`Could not back up the database before migrating: ${error.message}`, { cause: error });
+    }
+
+    this.pruneBackups();
+
+    return destPath;
+  }
+
+  /**
+   * Keep the newest BACKUP_RETENTION snapshots. Pruning must never take the
+   * process down - losing an old restore point is not worth failing a startup
+   * that has already been made safe by the snapshot above.
+   */
+  pruneBackups() {
+    const dir = this.backupDir();
+
+    try {
+      const stale = fs.readdirSync(dir)
+        .filter(name => name.endsWith(BACKUP_SUFFIX))
+        .sort()
+        .slice(0, -BACKUP_RETENTION);
+
+      for (const name of stale) {
+        fs.unlinkSync(path.join(dir, name));
+        logger.database.info('Pruned old database backup', { path: path.join(dir, name) });
+      }
+    } catch (error) {
+      logger.database.warn('Could not prune old database backups', { dir, error: error.message });
+    }
+  }
+
   async runMigrations() {
     try {
       const migrationsDir = path.join(__dirname, 'migrations');
@@ -110,9 +218,10 @@ class DatabaseConnection {
         .filter(file => file.endsWith('.sql'))
         .sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
 
+      const pending = [];
       for (const file of files) {
         const migrationName = path.basename(file, '.sql');
-        
+
         // Check if migration already executed
         const existingMigration = this.db.prepare(
           'SELECT * FROM migration_log WHERE migration_name = ?'
@@ -122,6 +231,21 @@ class DatabaseConnection {
           logger.database.info(`Migration ${migrationName} already executed, skipping`);
           continue;
         }
+
+        pending.push(file);
+      }
+
+      if (pending.length === 0) {
+        logger.database.info('No pending migrations');
+        return;
+      }
+
+      // Restore point first - a migration that rebuilds a table can't be undone
+      // by re-running anything, so the file as it was is the only way back.
+      await this.backupBeforeMigrations(pending.map(file => path.basename(file, '.sql')));
+
+      for (const file of pending) {
+        const migrationName = path.basename(file, '.sql');
 
         logger.database.info(`Running migration: ${migrationName}`);
         

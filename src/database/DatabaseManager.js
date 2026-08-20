@@ -311,9 +311,17 @@ class DatabaseManager {
   // numeric id) — if we left the old athlete_id in place, a later switch back to
   // Strava would leave webhook events unroutable. So when the incoming athlete's id
   // differs from the stored one, we renumber the member row and every child row
-  // (races, personal_bests, activities) inside one transaction. The schema declares
-  // onUpdate: 'cascade' FKs, but connection.js never enables SQLite's foreign_keys
-  // pragma, so those cascades never fire — the renumbering must be done explicitly.
+  // (races, personal_bests, activities) inside one transaction.
+  //
+  // All three child FKs are ON UPDATE CASCADE (migration 007 brought races and
+  // personal_bests in line with what schema.js had always declared), so SQLite
+  // moves the child rows itself and the explicit updates below are belt-and-
+  // braces for a database that predates that migration. defer_foreign_keys is
+  // the same kind of guard: it holds FK checks until COMMIT so the renumbering
+  // is judged as a whole rather than statement by statement, which is what a
+  // NO ACTION constraint on any future child table would otherwise trip over.
+  // It is scoped to this transaction and clears itself on commit, so normal
+  // enforcement resumes immediately afterwards.
   async relinkMember(athleteId, athlete, tokenData, discordUser = null, provider = 'strava') {
     await this.ensureInitialized();
 
@@ -368,9 +376,14 @@ class DatabaseManager {
         throw new Error(`Cannot relink: athlete id ${newAthleteId} is already registered to a different member`);
       }
 
-      // Transaction must be synchronous for better-sqlite3.
-      const transaction = this.db.transaction(() => {
-        this.db.update(members)
+      // Transaction must be synchronous for better-sqlite3. Note drizzle's
+      // transaction() runs the callback immediately and returns its result -
+      // unlike raw better-sqlite3, it does NOT hand back a callable to invoke
+      // afterwards.
+      this.db.transaction((tx) => {
+        dbConnection.getRawDb().pragma('defer_foreign_keys = ON');
+
+        tx.update(members)
           .set({
             athlete_id: newAthleteId,
             athlete: JSON.stringify(athlete),
@@ -382,23 +395,21 @@ class DatabaseManager {
           .where(eq(members.athlete_id, oldAthleteId))
           .run();
 
-        this.db.update(races)
+        tx.update(races)
           .set({ member_athlete_id: newAthleteId })
           .where(eq(races.member_athlete_id, oldAthleteId))
           .run();
 
-        this.db.update(personalBests)
+        tx.update(personalBests)
           .set({ member_athlete_id: newAthleteId })
           .where(eq(personalBests.member_athlete_id, oldAthleteId))
           .run();
 
-        this.db.update(activities)
+        tx.update(activities)
           .set({ member_athlete_id: newAthleteId })
           .where(eq(activities.member_athlete_id, oldAthleteId))
           .run();
       });
-
-      transaction();
     } else {
       await this.db.update(members)
         .set({
@@ -524,15 +535,17 @@ class DatabaseManager {
 
     if (!member) return null;
 
-    // Transaction must be synchronous for better-sqlite3
-    const transaction = this.db.transaction(() => {
+    // Transaction must be synchronous for better-sqlite3. As in relinkMember,
+    // drizzle's transaction() runs the callback immediately and returns its
+    // result - there is no callable handed back to invoke afterwards.
+    return this.db.transaction((tx) => {
       // Delete associated races first (cascade should handle this, but being explicit)
-      this.db.delete(races)
+      tx.delete(races)
         .where(eq(races.member_athlete_id, Number.parseInt(athleteId)))
         .run();
 
       // Delete member
-      this.db.delete(members)
+      tx.delete(members)
         .where(eq(members.athlete_id, Number.parseInt(athleteId)))
         .run();
 
@@ -542,8 +555,6 @@ class DatabaseManager {
 
       return member;
     });
-
-    return transaction();
   }
 
   async updateTokens(athleteId, tokenData, provider = 'strava') {

@@ -2,6 +2,7 @@ const axios = require('axios');
 const config = require('../../config/config');
 const logger = require('../utils/Logger');
 const RateLimiter = require('../utils/RateLimiter');
+const { HTTP } = require('../constants');
 const PolylineUtils = require('../utils/PolylineUtils');
 const { TIME } = require('../constants');
 
@@ -43,7 +44,8 @@ class IntervalsAPI {
     return this.rateLimiter.executeRequest(async () => {
       try {
         const response = await axios.get(`${this.baseURL}/api/v1/athlete/0`, {
-          headers: this._authHeaders(apiKey)
+          headers: this._authHeaders(apiKey),
+          timeout: HTTP.REQUEST_TIMEOUT_MS
         });
 
         return response.data;
@@ -77,7 +79,8 @@ class IntervalsAPI {
 
         const response = await axios.get(`${this.baseURL}/api/v1/athlete/0/activities`, {
           headers: this._authHeaders(apiKey),
-          params
+          params,
+          timeout: HTTP.REQUEST_TIMEOUT_MS
         });
 
         return response.data;
@@ -100,7 +103,8 @@ class IntervalsAPI {
     return this.rateLimiter.executeRequest(async () => {
       try {
         const response = await axios.get(`${this.baseURL}/api/v1/activity/${activityId}`, {
-          headers: this._authHeaders(apiKey)
+          headers: this._authHeaders(apiKey),
+          timeout: HTTP.REQUEST_TIMEOUT_MS
         });
 
         return response.data;
@@ -128,7 +132,8 @@ class IntervalsAPI {
       try {
         const response = await axios.get(`${this.baseURL}/api/v1/activity/${activityId}/streams`, {
           headers: this._authHeaders(apiKey),
-          params: { types: types.join(',') }
+          params: { types: types.join(',') },
+          timeout: HTTP.REQUEST_TIMEOUT_MS
         });
 
         return this._normalizeStreams(response.data);

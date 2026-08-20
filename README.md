@@ -431,7 +431,9 @@ strava-running-bot/
 │   │       ├── 002_add_elevation_field.sql
 │   │       ├── 003_add_personal_bests_table.sql
 │   │       ├── 004_add_activities_table.sql
-│   │       └── 005_add_provider_column.sql
+│   │       ├── 005_add_provider_column.sql
+│   │       ├── 006_add_activities_provider_column.sql
+│   │       └── 007_align_child_fk_on_update.sql
 │   ├── discord/
 │   │   ├── bot.js                    # Discord client + command registration
 │   │   └── commands.js               # Slash command handlers
