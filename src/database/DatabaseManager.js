@@ -313,15 +313,15 @@ class DatabaseManager {
   // differs from the stored one, we renumber the member row and every child row
   // (races, personal_bests, activities) inside one transaction.
   //
-  // schema.js declares onUpdate: 'cascade' on all three, but the migrations that
-  // actually built the tables only spell it out for activities (004); races (001)
-  // and personal_bests (003) are ON UPDATE NO ACTION. better-sqlite3 enables the
-  // foreign_keys pragma by default, so updating members.athlete_id would orphan
-  // those two tables' rows and abort the whole transaction before the explicit
-  // renumbering below ever ran. defer_foreign_keys holds every FK check until
-  // COMMIT, by which point the child rows have been moved and the graph is
-  // consistent again. It is scoped to the current transaction and clears itself
-  // on commit, so normal enforcement resumes immediately afterwards.
+  // All three child FKs are ON UPDATE CASCADE (migration 007 brought races and
+  // personal_bests in line with what schema.js had always declared), so SQLite
+  // moves the child rows itself and the explicit updates below are belt-and-
+  // braces for a database that predates that migration. defer_foreign_keys is
+  // the same kind of guard: it holds FK checks until COMMIT so the renumbering
+  // is judged as a whole rather than statement by statement, which is what a
+  // NO ACTION constraint on any future child table would otherwise trip over.
+  // It is scoped to this transaction and clears itself on commit, so normal
+  // enforcement resumes immediately afterwards.
   async relinkMember(athleteId, athlete, tokenData, discordUser = null, provider = 'strava') {
     await this.ensureInitialized();
 
