@@ -3,6 +3,7 @@ const StravaAPI = require('../../src/strava/api');
 const config = require('../../config/config');
 const logger = require('../../src/utils/Logger');
 const RateLimiter = require('../../src/utils/RateLimiter');
+const { HTTP } = require('../../src/constants');
 
 // Mock dependencies
 jest.mock('axios');
@@ -117,7 +118,7 @@ describe('StravaAPI', () => {
         client_secret: config.strava.clientSecret,
         code: authCode,
         grant_type: 'authorization_code'
-      });
+      }, { timeout: HTTP.REQUEST_TIMEOUT_MS });
       expect(result).toEqual(mockTokenResponse.data);
       expect(logger.strava.debug).toHaveBeenCalledWith('Exchanging authorization code for token', { authCode });
     });
@@ -183,7 +184,7 @@ describe('StravaAPI', () => {
         client_secret: config.strava.clientSecret,
         refresh_token: refreshToken,
         grant_type: 'refresh_token'
-      });
+      }, { timeout: HTTP.REQUEST_TIMEOUT_MS });
       expect(result).toEqual(mockRefreshResponse.data);
       expect(logger.strava.debug).toHaveBeenCalledWith('Refreshing access token');
     });
@@ -212,7 +213,7 @@ describe('StravaAPI', () => {
       expect(mockAxios.post).toHaveBeenCalledWith(
         config.strava.deauthorizeUrl,
         null,
-        { headers: { Authorization: 'Bearer test_access_token' } }
+        { headers: { Authorization: 'Bearer test_access_token' }, timeout: HTTP.REQUEST_TIMEOUT_MS },
       );
       expect(result).toEqual({ revoked: true });
       expect(mockRateLimiter.executeRequest).toHaveBeenCalledWith(
@@ -297,7 +298,8 @@ describe('StravaAPI', () => {
       expect(mockAxios.get).toHaveBeenCalledWith(`${config.strava.baseUrl}/athlete`, {
         headers: {
           Authorization: `Bearer ${accessToken}`
-        }
+        },
+        timeout: HTTP.REQUEST_TIMEOUT_MS
       });
       expect(result).toEqual(mockAthleteResponse.data);
       expect(logger.strava.debug).toHaveBeenCalledWith('Fetching athlete information');
@@ -342,7 +344,8 @@ describe('StravaAPI', () => {
         params: {
           page: 1,
           per_page: 30
-        }
+        },
+        timeout: HTTP.REQUEST_TIMEOUT_MS
       });
       expect(result).toEqual(mockActivitiesResponse.data);
     });
@@ -365,7 +368,8 @@ describe('StravaAPI', () => {
           per_page: perPage,
           before,
           after
-        }
+        },
+        timeout: HTTP.REQUEST_TIMEOUT_MS
       });
       expect(logger.strava.debug).toHaveBeenCalledWith('Fetching athlete activities', { page, perPage, before, after });
     });
@@ -382,7 +386,8 @@ describe('StravaAPI', () => {
         params: {
           page: 1,
           per_page: 30
-        }
+        },
+        timeout: HTTP.REQUEST_TIMEOUT_MS
       });
     });
 
@@ -428,7 +433,8 @@ describe('StravaAPI', () => {
       expect(mockAxios.get).toHaveBeenCalledWith(`${config.strava.baseUrl}/activities/${activityId}`, {
         headers: {
           Authorization: `Bearer ${accessToken}`
-        }
+        },
+        timeout: HTTP.REQUEST_TIMEOUT_MS
       });
       expect(result).toEqual(mockActivityResponse.data);
       expect(logger.strava.debug).toHaveBeenCalledWith('Fetching detailed activity', { activityId });
@@ -481,7 +487,8 @@ describe('StravaAPI', () => {
         params: {
           keys: 'grade_adjusted_distance,time',
           key_by_type: true
-        }
+        },
+        timeout: HTTP.REQUEST_TIMEOUT_MS
       });
       expect(result).toEqual(mockStreamsData);
     });
@@ -513,7 +520,7 @@ describe('StravaAPI', () => {
             keys: 'grade_adjusted_distance',
             key_by_type: true
           }
-        })
+        }),
       );
     });
   });
@@ -967,6 +974,42 @@ describe('StravaAPI', () => {
         response: { message: 'Validation failed', errors: ['Invalid parameter'] },
         status: 422
       });
+    });
+  });
+
+
+  // Regression: none of these calls set a timeout, so a half-dead socket to
+  // Strava hung forever and wedged the shared RateLimiter queue.
+  describe('request timeouts', () => {
+    const expectTimeout = (mockFn) => {
+      expect(mockFn).toHaveBeenCalled();
+      for (const call of mockFn.mock.calls) {
+        const options = call[call.length - 1];
+        expect(options).toMatchObject({ timeout: HTTP.REQUEST_TIMEOUT_MS });
+      }
+    };
+
+    it('should set a timeout on every GET', async () => {
+      mockAxios.get.mockResolvedValue({ data: {} });
+
+      await stravaAPI.getAthlete('token');
+      await stravaAPI.getAthleteActivities('token');
+      await stravaAPI.getActivity(123, 'token');
+      await stravaAPI.getActivityStreams(123, 'token');
+
+      expect(mockAxios.get).toHaveBeenCalledTimes(4);
+      expectTimeout(mockAxios.get);
+    });
+
+    it('should set a timeout on every POST', async () => {
+      mockAxios.post.mockResolvedValue({ data: {} });
+
+      await stravaAPI.exchangeCodeForToken('code');
+      await stravaAPI.refreshAccessToken('refresh');
+      await stravaAPI.deauthorize('token');
+
+      expect(mockAxios.post).toHaveBeenCalledTimes(3);
+      expectTimeout(mockAxios.post);
     });
   });
 

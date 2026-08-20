@@ -3,6 +3,7 @@ const IntervalsAPI = require('../../src/intervals/api');
 const config = require('../../config/config');
 const logger = require('../../src/utils/Logger');
 const RateLimiter = require('../../src/utils/RateLimiter');
+const { HTTP } = require('../../src/constants');
 
 // Mock dependencies
 jest.mock('axios');
@@ -75,7 +76,8 @@ describe('IntervalsAPI', () => {
       expect(mockAxios.get).toHaveBeenCalledWith(`${config.intervals.baseUrl}/api/v1/athlete/0`, {
         headers: {
           Authorization: 'Basic ' + Buffer.from(`API_KEY:${apiKey}`).toString('base64')
-        }
+        },
+        timeout: HTTP.REQUEST_TIMEOUT_MS
       });
       expect(result).toEqual(mockAthleteResponse.data);
       expect(mockRateLimiter.executeRequest).toHaveBeenCalledWith(
@@ -120,7 +122,8 @@ describe('IntervalsAPI', () => {
         headers: {
           Authorization: 'Basic ' + Buffer.from(`API_KEY:${apiKey}`).toString('base64')
         },
-        params: {}
+        params: {},
+        timeout: HTTP.REQUEST_TIMEOUT_MS
       });
       expect(result).toEqual(mockActivitiesResponse.data);
     });
@@ -136,7 +139,8 @@ describe('IntervalsAPI', () => {
         headers: {
           Authorization: 'Basic ' + Buffer.from(`API_KEY:${apiKey}`).toString('base64')
         },
-        params: { oldest: '2024-01-01T00:00:00', newest: '2024-01-31T23:59:59' }
+        params: { oldest: '2024-01-01T00:00:00', newest: '2024-01-31T23:59:59' },
+        timeout: HTTP.REQUEST_TIMEOUT_MS
       });
     });
 
@@ -145,7 +149,7 @@ describe('IntervalsAPI', () => {
 
       expect(mockAxios.get).toHaveBeenCalledWith(
         expect.any(String),
-        expect.objectContaining({ params: { oldest: '2026-08-16T20:55:00' } })
+        expect.objectContaining({ params: { oldest: '2026-08-16T20:55:00' } }),
       );
     });
 
@@ -154,7 +158,7 @@ describe('IntervalsAPI', () => {
 
       expect(mockAxios.get).toHaveBeenCalledWith(
         expect.any(String),
-        expect.objectContaining({ params: { oldest: '2026-08-16T20:55:00' } })
+        expect.objectContaining({ params: { oldest: '2026-08-16T20:55:00' } }),
       );
     });
 
@@ -163,7 +167,7 @@ describe('IntervalsAPI', () => {
 
       expect(mockAxios.get).toHaveBeenCalledWith(
         expect.any(String),
-        expect.objectContaining({ params: {} })
+        expect.objectContaining({ params: {} }),
       );
     });
 
@@ -204,7 +208,8 @@ describe('IntervalsAPI', () => {
       expect(mockAxios.get).toHaveBeenCalledWith(`${config.intervals.baseUrl}/api/v1/activity/${activityId}`, {
         headers: {
           Authorization: 'Basic ' + Buffer.from(`API_KEY:${apiKey}`).toString('base64')
-        }
+        },
+        timeout: HTTP.REQUEST_TIMEOUT_MS
       });
       expect(result).toEqual(mockActivityResponse.data);
     });
@@ -236,7 +241,8 @@ describe('IntervalsAPI', () => {
         headers: {
           Authorization: 'Basic ' + Buffer.from('API_KEY:test_api_key').toString('base64')
         },
-        params: { types: 'time,distance,altitude,latlng' }
+        params: { types: 'time,distance,altitude,latlng' },
+        timeout: HTTP.REQUEST_TIMEOUT_MS
       });
     });
 
@@ -247,7 +253,7 @@ describe('IntervalsAPI', () => {
 
       expect(mockAxios.get).toHaveBeenCalledWith(
         expect.any(String),
-        expect.objectContaining({ params: { types: 'time,heartrate' } })
+        expect.objectContaining({ params: { types: 'time,heartrate' } }),
       );
     });
 
@@ -807,4 +813,23 @@ describe('IntervalsAPI', () => {
       expect(mockRateLimiter.reset).toHaveBeenCalled();
     });
   });
+
+  // Same class of bug as the Strava client: an untimed axios call can hang
+  // and wedge this client's RateLimiter queue.
+  describe('request timeouts', () => {
+    it('should set a timeout on every GET', async () => {
+      mockAxios.get.mockResolvedValue({ data: {} });
+
+      await intervalsAPI.getAthlete('key');
+      await intervalsAPI.getAthleteActivities('key');
+      await intervalsAPI.getActivity('i123', 'key');
+      await intervalsAPI.getActivityStreams('i123', 'key');
+
+      expect(mockAxios.get).toHaveBeenCalledTimes(4);
+      for (const call of mockAxios.get.mock.calls) {
+        expect(call[1]).toMatchObject({ timeout: HTTP.REQUEST_TIMEOUT_MS });
+      }
+    });
+  });
+
 });

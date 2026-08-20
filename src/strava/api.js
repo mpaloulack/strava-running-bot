@@ -2,6 +2,7 @@ const axios = require('axios');
 const config = require('../../config/config');
 const logger = require('../utils/Logger');
 const RateLimiter = require('../utils/RateLimiter');
+const { HTTP } = require('../constants');
 
 class StravaAPI {
   constructor() {
@@ -41,7 +42,7 @@ class StravaAPI {
           client_secret: this.clientSecret,
           code: authCode,
           grant_type: 'authorization_code',
-        });
+        }, { timeout: HTTP.REQUEST_TIMEOUT_MS });
 
         return response.data;
       } catch (error) {
@@ -66,7 +67,7 @@ class StravaAPI {
           client_secret: this.clientSecret,
           refresh_token: refreshToken,
           grant_type: 'refresh_token',
-        });
+        }, { timeout: HTTP.REQUEST_TIMEOUT_MS });
 
         return response.data;
       } catch (error) {
@@ -94,6 +95,7 @@ class StravaAPI {
           headers: {
             Authorization: `Bearer ${accessToken}`,
           },
+          timeout: HTTP.REQUEST_TIMEOUT_MS,
         });
 
         return { revoked: true };
@@ -126,6 +128,7 @@ class StravaAPI {
           headers: {
             Authorization: `Bearer ${accessToken}`,
           },
+          timeout: HTTP.REQUEST_TIMEOUT_MS,
         });
 
         return response.data;
@@ -159,6 +162,7 @@ class StravaAPI {
             Authorization: `Bearer ${accessToken}`,
           },
           params: params,
+          timeout: HTTP.REQUEST_TIMEOUT_MS,
         });
 
         return response.data;
@@ -184,6 +188,7 @@ class StravaAPI {
           headers: {
             Authorization: `Bearer ${accessToken}`,
           },
+          timeout: HTTP.REQUEST_TIMEOUT_MS,
         });
 
         return response.data;
@@ -212,7 +217,8 @@ class StravaAPI {
           params: {
             keys: keys.join(','),
             key_by_type: true
-          }
+          },
+          timeout: HTTP.REQUEST_TIMEOUT_MS,
         });
 
         return response.data;

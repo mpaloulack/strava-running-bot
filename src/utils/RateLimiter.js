@@ -1,9 +1,10 @@
 const logger = require('./Logger');
-const { TIME } = require('../constants');
+const { TIME, HTTP } = require('../constants');
 
 const MAX_RETRIES = 3;
 const RETRY_BASE_MS = 1000;
-const TRANSIENT_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE']);
+const TRANSIENT_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE', 'ECONNABORTED']);
+const WATCHDOG_CODE = 'ERR_QUEUE_WATCHDOG';
 const NON_RETRIABLE_STATUSES = new Set([400, 401, 403, 404]);
 
 function isTransientError(error) {
@@ -21,9 +22,14 @@ function isTransientError(error) {
  * Defaults to Strava's read limits; pass custom limits/log for other providers.
  */
 class RateLimiter {
-  constructor(limits = null, log = logger.strava) {
-    // Default: Strava read rate limits: 300/15min, 3000/day — using 80% as safety margin
+  constructor(limits = null, log = logger.strava, options = {}) {
     this.log = log;
+
+    // Hard ceiling on how long one request may hold the serialized queue.
+    // 0 disables it (tests that drive the queue manually).
+    this.watchdogMs = options.watchdogMs ?? HTTP.QUEUE_WATCHDOG_MS;
+
+    // Default: Strava read rate limits: 300/15min, 3000/day — using 80% as safety margin
     this.limits = limits || {
       short: {
         requests: 240,   // 80% of Strava's read limit (300/15min)
@@ -118,6 +124,48 @@ class RateLimiter {
   }
 
   /**
+   * Run one request under a hard deadline.
+   *
+   * processQueue is serialized behind `this.processing`, so a request that
+   * never settles doesn't just lose itself — it wedges every subsequent call
+   * to this provider for the life of the process, with no error logged
+   * anywhere. Per-request timeouts in the API clients are the real defence;
+   * this is the backstop for when those don't fire.
+   */
+  async _runWithWatchdog(requestFunction) {
+    // Normalize a synchronous throw into a rejected promise so the watchdog
+    // path and the happy path fail the same way.
+    const inFlight = Promise.resolve().then(() => requestFunction());
+
+    if (!this.watchdogMs) {
+      return inFlight;
+    }
+
+    // If the watchdog wins the race, nothing is left awaiting `inFlight`.
+    // Should it reject later, that would surface as an unhandledRejection and
+    // take the process down, so absorb it here while we still have a handle.
+    inFlight.catch(() => {});
+
+    let timer;
+    try {
+      return await Promise.race([
+        inFlight,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            const error = new Error(`Request exceeded watchdog timeout of ${this.watchdogMs}ms`);
+            error.code = WATCHDOG_CODE;
+            reject(error);
+          }, this.watchdogMs);
+          // Never keep the event loop alive just for the watchdog.
+          if (typeof timer.unref === 'function') timer.unref();
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
    * Execute a rate-limited request
    */
   async executeRequest(requestFunction, context = {}) {
@@ -167,11 +215,21 @@ class RateLimiter {
         while (attempt <= MAX_RETRIES) {
           try {
             this.recordRequest();
-            const result = await requestFunction();
+            const result = await this._runWithWatchdog(requestFunction);
             resolve(result);
             break;
           } catch (error) {
             const status = error.response?.status;
+
+            if (error.code === WATCHDOG_CODE) {
+              this.log.error('Request exceeded watchdog timeout - abandoning to unblock queue', {
+                error: error.message,
+                context,
+                queueLength: this.requestQueue.length
+              });
+              reject(error);
+              break;
+            }
 
             if (status && NON_RETRIABLE_STATUSES.has(status)) {
               this.log.error('Rate-limited request failed (non-retriable)', { error: error.message, context });

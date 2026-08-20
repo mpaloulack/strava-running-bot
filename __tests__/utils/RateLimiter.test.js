@@ -1,5 +1,6 @@
 const RateLimiter = require('../../src/utils/RateLimiter');
 const logger = require('../../src/utils/Logger');
+const { HTTP } = require('../../src/constants');
 
 // Mock logger
 jest.mock('../../src/utils/Logger');
@@ -183,4 +184,109 @@ describe('RateLimiter', () => {
       expect(logger.strava.info).toHaveBeenCalledWith('Rate limiter reset');
     });
   });
+
+  // Regression: a single hung request used to hold `processing = true`
+  // forever, silently wedging every later Strava call in the process.
+  // See src/utils/RateLimiter.js watchdog.
+  describe('watchdog', () => {
+    // processQueue pauses 100ms between requests, so the lock clears a beat
+    // after a caller's promise settles - poll rather than assert instantly.
+    const waitForIdle = async (limiter) => {
+      for (let i = 0; i < 50 && limiter.processing; i++) {
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+    };
+    it('should default the watchdog to the shared HTTP constant', () => {
+      expect(new RateLimiter().watchdogMs).toBe(HTTP.QUEUE_WATCHDOG_MS);
+    });
+
+    it('should reject a request that never settles', async () => {
+      const limiter = new RateLimiter(null, logger.strava, { watchdogMs: 50 });
+
+      await expect(
+        limiter.executeRequest(() => new Promise(() => {}), { operation: 'hang' })
+      ).rejects.toThrow(/watchdog timeout/);
+    });
+
+    it('should release the queue so later requests still run', async () => {
+      const limiter = new RateLimiter(null, logger.strava, { watchdogMs: 50 });
+
+      const hung = limiter.executeRequest(() => new Promise(() => {}), { operation: 'hang' });
+      const followUp = limiter.executeRequest(async () => 'ok', { operation: 'next' });
+
+      await expect(hung).rejects.toThrow(/watchdog timeout/);
+      await expect(followUp).resolves.toBe('ok');
+
+      await waitForIdle(limiter);
+      expect(limiter.processing).toBe(false);
+      expect(limiter.requestQueue).toEqual([]);
+    });
+
+    it('should not retry a watchdog timeout', async () => {
+      const limiter = new RateLimiter(null, logger.strava, { watchdogMs: 50 });
+      const requestFunction = jest.fn(() => new Promise(() => {}));
+
+      await expect(limiter.executeRequest(requestFunction)).rejects.toThrow(/watchdog timeout/);
+
+      expect(requestFunction).toHaveBeenCalledTimes(1);
+    });
+
+    it('should swallow a late rejection from an abandoned request', async () => {
+      const limiter = new RateLimiter(null, logger.strava, { watchdogMs: 50 });
+      const unhandled = jest.fn();
+      process.on('unhandledRejection', unhandled);
+
+      await expect(
+        limiter.executeRequest(() => new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('late failure')), 100);
+        }))
+      ).rejects.toThrow(/watchdog timeout/);
+
+      await new Promise(resolve => setTimeout(resolve, 150));
+      process.off('unhandledRejection', unhandled);
+
+      expect(unhandled).not.toHaveBeenCalled();
+    });
+
+    it('should not fire for a request that completes in time', async () => {
+      const limiter = new RateLimiter(null, logger.strava, { watchdogMs: 500 });
+
+      await expect(limiter.executeRequest(async () => 'fast')).resolves.toBe('fast');
+    });
+
+    it('should handle a requestFunction that throws synchronously', async () => {
+      const limiter = new RateLimiter(null, logger.strava, { watchdogMs: 500 });
+
+      await expect(limiter.executeRequest(() => {
+        throw new Error('sync boom');
+      })).rejects.toThrow('sync boom');
+
+      await waitForIdle(limiter);
+      expect(limiter.processing).toBe(false);
+    });
+
+    it('should be disabled when watchdogMs is 0', async () => {
+      const limiter = new RateLimiter(null, logger.strava, { watchdogMs: 0 });
+
+      await expect(limiter.executeRequest(async () => 'no watchdog')).resolves.toBe('no watchdog');
+    });
+  });
+
+  // Regression: axios surfaces its own `timeout` as ECONNABORTED, which was
+  // absent from TRANSIENT_CODES and so rejected instantly instead of retrying.
+  describe('transient error handling', () => {
+    it('should retry an axios timeout (ECONNABORTED)', async () => {
+      const limiter = new RateLimiter(null, logger.strava, { watchdogMs: 5000 });
+      const timeoutError = new Error('timeout of 15000ms exceeded');
+      timeoutError.code = 'ECONNABORTED';
+
+      const requestFunction = jest.fn()
+        .mockRejectedValueOnce(timeoutError)
+        .mockResolvedValueOnce('recovered');
+
+      await expect(limiter.executeRequest(requestFunction)).resolves.toBe('recovered');
+      expect(requestFunction).toHaveBeenCalledTimes(2);
+    });
+  });
+
 });

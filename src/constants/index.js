@@ -19,6 +19,22 @@ const TIME = {
   SECONDS_PER_HOUR: 3600             // Seconds in an hour
 };
 
+// Outbound HTTP Constants
+//
+// REQUEST_TIMEOUT_MS bounds a single upstream call. Without it, axios waits
+// forever: a half-dead TCP connection (established, ACKed, no response) never
+// settles its promise.
+//
+// QUEUE_WATCHDOG_MS is the RateLimiter's last-resort backstop. Its queue is
+// serialized, so any request that never settles holds the lock and silently
+// wedges every later call to that provider. The watchdog must sit above
+// REQUEST_TIMEOUT_MS plus its retry backoff (1s + 2s + 4s) so it only trips
+// when the per-request timeout itself failed to fire.
+const HTTP = {
+  REQUEST_TIMEOUT_MS: 15000,
+  QUEUE_WATCHDOG_MS: 30000
+};
+
 // Validation Limits
 const VALIDATION = {
   MAX_NAME_LENGTH: 100,       // Maximum race name length
@@ -150,6 +166,7 @@ const STRAVA_PR_RECORD_TYPE_MAP = {
 module.exports = {
   ENCRYPTION,
   TIME,
+  HTTP,
   VALIDATION,
   DISCORD,
   DATE,
