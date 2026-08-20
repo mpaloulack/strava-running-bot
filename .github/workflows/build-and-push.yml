@@ -4,9 +4,21 @@ on:
   push:
     branches:
       - main
-    tags:
-      - 'v*.*.*'          # release tags cut by release-please
-  workflow_dispatch: {}   # allow manual runs from the Actions UI
+  # Called by release-please.yml once a release is cut. A tag push can't be used
+  # here: GitHub refuses to trigger workflows from events created with
+  # GITHUB_TOKEN, so `on: push: tags:` would never fire for a bot-made tag.
+  workflow_call:
+    inputs:
+      version:
+        description: 'Release version to tag the image with, without the leading v'
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version to tag the image with, e.g. 1.0.0 (blank = latest/sha only)'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -29,10 +41,22 @@ jobs:
         with:
           driver: docker-container
 
+      # semver patterns key off a tag ref, and this never runs on one - the
+      # version arrives as an input instead, so derive X.Y from it by hand.
+      - name: Derive version tags
+        id: version
+        run: |
+          version='${{ inputs.version }}'
+          if [ -n "$version" ]; then
+            version="${version#v}"
+            echo "full=$version" >> "$GITHUB_OUTPUT"
+            echo "major_minor=${version%.*}" >> "$GITHUB_OUTPUT"
+          fi
+
       # Deliberately leaves :latest tracking main, which is what the production
       # compose file pulls - moving it to releases only would silently stop
-      # deployments picking up merges. Release tags add the semver tags on top,
-      # so a deployment can pin to :1.2.3 or :1.2 when it wants to.
+      # deployments picking up merges. Releases add the semver tags on top, so a
+      # deployment can pin to :1.2.3 or :1.2 when it wants to.
       - name: Derive image tags
         id: meta
         uses: docker/metadata-action@v6
@@ -41,8 +65,8 @@ jobs:
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,format=long
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ steps.version.outputs.full }},enable=${{ steps.version.outputs.full != '' }}
+            type=raw,value=${{ steps.version.outputs.major_minor }},enable=${{ steps.version.outputs.major_minor != '' }}
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
