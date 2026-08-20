@@ -10,6 +10,7 @@ A comprehensive bot that automatically posts Strava activities from your running
 
 [![CI](https://github.com/mpaloulack/strava-running-bot/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mpaloulack/strava-running-bot/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/mpaloulack/strava-running-bot/branch/main/graph/badge.svg)](https://codecov.io/gh/mpaloulack/strava-running-bot)
+[![release](https://img.shields.io/github/v/release/mpaloulack/strava-running-bot?sort=semver)](https://github.com/mpaloulack/strava-running-bot/releases)
 
 ## 🎯 Features
 
@@ -481,7 +482,11 @@ strava-running-bot/
 ├── docs/                             # API, deployment, troubleshooting, etc.
 ├── .github/workflows/
 │   ├── ci.yml                        # Lint + tests + Codecov upload
+│   ├── pr-title.yml                  # Conventional-commit PR title check
+│   ├── release-please.yml            # Version bump + CHANGELOG + tag
 │   └── build-and-push.yml            # Docker image build & push
+├── release-please-config.json        # Release automation config
+├── .release-please-manifest.json     # Current released version (generated)
 ├── .env.example                      # Environment variables template
 ├── Dockerfile                        # Container image definition
 ├── docker-compose.yml                # Local Docker deployment

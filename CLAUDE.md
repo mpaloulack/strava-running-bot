@@ -116,8 +116,55 @@ Production compose file: `docker-compose.prod.yml`. Image is built and pushed by
 # Commits
 
 - Format: `<type>(<scope>): <subject>` (e.g. `feat(pb): add personal-best announcement`).
+- Subject in lowercase, imperative mood, no trailing period.
 - Do **not** add `Co-Authored-By: Claude …` trailers.
 - Don't `git add -A`; stage files by name to avoid sweeping in `.env` / `coverage/` / build artifacts.
+
+# Versioning
+
+Releases are automated by **release-please** — never bump `package.json`, write
+`CHANGELOG.md`, or create a `v*` tag by hand. All three are generated.
+
+## How a release happens
+
+1. PRs merge to `main` (squash merge — **the PR title becomes the commit subject**).
+2. release-please reads those subjects and keeps a `chore(release): x.y.z` PR
+   open with the version bump + changelog.
+3. Merging that PR creates the `vX.Y.Z` tag and GitHub Release, which triggers
+   the versioned image build (`:X.Y.Z`, `:X.Y`).
+
+`:latest` still tracks `main`, so merges deploy without waiting for a release.
+
+## Commit type → version bump
+
+| Type | Bump | In changelog |
+|------|------|--------------|
+| `feat` | minor (1.0.0 → 1.1.0) | Features |
+| `fix` | patch (1.0.0 → 1.0.1) | Bug Fixes |
+| `perf` | patch | Performance |
+| `revert` | patch | Reverts |
+| `docs` `chore` `ci` `test` `refactor` `build` `style` `deps` `deps-dev` `docker` | none | hidden |
+| `feat!` / `fix!` / `BREAKING CHANGE:` footer | **major** (1.0.0 → 2.0.0) | Breaking |
+
+## Rules
+
+- **Pick the type deliberately** — it decides the version users get. A
+  user-visible behaviour change is `feat` or `fix`, never `chore`.
+- **A `!` or `BREAKING CHANGE:` footer publishes a major.** Only use it for a
+  genuine break (config/env change, data migration that can't roll back, a
+  removed command). Say what breaks and what to do about it.
+- **The PR title must be a valid conventional subject** — CI (`PR Title`)
+  enforces it. It is the only text release-please ever reads, so a bad title
+  means no changelog entry and no bump, silently.
+- Never edit `.release-please-manifest.json` by hand; release-please owns it.
+- **⚠ Pending cleanup:** `release-as: "1.0.0"` is set in `release-please-config.json`
+  to force the first release to be exactly `1.0.0`. It is **sticky** — the moment
+  `v1.0.0` is published, delete both `release-as` and `_comment_release_as`, or
+  every later release stays pinned at 1.0.0 and no new version ever ships.
+  `last-release-sha` can go at the same time; the `v1.0.0` tag replaces it as the
+  anchor. Delete this bullet too once that's done.
+- `config.app.version` reads `package.json`, so `/botstatus` and `/health`
+  report the running version automatically. Don't hardcode a version anywhere.
 
 # NEVER EVER DO
 

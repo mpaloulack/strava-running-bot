@@ -1,0 +1,76 @@
+{
+  "_comment": "No v* tag existed when versioning was introduced, so last-release-sha anchors the first release PR to that point instead of letting release-please walk the whole history. It stops mattering once the first real release tag exists.",
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "packages": {
+    ".": {
+      "_comment_release_as": "ONE-SHOT: forces the first release to be exactly 1.0.0 so it lands as a real tag rather than the 1.0.1 that the already-merged #69 fix would otherwise produce. This setting is STICKY - remove it as soon as v1.0.0 is published, or every later release will be pinned to 1.0.0 too.",
+      "release-as": "1.0.0",
+      "release-type": "node",
+      "package-name": "strava-running-bot",
+      "changelog-path": "CHANGELOG.md",
+      "include-component-in-tag": false,
+      "bump-minor-pre-major": false,
+      "draft": false,
+      "prerelease": false,
+      "changelog-sections": [
+        {
+          "type": "feat",
+          "section": "Features"
+        },
+        {
+          "type": "fix",
+          "section": "Bug Fixes"
+        },
+        {
+          "type": "perf",
+          "section": "Performance"
+        },
+        {
+          "type": "revert",
+          "section": "Reverts"
+        },
+        {
+          "type": "docs",
+          "section": "Documentation",
+          "hidden": true
+        },
+        {
+          "type": "chore",
+          "section": "Chores",
+          "hidden": true
+        },
+        {
+          "type": "ci",
+          "section": "CI",
+          "hidden": true
+        },
+        {
+          "type": "test",
+          "section": "Tests",
+          "hidden": true
+        },
+        {
+          "type": "refactor",
+          "section": "Refactors",
+          "hidden": true
+        },
+        {
+          "type": "deps",
+          "section": "Dependencies",
+          "hidden": true
+        },
+        {
+          "type": "deps-dev",
+          "section": "Dev Dependencies",
+          "hidden": true
+        },
+        {
+          "type": "docker",
+          "section": "Docker",
+          "hidden": true
+        }
+      ]
+    }
+  },
+  "last-release-sha": "4811fa3edda7641c57f7b494cf9a9a7abf24368e"
+}

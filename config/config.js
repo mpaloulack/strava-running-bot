@@ -1,6 +1,7 @@
 require('dotenv').config();
 const path = require('node:path');
 const { ENCRYPTION } = require('../src/constants');
+const packageJson = require('../package.json');
 
 const databasePath = process.env.DATABASE_PATH || '/app/data/bot.db';
 
@@ -42,7 +43,10 @@ const config = {
   },
   app: {
     name: 'Strava Running Bot',
-    version: '1.0.0',
+    // Single source of truth is package.json, which release-please bumps on
+    // every release. Hardcoding it here would silently drift one release later
+    // and make /botstatus and /health report a version that isn't deployed.
+    version: packageJson.version,
   },
   database: {
     path: databasePath,

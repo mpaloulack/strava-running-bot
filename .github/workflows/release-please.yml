@@ -1,0 +1,29 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Never let two release runs race each other onto the same tag.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      # Reads the conventional commits landed on main since the last release and
+      # keeps a "chore(release): x.y.z" PR up to date with the version bump and
+      # generated CHANGELOG. Merging that PR is what actually cuts the release:
+      # it creates the vX.Y.Z tag and the GitHub Release, which in turn triggers
+      # the versioned image build in build-and-push.yml.
+      - uses: googleapis/release-please-action@v5
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

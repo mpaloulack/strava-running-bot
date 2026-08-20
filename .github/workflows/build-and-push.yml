@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*.*.*'          # release tags cut by release-please
   workflow_dispatch: {}   # allow manual runs from the Actions UI
 
 permissions:
@@ -27,6 +29,21 @@ jobs:
         with:
           driver: docker-container
 
+      # Deliberately leaves :latest tracking main, which is what the production
+      # compose file pulls - moving it to releases only would silently stop
+      # deployments picking up merges. Release tags add the semver tags on top,
+      # so a deployment can pin to :1.2.3 or :1.2 when it wants to.
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/strava-running-bot
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=long
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
         with:
@@ -41,8 +58,7 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/strava-running-bot:latest
-            ghcr.io/${{ github.repository_owner }}/strava-running-bot:${{ github.sha }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
