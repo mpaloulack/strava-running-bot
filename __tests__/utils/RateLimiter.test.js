@@ -165,7 +165,11 @@ describe('RateLimiter', () => {
         },
         queueLength: 0,
         canMakeRequest: true,
-        waitTime: 0
+        waitTime: 0,
+        processing: false,
+        msSinceProgress: expect.any(Number),
+        oldestQueuedMs: 0,
+        stalled: false
       });
     });
 
@@ -182,6 +186,27 @@ describe('RateLimiter', () => {
       expect(rateLimiter.requestQueue).toEqual([]);
       expect(rateLimiter.processing).toBe(false);
       expect(logger.strava.info).toHaveBeenCalledWith('Rate limiter reset');
+    });
+
+    it('should retire the running drain loop on reset', async () => {
+      const limiter = new RateLimiter(null, logger.strava, { watchdogMs: 50 });
+      const before = limiter.generation;
+      const dispatched = [];
+
+      limiter.reset();
+
+      // A loop from the retired generation must not serve the queue.
+      limiter.requestQueue.push({
+        requestFunction: async () => dispatched.push('x'),
+        context: {},
+        resolve: () => {},
+        reject: () => {},
+        queuedAt: Date.now()
+      });
+      await limiter._drain(before);
+
+      expect(limiter.generation).toBe(before + 1);
+      expect(dispatched).toEqual([]);
     });
   });
 
@@ -286,6 +311,140 @@ describe('RateLimiter', () => {
 
       await expect(limiter.executeRequest(requestFunction)).resolves.toBe('recovered');
       expect(requestFunction).toHaveBeenCalledTimes(2);
+    });
+  });
+
+
+  // Production incident 2026-08-24: every Strava call stopped being served for
+  // over two hours. The watchdog never fired, because it only guards a request
+  // that was actually dispatched - nothing guarded the drain loop itself. With
+  // `processing` stuck true, every later request sat in the queue forever with
+  // no log, no timeout and no recovery.
+  describe('stall recovery', () => {
+    const stalledLimiter = () => new RateLimiter(null, logger.strava, {
+      watchdogMs: 50,
+      stallAfterMs: 40
+    });
+
+    it('should default stallAfterMs above the worst-case retry budget', () => {
+      const limiter = new RateLimiter();
+
+      // 4 attempts at the watchdog ceiling plus backoff must not look like a stall.
+      expect(limiter.stallAfterMs).toBeGreaterThan(limiter.watchdogMs * 4);
+    });
+
+    it('should report a queue that is pending with no progress as stalled', async () => {
+      const limiter = stalledLimiter();
+
+      limiter.processing = true; // simulate a drain loop that never returns
+      limiter.executeRequest(async () => 'never dispatched');
+      limiter.lastProgressAt = Date.now() - 10000;
+
+      expect(limiter.isStalled()).toBe(true);
+    });
+
+    it('should not report an idle queue as stalled', () => {
+      const limiter = stalledLimiter();
+      limiter.lastProgressAt = Date.now() - 10000;
+
+      expect(limiter.isStalled()).toBe(false);
+    });
+
+    it('should not report a busy queue that is still making progress as stalled', async () => {
+      const limiter = stalledLimiter();
+
+      limiter.processing = true;
+      limiter.executeRequest(async () => 'queued');
+      limiter.lastProgressAt = Date.now();
+
+      expect(limiter.isStalled()).toBe(false);
+    });
+
+    it('should serve a request that was stranded by a stuck drain loop', async () => {
+      const limiter = stalledLimiter();
+
+      limiter.processing = true; // nothing will ever drain this
+      const stranded = limiter.executeRequest(async () => 'served after recovery');
+      limiter.lastProgressAt = Date.now() - 10000;
+
+      limiter.recoverFromStall();
+
+      await expect(stranded).resolves.toBe('served after recovery');
+    });
+
+    it('should log the stall loudly rather than recovering silently', async () => {
+      const limiter = stalledLimiter();
+
+      limiter.processing = true;
+      limiter.executeRequest(async () => 'x');
+      limiter.lastProgressAt = Date.now() - 10000;
+
+      limiter.recoverFromStall();
+
+      expect(logger.strava.error).toHaveBeenCalledWith(
+        expect.stringMatching(/stall/i),
+        expect.objectContaining({ queueLength: expect.any(Number) })
+      );
+    });
+
+    it('should stop a superseded drain loop instead of running two at once', async () => {
+      const limiter = stalledLimiter();
+      const calls = [];
+
+      limiter.processing = true;
+      limiter.executeRequest(async () => { calls.push('a'); return 'a'; });
+      limiter.lastProgressAt = Date.now() - 10000;
+
+      const stuckGeneration = limiter.generation;
+
+      // Recovery starts a fresh loop; if the original ever woke up, both would
+      // drain the same queue and dispatch twice.
+      limiter.recoverFromStall();
+      await new Promise(resolve => setTimeout(resolve, 150));
+
+      expect(limiter.generation).toBeGreaterThan(stuckGeneration);
+      await limiter._drain(stuckGeneration);
+
+      expect(calls).toEqual(['a']);
+    });
+
+    it('should recover automatically once the supervisor tick runs', async () => {
+      const limiter = new RateLimiter(null, logger.strava, {
+        watchdogMs: 50,
+        stallAfterMs: 40,
+        stallCheckIntervalMs: 20
+      });
+
+      limiter.processing = true;
+      const stranded = limiter.executeRequest(async () => 'auto-recovered');
+      limiter.lastProgressAt = Date.now() - 10000;
+
+      await expect(stranded).resolves.toBe('auto-recovered');
+
+      limiter.shutdown();
+    });
+
+    it('should expose queue health in getStats for /health to surface', async () => {
+      const limiter = stalledLimiter();
+
+      limiter.processing = true;
+      limiter.executeRequest(async () => 'x');
+      limiter.lastProgressAt = Date.now() - 10000;
+
+      expect(limiter.getStats()).toMatchObject({
+        queueLength: 1,
+        stalled: true,
+        msSinceProgress: expect.any(Number)
+      });
+    });
+
+    it('should stop the supervisor timer on shutdown', () => {
+      const limiter = new RateLimiter(null, logger.strava, { stallCheckIntervalMs: 20 });
+      limiter.executeRequest(async () => 'x');
+
+      limiter.shutdown();
+
+      expect(limiter.stallTimer).toBeNull();
     });
   });
 

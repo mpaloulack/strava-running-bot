@@ -36,12 +36,33 @@ class WebhookServer {
   setupRoutes() {
     // Health check endpoint
     this.app.get('/health', (req, res) => {
-      res.json({ 
-        status: 'healthy', 
+      const body = {
+        status: 'healthy',
         timestamp: new Date().toISOString(),
         service: config.app.name,
         version: config.app.version
-      });
+      };
+
+      // A stalled Strava queue stops every activity from posting while the
+      // process itself stays perfectly responsive - exactly the shape of the
+      // 2026-08-24 incident, which stayed invisible because /health only ever
+      // said "healthy". Reported here so a monitor can catch it. Reading the
+      // stats must never be able to fail the health check itself.
+      try {
+        const queue = this.activityProcessor?.stravaAPI?.getRateLimiterStats?.();
+        if (queue) {
+          body.stravaQueue = queue;
+          if (queue.stalled) {
+            body.status = 'degraded';
+          }
+        }
+      } catch (error) {
+        logger.server.warn('Could not read rate limiter stats for /health', {
+          error: error.message
+        });
+      }
+
+      res.json(body);
     });
 
     // Strava webhook verification endpoint

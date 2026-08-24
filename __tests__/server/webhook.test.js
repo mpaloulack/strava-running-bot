@@ -29,6 +29,7 @@ jest.mock('../../src/utils/Logger', () => ({
   },
   server: {
     info: jest.fn(),
+    warn: jest.fn(),
     error: jest.fn()
   },
   strava: {
@@ -102,7 +103,12 @@ describe('WebhookServer', () => {
       stravaAPI: {
         getAuthorizationUrl: jest.fn().mockReturnValue('https://strava.com/oauth/authorize?test=1'),
         exchangeCodeForToken: jest.fn().mockResolvedValue(mockTokenData),
-        getAthlete: jest.fn().mockResolvedValue(mockAthlete)
+        getAthlete: jest.fn().mockResolvedValue(mockAthlete),
+        getRateLimiterStats: jest.fn().mockReturnValue({
+          queueLength: 0,
+          stalled: false,
+          msSinceProgress: 12
+        })
       },
       memberManager: {
         registerMember: jest.fn().mockResolvedValue(mockMember),
@@ -180,7 +186,12 @@ describe('WebhookServer', () => {
         status: 'healthy',
         timestamp: expect.any(String),
         service: config.app.name,
-        version: config.app.version
+        version: config.app.version,
+        stravaQueue: {
+          queueLength: 0,
+          stalled: false,
+          msSinceProgress: 12
+        }
       });
     });
   });
@@ -870,4 +881,44 @@ describe('WebhookServer', () => {
       );
     });
   });
+
+  // The 2026-08-24 stall was invisible from outside the container: the queue
+  // stopped being served while /health still answered "healthy". Surfacing the
+  // queue here means an external monitor can see it.
+  describe('GET /health queue visibility', () => {
+    it('should report Strava queue health', async () => {
+      const response = await request(webhookServer.app).get('/health');
+
+      expect(response.status).toBe(200);
+      expect(response.body.stravaQueue).toMatchObject({
+        queueLength: expect.any(Number),
+        stalled: expect.any(Boolean)
+      });
+    });
+
+    it('should degrade the overall status when the queue is stalled', async () => {
+      mockActivityProcessor.stravaAPI.getRateLimiterStats.mockReturnValue({
+        queueLength: 4,
+        stalled: true,
+        msSinceProgress: 900000
+      });
+
+      const response = await request(webhookServer.app).get('/health');
+
+      expect(response.body.status).toBe('degraded');
+    });
+
+    it('should stay healthy when the rate limiter cannot be read', async () => {
+      mockActivityProcessor.stravaAPI.getRateLimiterStats.mockImplementation(() => {
+        throw new Error('not ready');
+      });
+
+      const response = await request(webhookServer.app).get('/health');
+
+      expect(response.status).toBe(200);
+      expect(response.body.status).toBe('healthy');
+      expect(response.body.stravaQueue).toBeUndefined();
+    });
+  });
+
 });
