@@ -5,6 +5,14 @@ const MAX_RETRIES = 3;
 const RETRY_BASE_MS = 1000;
 const TRANSIENT_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE', 'ECONNABORTED']);
 const WATCHDOG_CODE = 'ERR_QUEUE_WATCHDOG';
+// How often the supervisor checks whether the drain loop is still making
+// progress. Cheap enough to run continuously; only ever touches counters.
+const STALL_CHECK_INTERVAL_MS = 15 * 1000;
+// A single upstream call slower than this is worth surfacing: it is the shape
+// of trouble building, well before the queue actually stops moving.
+const SLOW_REQUEST_MS = 5 * 1000;
+// How long the oldest queued entry may wait before the backlog is reported.
+const BACKLOG_WARN_MS = 60 * 1000;
 const NON_RETRIABLE_STATUSES = new Set([400, 401, 403, 404]);
 
 function isTransientError(error) {
@@ -50,6 +58,137 @@ class RateLimiter {
     // Queue for delayed requests when rate limited
     this.requestQueue = [];
     this.processing = false;
+
+    // Stall supervision. The watchdog above bounds a request that was actually
+    // dispatched; this bounds the drain loop itself. A loop that stops
+    // advancing while work is queued is otherwise invisible - `processing`
+    // stays true, nothing logs, and every later request waits forever.
+    // The threshold has to clear the worst case a healthy request can take:
+    // MAX_RETRIES + 1 attempts at the watchdog ceiling, plus the retry backoff.
+    this.stallAfterMs = options.stallAfterMs
+      ?? (this.watchdogMs * (MAX_RETRIES + 1) + 60 * 1000);
+    this.stallCheckIntervalMs = options.stallCheckIntervalMs ?? STALL_CHECK_INTERVAL_MS;
+    this.slowRequestMs = options.slowRequestMs ?? SLOW_REQUEST_MS;
+    this.backlogWarnMs = options.backlogWarnMs ?? BACKLOG_WARN_MS;
+    this.lastProgressAt = Date.now();
+    this.stallTimer = null;
+
+    // Only the newest drain loop may serve the queue. If a stalled loop ever
+    // wakes up after recovery replaced it, its generation is stale and it
+    // exits rather than dispatching alongside its replacement.
+    this.generation = 0;
+  }
+
+  /**
+   * Mark forward progress. Anything that proves the loop is alive counts:
+   * queueing work, dispatching it, or settling it.
+   */
+  noteProgress() {
+    this.lastProgressAt = Date.now();
+  }
+
+  /**
+   * Work is queued, a loop claims to be running, and nothing has advanced for
+   * longer than a healthy request could possibly take.
+   */
+  isStalled() {
+    return this.processing
+      && this.requestQueue.length > 0
+      && (Date.now() - this.lastProgressAt) > this.stallAfterMs;
+  }
+
+  /**
+   * Break a stuck drain loop and start a fresh one.
+   *
+   * The stuck loop is not cancellable - it is parked on a promise that will
+   * never settle - so instead its generation is retired, releasing the
+   * `processing` flag and letting a new loop take over. Should the old one
+   * ever resume, its generation check stops it immediately.
+   */
+  recoverFromStall() {
+    const stalledForMs = Date.now() - this.lastProgressAt;
+
+    this.log.error('Request queue stalled - abandoning the stuck drain loop', {
+      stalledForMs,
+      stallAfterMs: this.stallAfterMs,
+      queueLength: this.requestQueue.length,
+      oldestQueuedMs: this.oldestQueuedMs(),
+      shortTermUsed: this.requests.short.length,
+      dailyUsed: this.requests.daily.length,
+      contexts: this.requestQueue.slice(0, 5).map(entry => entry.context)
+    });
+
+    // Releasing the flag is enough to hand over: processQueue claims the next
+    // generation itself, which is what retires the stuck loop.
+    this.processing = false;
+    this.noteProgress();
+    this.processQueue();
+  }
+
+  /**
+   * Surface a queue that is backing up, before it becomes an outage.
+   *
+   * Waiting on the rate limit is normal operation and is reported as info -
+   * warning about it would cry wolf often enough to bury a real backlog.
+   */
+  reportQueueHealth() {
+    if (this.requestQueue.length === 0) {
+      return;
+    }
+
+    const oldestQueuedMs = this.oldestQueuedMs();
+    if (oldestQueuedMs < this.backlogWarnMs) {
+      return;
+    }
+
+    const rateLimited = !this.canMakeRequest();
+    const detail = {
+      queueLength: this.requestQueue.length,
+      oldestQueuedMs,
+      processing: this.processing,
+      msSinceProgress: Date.now() - this.lastProgressAt,
+      shortTermUsed: this.requests.short.length,
+      dailyUsed: this.requests.daily.length,
+      rateLimited,
+      contexts: this.requestQueue.slice(0, 5).map(entry => entry.context)
+    };
+
+    if (rateLimited) {
+      this.log.info('Request queue waiting on rate limit', detail);
+    } else {
+      this.log.warn('Request queue backing up', detail);
+    }
+  }
+
+  oldestQueuedMs() {
+    const oldest = this.requestQueue[0];
+    return oldest ? Date.now() - oldest.queuedAt : 0;
+  }
+
+  startStallSupervisor() {
+    if (this.stallTimer || !this.stallAfterMs) {
+      return;
+    }
+
+    this.stallTimer = setInterval(() => {
+      this.reportQueueHealth();
+
+      if (this.isStalled()) {
+        this.recoverFromStall();
+      }
+    }, this.stallCheckIntervalMs);
+
+    // Supervision must never be the reason the process stays alive.
+    if (typeof this.stallTimer.unref === 'function') {
+      this.stallTimer.unref();
+    }
+  }
+
+  shutdown() {
+    if (this.stallTimer) {
+      clearInterval(this.stallTimer);
+      this.stallTimer = null;
+    }
   }
 
   /**
@@ -174,9 +313,17 @@ class RateLimiter {
         requestFunction,
         context,
         resolve,
-        reject
+        reject,
+        queuedAt: Date.now()
       });
-      
+
+      this.log.debug('Request queued', {
+        context,
+        queueLength: this.requestQueue.length
+      });
+
+      this.noteProgress();
+      this.startStallSupervisor();
       this.processQueue();
     });
   }
@@ -191,8 +338,17 @@ class RateLimiter {
 
     this.processing = true;
 
+    return this._drain(++this.generation);
+  }
+
+  /**
+   * Serve the queue until it is empty. Scoped to the generation that owned the
+   * queue when it started: if a stall recovery has since retired that
+   * generation, this loop stops rather than competing with its replacement.
+   */
+  async _drain(generation) {
     try {
-      while (this.requestQueue.length > 0) {
+      while (this.requestQueue.length > 0 && generation === this.generation) {
         if (!this.canMakeRequest()) {
           const waitTime = this.getWaitTime();
           
@@ -209,13 +365,37 @@ class RateLimiter {
           continue;
         }
 
-        const { requestFunction, context, resolve, reject } = this.requestQueue.shift();
+        const { requestFunction, context, resolve, reject, queuedAt } = this.requestQueue.shift();
+        this.noteProgress();
+
+        this.log.debug('Dispatching request', {
+          context,
+          waitedMs: Date.now() - queuedAt,
+          queueLength: this.requestQueue.length
+        });
 
         let attempt = 0;
         while (attempt <= MAX_RETRIES) {
           try {
             this.recordRequest();
+            const startedAt = Date.now();
             const result = await this._runWithWatchdog(requestFunction);
+            const durationMs = Date.now() - startedAt;
+            this.noteProgress();
+
+            this.log.debug('Request settled', { context, durationMs });
+
+            // Early warning: the queue is serialized, so one slow call delays
+            // everything behind it. Seeing these climb is the signal that
+            // something upstream is degrading.
+            if (durationMs >= this.slowRequestMs) {
+              this.log.warn('Slow upstream request', {
+                durationMs,
+                context,
+                queueLength: this.requestQueue.length
+              });
+            }
+
             resolve(result);
             break;
           } catch (error) {
@@ -265,11 +445,17 @@ class RateLimiter {
           }
         }
 
+        this.noteProgress();
+
         // Small delay between requests to avoid overwhelming the API
         await new Promise(resolve => setTimeout(resolve, 100));
       }
     } finally {
-      this.processing = false;
+      // A retired loop must not clear the flag out from under the loop that
+      // replaced it.
+      if (generation === this.generation) {
+        this.processing = false;
+      }
     }
   }
 
@@ -292,7 +478,13 @@ class RateLimiter {
       },
       queueLength: this.requestQueue.length,
       canMakeRequest: this.canMakeRequest(),
-      waitTime: this.getWaitTime()
+      waitTime: this.getWaitTime(),
+      // Queue health, so a stall is visible from /health and /botstatus rather
+      // than only from reading container logs over SSH.
+      processing: this.processing,
+      msSinceProgress: Date.now() - this.lastProgressAt,
+      oldestQueuedMs: this.oldestQueuedMs(),
+      stalled: this.isStalled()
     };
   }
 
@@ -304,7 +496,12 @@ class RateLimiter {
     this.requests.daily = [];
     this.requestQueue = [];
     this.processing = false;
-    
+
+    // Clearing `processing` while a loop is still live would let a second
+    // drainer start alongside it, so retire the current generation too.
+    this.generation++;
+    this.noteProgress();
+
     this.log.info('Rate limiter reset');
   }
 }
