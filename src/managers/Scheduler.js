@@ -204,11 +204,38 @@ class Scheduler {
         validateStatus: (status) => status >= 200 && status < 300
       });
 
+      // A 200 is not the same as "working". The Strava request queue can stall
+      // while the process itself stays perfectly responsive - that is exactly
+      // how a two-hour outage went unannounced on 2026-08-24, because only the
+      // status code was ever checked. The body is what carries the truth.
+      const body = response.data || {};
+      const queue = body.stravaQueue;
+      const degraded = body.status === 'degraded' || queue?.stalled === true;
+
+      if (degraded) {
+        this.healthState = 'degraded';
+
+        const degradedDetail = {
+          url,
+          queueLength: queue?.queueLength,
+          msSinceProgress: queue?.msSinceProgress
+        };
+
+        if (previousState !== 'degraded') {
+          logger.scheduler.warn('Health self-check reports a degraded bot', degradedDetail);
+          await this.notifyHealthDiscord('degraded', degradedDetail);
+        } else {
+          logger.scheduler.warn('Health self-check still degraded', degradedDetail);
+        }
+
+        return;
+      }
+
       this.healthState = 'healthy';
 
-      if (previousState === 'unhealthy') {
+      if (previousState === 'unhealthy' || previousState === 'degraded') {
         logger.scheduler.info('Health self-check recovered', { url, status: response.status });
-        await this.notifyHealthDiscord('recovered', { url });
+        await this.notifyHealthDiscord('recovered', { url, from: previousState });
       } else {
         logger.scheduler.debug('Health self-check OK', { url, status: response.status });
       }
@@ -243,11 +270,49 @@ class Scheduler {
       const channel = await this.activityProcessor.discordBot.getChannel();
       if (!channel) return;
 
+      if (transition === 'degraded') {
+        // Aimed at the team, not at whoever will debug it: say what they will
+        // notice (activities not arriving), that it is known, and that it
+        // recovers on its own - then the operator detail underneath.
+        const minutesStalled = details.msSinceProgress
+          ? Math.round(details.msSinceProgress / 60000)
+          : null;
+
+        const embed = new EmbedBuilder()
+          .setTitle('⚠️ Activities are delayed')
+          .setColor('#E67E22')
+          .setDescription(
+            'Strava activities are not being posted right now — the bot\'s request queue has stalled.\n\n' +
+            'Nothing is lost: queued activities post once it recovers, which normally happens automatically ' +
+            'within a few minutes. No need to re-upload anything.'
+          )
+          .addFields([
+            {
+              name: 'Activities waiting',
+              value: `${details.queueLength ?? 'unknown'}`,
+              inline: true
+            },
+            {
+              name: 'Stalled for',
+              value: minutesStalled !== null ? `~${minutesStalled} min` : 'unknown',
+              inline: true
+            }
+          ])
+          .setTimestamp();
+
+        await channel.send({ embeds: [embed] });
+        return;
+      }
+
       const embed = transition === 'recovered'
         ? new EmbedBuilder()
           .setTitle('✅ Bot reachable again')
           .setColor('#2ECC71')
-          .setDescription(`Health check at \`${details.url}\` is back to 200 OK.`)
+          .setDescription(
+            details.from === 'degraded'
+              ? 'Activities are posting again — anything queued during the delay has been processed.'
+              : `Health check at \`${details.url}\` is back to 200 OK.`
+          )
           .setTimestamp()
         : new EmbedBuilder()
           .setTitle('🚨 Bot not reachable')

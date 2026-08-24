@@ -863,6 +863,89 @@ describe('Scheduler', () => {
       expect(mockChannel.send).not.toHaveBeenCalled();
     });
 
+
+    // The 2026-08-24 stall returned HTTP 200 the whole time - only the payload
+    // said anything was wrong. Checking the status code alone meant the alert
+    // that exists never fired during a two-hour outage.
+    describe('degraded detection', () => {
+      const degradedBody = {
+        status: 'degraded',
+        stravaQueue: { queueLength: 4, stalled: true, msSinceProgress: 900000 }
+      };
+
+      test('treats a 200 with a degraded body as degraded, not healthy', async () => {
+        await scheduler.initialize(healthConfig);
+        axios.get.mockResolvedValueOnce({ status: 200, data: degradedBody });
+
+        await scheduler.runHealthSelfCheck();
+
+        expect(scheduler.healthState).toBe('degraded');
+      });
+
+      test('alerts Discord the first time it goes degraded', async () => {
+        await scheduler.initialize(healthConfig);
+        axios.get.mockResolvedValueOnce({ status: 200, data: degradedBody });
+
+        await scheduler.runHealthSelfCheck();
+
+        expect(mockChannel.send).toHaveBeenCalledTimes(1);
+      });
+
+      test('does not repeat the alert while it stays degraded', async () => {
+        await scheduler.initialize(healthConfig);
+        axios.get.mockResolvedValue({ status: 200, data: degradedBody });
+
+        await scheduler.runHealthSelfCheck();
+        await scheduler.runHealthSelfCheck();
+
+        expect(mockChannel.send).toHaveBeenCalledTimes(1);
+      });
+
+      test('announces recovery when it returns to healthy', async () => {
+        await scheduler.initialize(healthConfig);
+        axios.get.mockResolvedValueOnce({ status: 200, data: degradedBody });
+        await scheduler.runHealthSelfCheck();
+        mockChannel.send.mockClear();
+
+        axios.get.mockResolvedValueOnce({ status: 200, data: { status: 'healthy' } });
+        await scheduler.runHealthSelfCheck();
+
+        expect(scheduler.healthState).toBe('healthy');
+        expect(mockChannel.send).toHaveBeenCalledTimes(1);
+      });
+
+      test('stays healthy for a 200 with no queue information', async () => {
+        await scheduler.initialize(healthConfig);
+        axios.get.mockResolvedValueOnce({ status: 200, data: { status: 'healthy' } });
+
+        await scheduler.runHealthSelfCheck();
+
+        expect(scheduler.healthState).toBe('healthy');
+        expect(mockChannel.send).not.toHaveBeenCalled();
+      });
+
+      test('tells the team what is actually wrong rather than just "degraded"', async () => {
+        await scheduler.initialize(healthConfig);
+        axios.get.mockResolvedValueOnce({ status: 200, data: degradedBody });
+
+        await scheduler.runHealthSelfCheck();
+
+        // The embed itself is a shared mock, so assert on what was built.
+        const built = [
+          ...mockEmbedBuilder.setTitle.mock.calls.flat(),
+          ...mockEmbedBuilder.setDescription.mock.calls.flat()
+        ].join(' ');
+
+        expect(built).toMatch(/activit/i);        // says activities are affected
+        expect(built).toMatch(/re-upload|nothing is lost/i); // tells them not to act
+        expect(mockEmbedBuilder.addFields).toHaveBeenCalledWith(
+          expect.arrayContaining([
+            expect.objectContaining({ value: '4' }) // the queue depth
+          ])
+        );
+      });
+    });
+
     test('cron callback invokes runHealthSelfCheck on tick', async () => {
       await scheduler.initialize(healthConfig);
       // Health-check is the only cron job registered with this config

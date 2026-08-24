@@ -274,6 +274,17 @@ docker logs -f stravarunningbot 2>&1 | grep -E "Request queued|Dispatching|Reque
 
 Set `LOG_LEVEL` back to `INFO` afterwards — DEBUG is noisy.
 
+#### Alerting
+
+You should not have to notice this yourself. The health self-check (every 5
+minutes by default, `HEALTH_CHECK_SCHEDULE`) reads the `/health` payload and
+posts to the Discord channel when the bot goes degraded, then again when it
+recovers. Set `HEALTH_CHECK_DISCORD_NOTIFY=false` to silence it.
+
+Note the check inspects the **body**, not just the status code: a stalled queue
+still answers `200`, which is why a status-code-only check reported everything
+as healthy through a two-hour outage.
+
 #### Resolution
 
 The supervisor recovers on its own within a few minutes and logs what it found.
