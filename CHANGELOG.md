@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/mpaloulack/strava-running-bot/compare/v1.0.0...v1.1.0) (2026-08-24)
+
+
+### Features
+
+* **health:** recover stalled request queues and alert when they happen ([#73](https://github.com/mpaloulack/strava-running-bot/issues/73)) ([e470f93](https://github.com/mpaloulack/strava-running-bot/commit/e470f930abbaa9d42a05e25f1cb58b808c0e2d15))
+
 ## [1.0.0](https://github.com/mpaloulack/strava-running-bot/compare/v1.0.0...v1.0.0) (2026-08-20)
 
 
