@@ -13,6 +13,14 @@ describe('RateLimiter', () => {
     rateLimiter = new RateLimiter();
   });
 
+  afterEach(() => {
+    // Several tests freeze Date.now with spyOn. clearAllMocks only clears
+    // recorded calls, not spy implementations, so without this the frozen
+    // clock leaks into every later test - which silently breaks anything that
+    // measures elapsed time.
+    jest.restoreAllMocks();
+  });
+
   describe('initialization', () => {
     it('should initialize with correct limits', () => {
       expect(rateLimiter.limits).toEqual({
@@ -445,6 +453,129 @@ describe('RateLimiter', () => {
       limiter.shutdown();
 
       expect(limiter.stallTimer).toBeNull();
+    });
+  });
+
+
+  // LOG_LEVEL defaults to INFO in production, so anything that only shows at
+  // DEBUG is useless during an incident. These warn early, while a problem is
+  // still building, rather than after the queue has already stopped.
+  describe('diagnostic logging', () => {
+    it('should warn when a request takes longer than the slow threshold', async () => {
+      const limiter = new RateLimiter(null, logger.strava, {
+        watchdogMs: 2000,
+        slowRequestMs: 30
+      });
+
+      await limiter.executeRequest(
+        () => new Promise(resolve => setTimeout(() => resolve('slow'), 80)),
+        { operation: 'getActivity', activityId: 42 }
+      );
+
+      expect(logger.strava.warn).toHaveBeenCalledWith(
+        expect.stringMatching(/slow/i),
+        expect.objectContaining({
+          durationMs: expect.any(Number),
+          context: { operation: 'getActivity', activityId: 42 }
+        })
+      );
+    });
+
+    it('should not warn about a request that finishes promptly', async () => {
+      const limiter = new RateLimiter(null, logger.strava, { slowRequestMs: 5000 });
+
+      await limiter.executeRequest(async () => 'fast', { operation: 'getActivity' });
+
+      expect(logger.strava.warn).not.toHaveBeenCalledWith(
+        expect.stringMatching(/slow/i),
+        expect.anything()
+      );
+    });
+
+    it('should warn when the queue is backing up', () => {
+      const limiter = new RateLimiter(null, logger.strava, { backlogWarnMs: 10 });
+
+      limiter.processing = true;
+      limiter.executeRequest(async () => 'x', { operation: 'getActivity' });
+      limiter.requestQueue[0].queuedAt = Date.now() - 5000;
+
+      limiter.reportQueueHealth();
+
+      expect(logger.strava.warn).toHaveBeenCalledWith(
+        expect.stringMatching(/backing up/i),
+        expect.objectContaining({
+          queueLength: 1,
+          oldestQueuedMs: expect.any(Number),
+          rateLimited: false
+        })
+      );
+    });
+
+    // Backpressure from the rate limit is normal operation, not a fault - it
+    // must not cry wolf, or a real backlog gets lost in the noise.
+    it('should report a rate-limited backlog as info, not a warning', () => {
+      const limiter = new RateLimiter(null, logger.strava, { backlogWarnMs: 10 });
+
+      limiter.requests.short = Array(limiter.limits.short.requests).fill(Date.now());
+      limiter.processing = true;
+      limiter.executeRequest(async () => 'x', { operation: 'getActivity' });
+      limiter.requestQueue[0].queuedAt = Date.now() - 5000;
+
+      limiter.reportQueueHealth();
+
+      expect(logger.strava.info).toHaveBeenCalledWith(
+        expect.stringMatching(/rate limit/i),
+        expect.objectContaining({ rateLimited: true })
+      );
+      expect(logger.strava.warn).not.toHaveBeenCalledWith(
+        expect.stringMatching(/backing up/i),
+        expect.anything()
+      );
+    });
+
+    it('should stay quiet while the queue is healthy', () => {
+      const limiter = new RateLimiter(null, logger.strava, { backlogWarnMs: 60000 });
+
+      limiter.processing = true;
+      limiter.executeRequest(async () => 'x');
+
+      limiter.reportQueueHealth();
+
+      expect(logger.strava.warn).not.toHaveBeenCalled();
+    });
+
+    it('should include the rate-limit windows in the stall report', () => {
+      const limiter = new RateLimiter(null, logger.strava, { watchdogMs: 50, stallAfterMs: 40 });
+
+      limiter.processing = true;
+      limiter.executeRequest(async () => 'x', { operation: 'getActivity' });
+      limiter.lastProgressAt = Date.now() - 10000;
+
+      limiter.recoverFromStall();
+
+      expect(logger.strava.error).toHaveBeenCalledWith(
+        expect.stringMatching(/stall/i),
+        expect.objectContaining({
+          shortTermUsed: expect.any(Number),
+          dailyUsed: expect.any(Number),
+          contexts: [{ operation: 'getActivity' }]
+        })
+      );
+    });
+
+    it('should trace the request lifecycle at debug level', async () => {
+      const limiter = new RateLimiter(null, logger.strava, { watchdogMs: 2000 });
+
+      await limiter.executeRequest(async () => 'ok', { operation: 'getActivity' });
+
+      const debugMessages = logger.strava.debug.mock.calls.map(([message]) => message);
+      expect(debugMessages).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/queued/i),
+          expect.stringMatching(/dispatch/i),
+          expect.stringMatching(/settled/i)
+        ])
+      );
     });
   });
 

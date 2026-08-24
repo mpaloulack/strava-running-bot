@@ -8,6 +8,11 @@ const WATCHDOG_CODE = 'ERR_QUEUE_WATCHDOG';
 // How often the supervisor checks whether the drain loop is still making
 // progress. Cheap enough to run continuously; only ever touches counters.
 const STALL_CHECK_INTERVAL_MS = 15 * 1000;
+// A single upstream call slower than this is worth surfacing: it is the shape
+// of trouble building, well before the queue actually stops moving.
+const SLOW_REQUEST_MS = 5 * 1000;
+// How long the oldest queued entry may wait before the backlog is reported.
+const BACKLOG_WARN_MS = 60 * 1000;
 const NON_RETRIABLE_STATUSES = new Set([400, 401, 403, 404]);
 
 function isTransientError(error) {
@@ -63,6 +68,8 @@ class RateLimiter {
     this.stallAfterMs = options.stallAfterMs
       ?? (this.watchdogMs * (MAX_RETRIES + 1) + 60 * 1000);
     this.stallCheckIntervalMs = options.stallCheckIntervalMs ?? STALL_CHECK_INTERVAL_MS;
+    this.slowRequestMs = options.slowRequestMs ?? SLOW_REQUEST_MS;
+    this.backlogWarnMs = options.backlogWarnMs ?? BACKLOG_WARN_MS;
     this.lastProgressAt = Date.now();
     this.stallTimer = null;
 
@@ -106,6 +113,8 @@ class RateLimiter {
       stallAfterMs: this.stallAfterMs,
       queueLength: this.requestQueue.length,
       oldestQueuedMs: this.oldestQueuedMs(),
+      shortTermUsed: this.requests.short.length,
+      dailyUsed: this.requests.daily.length,
       contexts: this.requestQueue.slice(0, 5).map(entry => entry.context)
     });
 
@@ -114,6 +123,41 @@ class RateLimiter {
     this.processing = false;
     this.noteProgress();
     this.processQueue();
+  }
+
+  /**
+   * Surface a queue that is backing up, before it becomes an outage.
+   *
+   * Waiting on the rate limit is normal operation and is reported as info -
+   * warning about it would cry wolf often enough to bury a real backlog.
+   */
+  reportQueueHealth() {
+    if (this.requestQueue.length === 0) {
+      return;
+    }
+
+    const oldestQueuedMs = this.oldestQueuedMs();
+    if (oldestQueuedMs < this.backlogWarnMs) {
+      return;
+    }
+
+    const rateLimited = !this.canMakeRequest();
+    const detail = {
+      queueLength: this.requestQueue.length,
+      oldestQueuedMs,
+      processing: this.processing,
+      msSinceProgress: Date.now() - this.lastProgressAt,
+      shortTermUsed: this.requests.short.length,
+      dailyUsed: this.requests.daily.length,
+      rateLimited,
+      contexts: this.requestQueue.slice(0, 5).map(entry => entry.context)
+    };
+
+    if (rateLimited) {
+      this.log.info('Request queue waiting on rate limit', detail);
+    } else {
+      this.log.warn('Request queue backing up', detail);
+    }
   }
 
   oldestQueuedMs() {
@@ -127,6 +171,8 @@ class RateLimiter {
     }
 
     this.stallTimer = setInterval(() => {
+      this.reportQueueHealth();
+
       if (this.isStalled()) {
         this.recoverFromStall();
       }
@@ -271,6 +317,11 @@ class RateLimiter {
         queuedAt: Date.now()
       });
 
+      this.log.debug('Request queued', {
+        context,
+        queueLength: this.requestQueue.length
+      });
+
       this.noteProgress();
       this.startStallSupervisor();
       this.processQueue();
@@ -314,15 +365,37 @@ class RateLimiter {
           continue;
         }
 
-        const { requestFunction, context, resolve, reject } = this.requestQueue.shift();
+        const { requestFunction, context, resolve, reject, queuedAt } = this.requestQueue.shift();
         this.noteProgress();
+
+        this.log.debug('Dispatching request', {
+          context,
+          waitedMs: Date.now() - queuedAt,
+          queueLength: this.requestQueue.length
+        });
 
         let attempt = 0;
         while (attempt <= MAX_RETRIES) {
           try {
             this.recordRequest();
+            const startedAt = Date.now();
             const result = await this._runWithWatchdog(requestFunction);
+            const durationMs = Date.now() - startedAt;
             this.noteProgress();
+
+            this.log.debug('Request settled', { context, durationMs });
+
+            // Early warning: the queue is serialized, so one slow call delays
+            // everything behind it. Seeing these climb is the signal that
+            // something upstream is degrading.
+            if (durationMs >= this.slowRequestMs) {
+              this.log.warn('Slow upstream request', {
+                durationMs,
+                context,
+                queueLength: this.requestQueue.length
+              });
+            }
+
             resolve(result);
             break;
           } catch (error) {

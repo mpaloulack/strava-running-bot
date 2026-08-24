@@ -230,6 +230,62 @@ curl -X POST http://localhost:3000/members/discord/USER_ID/delete
 
 ## Activity Posting Issues
 
+### Activities Stop Posting Entirely (Stalled Request Queue)
+
+#### Symptoms
+
+- No Strava activity posts for hours, for **every** member at once
+- The bot is otherwise fine: `/health` responds, Discord commands answer,
+  intervals.icu members still post (they use a separate queue)
+- Individual activities log `PROCESSING - STARTED` and then nothing — no
+  `COMPLETED`, no `FILTERED`, no `FAILED`
+
+#### Diagnostic Steps
+
+```bash
+# 1. Is the queue stalled right now? This is the fastest check.
+curl -s http://<host>:<port>/health | jq '{status, stravaQueue}'
+```
+
+`status: "degraded"` with `stravaQueue.stalled: true` confirms it. Also look at
+`queueLength` and `msSinceProgress`.
+
+```bash
+# 2. What did the supervisor see?
+docker logs stravarunningbot 2>&1 | grep -E "queue stalled|backing up|Slow upstream"
+```
+
+- `Request queue backing up` — work is waiting but the queue is still moving.
+  An early warning, not yet an outage.
+- `Request queue waiting on rate limit` — normal backpressure, not a fault.
+- `Slow upstream request` — one call is taking seconds. The queue is
+  serialized, so these delay everything behind them.
+- `Request queue stalled - abandoning the stuck drain loop` — the supervisor
+  found a loop that stopped advancing and replaced it. The log names the
+  waiting contexts, the queue depth and the age of the oldest entry.
+
+```bash
+# 3. Full request lifecycle (enqueue -> dispatch -> settle).
+# Only emitted at DEBUG, which is off by default.
+docker compose stop strava-running-bot
+LOG_LEVEL=DEBUG docker compose up -d strava-running-bot
+docker logs -f stravarunningbot 2>&1 | grep -E "Request queued|Dispatching|Request settled"
+```
+
+Set `LOG_LEVEL` back to `INFO` afterwards — DEBUG is noisy.
+
+#### Resolution
+
+The supervisor recovers on its own within a few minutes and logs what it found.
+If activities are still not posting after a stall was reported, restart:
+
+```bash
+docker restart stravarunningbot
+```
+
+Restarting preserves the container logs, so capture them **before** recreating
+the container if the cause is still being investigated.
+
 ### Activities Not Appearing in Discord
 
 #### Symptoms
