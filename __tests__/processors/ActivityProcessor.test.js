@@ -500,9 +500,85 @@ describe('ActivityProcessor', () => {
 
       await activityProcessor.updateQueuedActivity(98765, 12345);
 
-      expect(logger.activity.debug).toHaveBeenCalledWith('Activity already processed, ignoring update', {
+      expect(logger.activity.debug).toHaveBeenCalledWith('Activity already posted, ignoring update', {
         activityId: 98765,
         athleteId: 12345
+      });
+    });
+
+    // Reported 2026-08-26: an activity uploaded privately and then switched to
+    // public never posted. The filter marked it processed, so the update that
+    // made it public was dropped - permanently, and silently at debug level.
+    describe('activity made public after being filtered', () => {
+      it('should re-queue an activity that was filtered and then updated', async () => {
+        mockActivityQueue.updateQueuedActivity.mockReturnValue(false);
+        jest.spyOn(activityProcessor, 'queueActivity').mockResolvedValue();
+        activityProcessor.markFiltered('12345-98765');
+
+        await activityProcessor.updateQueuedActivity(98765, 12345, {
+          updates: { private: 'false', visibility: 'everyone' }
+        });
+
+        expect(activityProcessor.queueActivity).toHaveBeenCalledWith(98765, 12345, {
+          updates: { private: 'false', visibility: 'everyone' }
+        });
+      });
+
+      it('should say why it is reconsidering the activity', async () => {
+        mockActivityQueue.updateQueuedActivity.mockReturnValue(false);
+        jest.spyOn(activityProcessor, 'queueActivity').mockResolvedValue();
+        activityProcessor.markFiltered('12345-98765');
+
+        await activityProcessor.updateQueuedActivity(98765, 12345);
+
+        expect(logger.activity.info).toHaveBeenCalledWith(
+          expect.stringMatching(/filtered/i),
+          expect.objectContaining({ activityId: 98765, athleteId: 12345 })
+        );
+      });
+
+      it('should clear the filtered mark so it cannot loop on repeat updates', async () => {
+        mockActivityQueue.updateQueuedActivity.mockReturnValue(false);
+        jest.spyOn(activityProcessor, 'queueActivity').mockResolvedValue();
+        activityProcessor.markFiltered('12345-98765');
+
+        await activityProcessor.updateQueuedActivity(98765, 12345);
+
+        expect(activityProcessor.filteredActivities.has('12345-98765')).toBe(false);
+        expect(activityProcessor.processedActivities.has('12345-98765')).toBe(false);
+      });
+
+      // A title edit on an activity that already posted must not repost it.
+      it('should still ignore updates for an activity that was actually posted', async () => {
+        mockActivityQueue.updateQueuedActivity.mockReturnValue(false);
+        jest.spyOn(activityProcessor, 'queueActivity').mockResolvedValue();
+        activityProcessor.processedActivities.add('12345-98765');
+
+        await activityProcessor.updateQueuedActivity(98765, 12345);
+
+        expect(activityProcessor.queueActivity).not.toHaveBeenCalled();
+      });
+
+      it('should record a filtered activity as filtered, not merely processed', async () => {
+        mockStravaAPI.shouldPostActivity.mockReturnValue(false);
+        mockMemberManager.getMemberByAthleteId.mockResolvedValue(mockMember);
+        mockMemberManager.getValidAccessToken.mockResolvedValue('token');
+        mockStravaAPI.getActivity.mockResolvedValue({ id: 98765, name: 'Private run' });
+
+        await activityProcessor.processNewActivity(98765, 12345);
+
+        expect(activityProcessor.filteredActivities.has('12345-98765')).toBe(true);
+      });
+
+      it('should forget filtered marks alongside processed ones during cleanup', () => {
+        for (let i = 0; i < 10001; i++) {
+          activityProcessor.markFiltered(`12345-${i}`);
+        }
+
+        activityProcessor.cleanupProcessedActivities();
+
+        expect(activityProcessor.filteredActivities.size)
+          .toBeLessThanOrEqual(activityProcessor.processedActivities.size);
       });
     });
   });
