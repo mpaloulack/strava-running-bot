@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/mpaloulack/strava-running-bot/compare/v1.1.0...v1.1.1) (2026-08-26)
+
+
+### Bug Fixes
+
+* **activity:** repost activities that are made public after being filtered ([#75](https://github.com/mpaloulack/strava-running-bot/issues/75)) ([faac58a](https://github.com/mpaloulack/strava-running-bot/commit/faac58afea765fa97f668a7269f08ad17adc0a08))
+
 ## [1.1.0](https://github.com/mpaloulack/strava-running-bot/compare/v1.0.0...v1.1.0) (2026-08-24)
 
 
