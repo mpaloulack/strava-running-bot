@@ -434,7 +434,8 @@ strava-running-bot/
 │   │       ├── 004_add_activities_table.sql
 │   │       ├── 005_add_provider_column.sql
 │   │       ├── 006_add_activities_provider_column.sql
-│   │       └── 007_align_child_fk_on_update.sql
+│   │       ├── 007_align_child_fk_on_update.sql
+│   │       └── 008_add_activities_posted_column.sql
 │   ├── discord/
 │   │   ├── bot.js                    # Discord client + command registration
 │   │   └── commands.js               # Slash command handlers

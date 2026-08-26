@@ -949,7 +949,11 @@ class DatabaseManager {
   }
 
   // === ACTIVITY MANAGEMENT ===
-  async upsertActivity(athleteId, activity, provider = 'strava') {
+  // `posted` records whether this activity was actually broadcast to Discord.
+  // Defaults to true so existing callers keep their meaning; the filtered paths
+  // pass false, which is what lets the intervals.icu poll reconsider an
+  // activity that only later became postable.
+  async upsertActivity(athleteId, activity, provider = 'strava', { posted = true } = {}) {
     await this.ensureInitialized();
 
     const record = {
@@ -973,6 +977,7 @@ class DatabaseManager {
       map_summary_polyline: activity.map?.summary_polyline || null,
       has_heartrate: activity.has_heartrate ? 1 : 0,
       pr_categories: activity.pr_categories ?? null,
+      posted: posted ? 1 : 0,
       updated_at: new Date().toISOString(),
     };
 

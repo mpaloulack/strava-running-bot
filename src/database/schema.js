@@ -123,6 +123,11 @@ const activities = sqliteTable('activities', {
   start_date_local: text('start_date_local'),
   timezone: text('timezone'),
   map_summary_polyline: text('map_summary_polyline'),
+  // Whether this activity was actually broadcast to Discord. A stored row only
+  // means "seen and handled"; a filtered one (private/hidden/old/short) can
+  // still become postable later, and the intervals.icu poll needs to tell the
+  // two apart across restarts.
+  posted: integer('posted').notNull().default(1),
   has_heartrate: integer('has_heartrate'),
   pr_categories: text('pr_categories'),
   created_at: text('created_at').default(sql`CURRENT_TIMESTAMP`),
