@@ -291,9 +291,14 @@ class Logger {
     
     if (status === 'FAILED') {
       this.activity.error(message, details);
-    } else if (status === 'SKIPPED' || status === 'FILTERED') {
+    } else if (status === 'SKIPPED') {
+      // Duplicates, non-members and cross-provider dedup are routine noise.
       this.activity.debug(message, details);
     } else {
+      // FILTERED included: an activity that was fetched and deliberately not
+      // posted is the answer to "why didn't my run appear?", and LOG_LEVEL is
+      // INFO in production, so logging it at DEBUG hides it exactly when it is
+      // being looked for.
       this.activity.info(message, details);
     }
   }

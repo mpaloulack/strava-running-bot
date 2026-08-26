@@ -21,6 +21,12 @@ class ActivityProcessor {
     this.discordBot = new DiscordBot(this); // Pass this instance to Discord bot
     this.activityQueue = new ActivityQueue(this); // Activity queue for delayed posting
     this.processedActivities = new Set(); // Prevent duplicate processing
+    // Activities that were fetched and deliberately not posted (private,
+    // hidden, too old, too short). They are "processed" for dedup purposes,
+    // but unlike a posted activity the decision can be reversed - making a
+    // private run public is the obvious case - so an update event must be
+    // allowed to reconsider them.
+    this.filteredActivities = new Set();
     
     // Initialize race management and scheduler
     this.raceManager = new RaceManager();
@@ -74,6 +80,14 @@ class ActivityProcessor {
       });
       throw error;
     }
+  }
+
+  // Record an activity as seen-and-not-posted. Kept in both sets: the
+  // processed set still suppresses duplicate create events, while the
+  // filtered set records that the outcome is reversible.
+  markFiltered(activityKey) {
+    this.processedActivities.add(activityKey);
+    this.filteredActivities.add(activityKey);
   }
 
   async processNewActivity(activityId, athleteId) {
@@ -162,10 +176,16 @@ class ActivityProcessor {
         return;
       }
 
+      // Decide before saving so the stored row records the outcome, not just
+      // that the activity was seen.
+      const shouldPost = this.stravaAPI.shouldPostActivity(activity);
+
       // Save activity to DB (non-blocking) — also independent of the post filter
       // so we have a complete cached record for /sync, /pb, and stats.
       try {
-        await this.memberManager.databaseManager.upsertActivity(athleteId, activity, 'strava');
+        await this.memberManager.databaseManager.upsertActivity(athleteId, activity, 'strava', {
+          posted: shouldPost,
+        });
       } catch (saveError) {
         logger.activity.error('Failed to save activity to DB', {
           activityId,
@@ -175,12 +195,14 @@ class ActivityProcessor {
 
       // Now decide whether to broadcast the activity to Discord. PBs above
       // were already recorded regardless of this decision.
-      if (!this.stravaAPI.shouldPostActivity(activity)) {
+      if (!shouldPost) {
         logger.activityProcessing(activityId, athleteId, activity.name, 'FILTERED', {
           reason: 'Activity filtered by posting rules',
+          private: activity.private === true,
+          hideFromHome: activity.hide_from_home === true,
           pbsRecorded: pbResults.filter(r => r.isNewPB).length,
         });
-        this.processedActivities.add(activityKey);
+        this.markFiltered(activityKey);
         return;
       }
 
@@ -268,16 +290,30 @@ class ActivityProcessor {
         athleteId
       });
       
-      // Check if already processed
       const activityKey = `${athleteId}-${activityId}`;
+
       if (this.processedActivities.has(activityKey)) {
-        logger.activity.debug('Activity already processed, ignoring update', {
+        // Something already posted this - a later title edit must not repost it.
+        if (!this.filteredActivities.has(activityKey)) {
+          logger.activity.debug('Activity already posted, ignoring update', {
+            activityId,
+            athleteId
+          });
+          return;
+        }
+
+        // It was fetched and deliberately not posted. The update may be exactly
+        // what makes it postable (a private run switched to public), so let it
+        // be re-evaluated instead of dropping it forever.
+        logger.activity.info('Re-evaluating previously filtered activity after update', {
           activityId,
-          athleteId
+          athleteId,
+          updates: webhookData?.updates
         });
-        return;
+        this.processedActivities.delete(activityKey);
+        this.filteredActivities.delete(activityKey);
       }
-      
+
       // Queue the updated activity
       return this.queueActivity(activityId, athleteId, webhookData);
     }
@@ -434,7 +470,11 @@ class ActivityProcessor {
     const athleteId = member.athleteId;
     const activityKey = `${athleteId}-${activity.id}`;
 
-    if (this.processedActivities.has(activityKey)) {
+    // Unlike the Strava path, where an update webhook explicitly reopens a
+    // filtered activity, polling is the only chance intervals.icu gets. So a
+    // filtered activity stays eligible for re-checking rather than being
+    // suppressed by the in-memory guard until the next restart.
+    if (this.processedActivities.has(activityKey) && !this.filteredActivities.has(activityKey)) {
       logger.activityProcessing(activity.id, athleteId, 'DUPLICATE', 'SKIPPED', {
         reason: 'Already processed'
       });
@@ -444,10 +484,12 @@ class ActivityProcessor {
     try {
       // Restart-safe dedup: intervals.icu ids are 'i'-prefixed strings so they
       // can never collide with Strava's numeric activity ids in this table.
-      // A DB row is only ever written once an activity is fully handled
-      // (filtered-out or successfully posted) — see below — so its presence
-      // here reliably means "nothing left to do."
-      if (await this.memberManager.databaseManager.getActivityById(activity.id)) {
+      // A row means the activity was handled, but not necessarily posted - a
+      // filtered one (private, hidden, too old) can still become postable
+      // later, and this poll is the only thing that would ever notice, since
+      // intervals.icu has no webhooks. Only a row marked posted is finished.
+      const stored = await this.memberManager.databaseManager.getActivityById(activity.id);
+      if (stored && stored.posted) {
         this.processedActivities.add(activityKey);
         return;
       }
@@ -501,8 +543,10 @@ class ActivityProcessor {
       }
 
       if (!this.intervalsAPI.shouldPostActivity(activity)) {
-        await this.memberManager.databaseManager.upsertActivity(athleteId, activity, 'intervals');
-        this.processedActivities.add(activityKey);
+        await this.memberManager.databaseManager.upsertActivity(athleteId, activity, 'intervals', {
+          posted: false,
+        });
+        this.markFiltered(activityKey);
         logger.activityProcessing(activity.id, athleteId, activity.name, 'FILTERED', {
           reason: 'Activity filtered by posting rules',
           pbsRecorded: pbResults.filter(r => r.isNewPB).length,
@@ -522,7 +566,9 @@ class ActivityProcessor {
       await this.discordBot.postActivity(processedActivity);
 
       try {
-        await this.memberManager.databaseManager.upsertActivity(athleteId, activity, 'intervals');
+        await this.memberManager.databaseManager.upsertActivity(athleteId, activity, 'intervals', {
+          posted: true,
+        });
       } catch (saveError) {
         logger.activity.error('Failed to save intervals.icu activity to DB', {
           activityId: activity.id,
@@ -531,6 +577,7 @@ class ActivityProcessor {
       }
 
       this.processedActivities.add(activityKey);
+      this.filteredActivities.delete(activityKey);
 
       logger.activityProcessing(activity.id, athleteId, activity.name, 'COMPLETED', {
         activityType: activity.type,
@@ -554,6 +601,14 @@ class ActivityProcessor {
       
       this.processedActivities.clear();
       toKeep.forEach(activity => this.processedActivities.add(activity));
+
+      // Keep the filtered set a subset of what is still tracked, so it can
+      // never outgrow the processed set it annotates.
+      for (const key of this.filteredActivities) {
+        if (!this.processedActivities.has(key)) {
+          this.filteredActivities.delete(key);
+        }
+      }
       
       logger.activity.debug('Cleaned up processed activities cache', {
         previousSize: maxSize,

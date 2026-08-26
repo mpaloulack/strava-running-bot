@@ -416,7 +416,8 @@ describe('ActivityProcessor', () => {
       expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(
         12345,
         mockActivity,
-        'strava'
+        'strava',
+        { posted: true }
       );
     });
 
@@ -437,7 +438,7 @@ describe('ActivityProcessor', () => {
 
       await activityProcessor.processNewActivity(98765, 12345);
 
-      expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(12345, mockActivity, 'strava');
+      expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(12345, mockActivity, 'strava', { posted: false });
       expect(pbSpy).toHaveBeenCalledWith(12345, mockActivity);
       // But still skipped for Discord posting:
       expect(mockDiscordBot.postActivity).not.toHaveBeenCalled();
@@ -500,9 +501,85 @@ describe('ActivityProcessor', () => {
 
       await activityProcessor.updateQueuedActivity(98765, 12345);
 
-      expect(logger.activity.debug).toHaveBeenCalledWith('Activity already processed, ignoring update', {
+      expect(logger.activity.debug).toHaveBeenCalledWith('Activity already posted, ignoring update', {
         activityId: 98765,
         athleteId: 12345
+      });
+    });
+
+    // Reported 2026-08-26: an activity uploaded privately and then switched to
+    // public never posted. The filter marked it processed, so the update that
+    // made it public was dropped - permanently, and silently at debug level.
+    describe('activity made public after being filtered', () => {
+      it('should re-queue an activity that was filtered and then updated', async () => {
+        mockActivityQueue.updateQueuedActivity.mockReturnValue(false);
+        jest.spyOn(activityProcessor, 'queueActivity').mockResolvedValue();
+        activityProcessor.markFiltered('12345-98765');
+
+        await activityProcessor.updateQueuedActivity(98765, 12345, {
+          updates: { private: 'false', visibility: 'everyone' }
+        });
+
+        expect(activityProcessor.queueActivity).toHaveBeenCalledWith(98765, 12345, {
+          updates: { private: 'false', visibility: 'everyone' }
+        });
+      });
+
+      it('should say why it is reconsidering the activity', async () => {
+        mockActivityQueue.updateQueuedActivity.mockReturnValue(false);
+        jest.spyOn(activityProcessor, 'queueActivity').mockResolvedValue();
+        activityProcessor.markFiltered('12345-98765');
+
+        await activityProcessor.updateQueuedActivity(98765, 12345);
+
+        expect(logger.activity.info).toHaveBeenCalledWith(
+          expect.stringMatching(/filtered/i),
+          expect.objectContaining({ activityId: 98765, athleteId: 12345 })
+        );
+      });
+
+      it('should clear the filtered mark so it cannot loop on repeat updates', async () => {
+        mockActivityQueue.updateQueuedActivity.mockReturnValue(false);
+        jest.spyOn(activityProcessor, 'queueActivity').mockResolvedValue();
+        activityProcessor.markFiltered('12345-98765');
+
+        await activityProcessor.updateQueuedActivity(98765, 12345);
+
+        expect(activityProcessor.filteredActivities.has('12345-98765')).toBe(false);
+        expect(activityProcessor.processedActivities.has('12345-98765')).toBe(false);
+      });
+
+      // A title edit on an activity that already posted must not repost it.
+      it('should still ignore updates for an activity that was actually posted', async () => {
+        mockActivityQueue.updateQueuedActivity.mockReturnValue(false);
+        jest.spyOn(activityProcessor, 'queueActivity').mockResolvedValue();
+        activityProcessor.processedActivities.add('12345-98765');
+
+        await activityProcessor.updateQueuedActivity(98765, 12345);
+
+        expect(activityProcessor.queueActivity).not.toHaveBeenCalled();
+      });
+
+      it('should record a filtered activity as filtered, not merely processed', async () => {
+        mockStravaAPI.shouldPostActivity.mockReturnValue(false);
+        mockMemberManager.getMemberByAthleteId.mockResolvedValue(mockMember);
+        mockMemberManager.getValidAccessToken.mockResolvedValue('token');
+        mockStravaAPI.getActivity.mockResolvedValue({ id: 98765, name: 'Private run' });
+
+        await activityProcessor.processNewActivity(98765, 12345);
+
+        expect(activityProcessor.filteredActivities.has('12345-98765')).toBe(true);
+      });
+
+      it('should forget filtered marks alongside processed ones during cleanup', () => {
+        for (let i = 0; i < 10001; i++) {
+          activityProcessor.markFiltered(`12345-${i}`);
+        }
+
+        activityProcessor.cleanupProcessedActivities();
+
+        expect(activityProcessor.filteredActivities.size)
+          .toBeLessThanOrEqual(activityProcessor.processedActivities.size);
       });
     });
   });
@@ -859,7 +936,7 @@ describe('ActivityProcessor', () => {
 
       await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember, apiKey);
 
-      expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(54321, intervalsActivity, 'intervals');
+      expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(54321, intervalsActivity, 'intervals', { posted: true });
       expect(mockIntervalsAPI.processActivityData).toHaveBeenCalledWith(
         intervalsActivity,
         expect.objectContaining({ ...intervalsMember.athlete, discordUser: intervalsMember.discordUser }),
@@ -990,7 +1067,7 @@ describe('ActivityProcessor', () => {
     });
 
     it('skips activities already present in the database (restart-safe dedup) without fetching streams or running PB checks', async () => {
-      mockMemberManager.databaseManager.getActivityById.mockResolvedValue({ strava_activity_id: 'i176829341' });
+      mockMemberManager.databaseManager.getActivityById.mockResolvedValue({ strava_activity_id: 'i176829341', posted: 1 });
 
       await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember, apiKey);
 
@@ -1058,7 +1135,7 @@ describe('ActivityProcessor', () => {
       await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember, apiKey);
 
       expect(mockDiscordBot.postActivity).toHaveBeenCalledTimes(2);
-      expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(54321, intervalsActivity, 'intervals');
+      expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(54321, intervalsActivity, 'intervals', { posted: true });
       expect(activityProcessor.processedActivities.has('54321-i176829341')).toBe(true);
     });
   });
@@ -1491,4 +1568,102 @@ describe('ActivityProcessor', () => {
       expect(mockDiscordBot.postActivity.mock.calls.length).toBeGreaterThanOrEqual(1);
     });
   });
+
+  // intervals.icu has no webhooks, so the poll is the only chance to notice an
+  // activity became postable. The stored row is what survives a restart, so
+  // "was this posted?" has to live in the database, not just in memory.
+  describe('re-posting a filtered intervals.icu activity', () => {
+    const intervalsMember = {
+      athleteId: 555,
+      provider: 'intervals',
+      athlete: { id: 555, firstname: 'Int', lastname: 'Ervals' },
+      discordUser: { displayName: 'Int' }
+    };
+    const intervalsActivity = { id: 'i123', name: 'Evening Run', start_date_local: '2026-08-26T18:00:00' };
+
+    beforeEach(() => {
+      mockIntervalsAPI.getActivityStreams.mockResolvedValue(null);
+      mockIntervalsAPI.processActivityData.mockReturnValue({ name: 'Evening Run' });
+    });
+
+    it('should record a filtered activity as not posted', async () => {
+      mockIntervalsAPI.shouldPostActivity.mockReturnValue(false);
+
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember, 'key');
+
+      expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(
+        555, intervalsActivity, 'intervals', { posted: false }
+      );
+    });
+
+    it('should record a posted activity as posted', async () => {
+      mockIntervalsAPI.shouldPostActivity.mockReturnValue(true);
+
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember, 'key');
+
+      expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(
+        555, intervalsActivity, 'intervals', { posted: true }
+      );
+    });
+
+    it('should skip an activity already stored as posted', async () => {
+      mockMemberManager.databaseManager.getActivityById.mockResolvedValue({ posted: 1 });
+
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember, 'key');
+
+      expect(mockDiscordBot.postActivity).not.toHaveBeenCalled();
+      expect(mockIntervalsAPI.shouldPostActivity).not.toHaveBeenCalled();
+    });
+
+    it('should reconsider an activity stored as not posted', async () => {
+      mockMemberManager.databaseManager.getActivityById.mockResolvedValue({ posted: 0 });
+      mockIntervalsAPI.shouldPostActivity.mockReturnValue(true);
+
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember, 'key');
+
+      expect(mockDiscordBot.postActivity).toHaveBeenCalled();
+    });
+
+    // Without this the in-memory guard blocks the very re-check the DB flag
+    // exists to allow, until the process restarts.
+    it('should let a later poll reconsider an activity filtered earlier this run', async () => {
+      mockIntervalsAPI.shouldPostActivity.mockReturnValue(false);
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember, 'key');
+
+      mockMemberManager.databaseManager.getActivityById.mockResolvedValue({ posted: 0 });
+      mockIntervalsAPI.shouldPostActivity.mockReturnValue(true);
+      await activityProcessor.processIntervalsActivity(intervalsActivity, intervalsMember, 'key');
+
+      expect(mockDiscordBot.postActivity).toHaveBeenCalled();
+    });
+  });
+
+  describe('strava activity posted flag', () => {
+    it('should store a filtered Strava activity as not posted', async () => {
+      mockStravaAPI.shouldPostActivity.mockReturnValue(false);
+      mockMemberManager.getMemberByAthleteId.mockResolvedValue(mockMember);
+      mockMemberManager.getValidAccessToken.mockResolvedValue('token');
+      mockStravaAPI.getActivity.mockResolvedValue(mockActivity);
+
+      await activityProcessor.processNewActivity(98765, 12345);
+
+      expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(
+        12345, mockActivity, 'strava', { posted: false }
+      );
+    });
+
+    it('should store a posted Strava activity as posted', async () => {
+      mockStravaAPI.shouldPostActivity.mockReturnValue(true);
+      mockMemberManager.getMemberByAthleteId.mockResolvedValue(mockMember);
+      mockMemberManager.getValidAccessToken.mockResolvedValue('token');
+      mockStravaAPI.getActivity.mockResolvedValue(mockActivity);
+
+      await activityProcessor.processNewActivity(98765, 12345);
+
+      expect(mockMemberManager.databaseManager.upsertActivity).toHaveBeenCalledWith(
+        12345, mockActivity, 'strava', { posted: true }
+      );
+    });
+  });
+
 });

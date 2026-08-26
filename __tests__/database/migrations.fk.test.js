@@ -143,4 +143,52 @@ describe('migration 007 - child FK alignment', () => {
 
     expect(leftovers).toEqual([]);
   });
+
+  // 008 adds `posted` to a table that already holds every member's history, so
+  // the risk is the backfill value: too eager and the first poll after deploy
+  // re-posts a backlog of old private activities into the channel.
+  describe('migration 008 - activities.posted', () => {
+    it('should add the column with a NOT NULL default', () => {
+      const column = raw.pragma('table_info(activities)').find(c => c.name === 'posted');
+
+      expect(column).toMatchObject({ type: 'INTEGER', notnull: 1, dflt_value: '1' });
+    });
+
+    it('should treat pre-existing rows as already posted', () => {
+      raw.prepare(`
+        INSERT INTO members (athlete_id, discord_id, discord_user_id, is_active, athlete, provider)
+        VALUES (9, 'd9', 'd9', 1, '{}', 'intervals')
+      `).run();
+      raw.prepare(`
+        INSERT INTO activities (strava_activity_id, member_athlete_id, name, provider)
+        VALUES ('i900', 9, 'Legacy run', 'intervals')
+      `).run();
+
+      const stored = raw.prepare('SELECT posted FROM activities WHERE strava_activity_id = ?').get('i900');
+
+      expect(stored.posted).toBe(1);
+    });
+
+    it('should index the column the poll filters on', () => {
+      const indexes = raw.prepare('SELECT name FROM sqlite_master WHERE type = ? AND tbl_name = ?')
+        .all('index', 'activities').map(r => r.name);
+
+      expect(indexes).toEqual(expect.arrayContaining(['activities_posted_idx']));
+    });
+
+    it('should be recorded once and not re-run on a second startup', async () => {
+      const applied = () => raw.prepare(
+        'SELECT COUNT(*) c FROM migration_log WHERE migration_name = ? AND success = 1'
+      ).get('008_add_activities_posted_column').c;
+
+      expect(applied()).toBe(1);
+
+      await dbConnection.close();
+      await dbConnection.initialize();
+      raw = dbConnection.getRawDb();
+
+      expect(applied()).toBe(1);
+    });
+  });
+
 });
