@@ -10,7 +10,9 @@ WORKDIR /app
 # all, and the librsvg inside sharp then renders every character of the map's
 # OpenStreetMap attribution as a .notdef box. Attribution is mandatory under the
 # OSM tile usage policy, so it has to be legible.
-RUN apt-get update && apt-get install -y \
+# apt-get upgrade is deliberate: the official node image trails Debian's security
+# releases (perl-base was behind), so patches are applied on top of it.
+RUN apt-get update && apt-get upgrade -y && apt-get install -y \
     dumb-init \
     curl \
     sqlite3 \
