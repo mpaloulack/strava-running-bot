@@ -31,10 +31,10 @@
     "chalk": "^4.1.2",
     "discord.js": "^14.27.0",
     "dotenv": "^17.4.2",
-    "drizzle-orm": "^0.45.2",
+    "drizzle-orm": "^0.45.3",
     "express": "^5.2.1",
     "node-cron": "^4.6.0",
-    "sharp": "^0.35.3"
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
