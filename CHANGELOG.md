@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/mpaloulack/strava-running-bot/compare/v1.1.1...v1.1.2) (2026-10-09)
+
+
+### Bug Fixes
+
+* **docker:** apply Debian security updates and bump proxy-addr to 2.0.8 ([#90](https://github.com/mpaloulack/strava-running-bot/issues/90)) ([279c3e1](https://github.com/mpaloulack/strava-running-bot/commit/279c3e12f29b6e7afafb7bf8def86643501bb690))
+
 ## [1.1.1](https://github.com/mpaloulack/strava-running-bot/compare/v1.1.0...v1.1.1) (2026-08-26)
 
 
