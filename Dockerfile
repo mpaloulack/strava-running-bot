@@ -1,6 +1,6 @@
-# Node.js 24 LTS on Debian 12 (bookworm). Pinned to LTS — 26 is current-release,
+# Node.js 24 LTS on Debian 13 (trixie). Pinned to LTS — 26 is current-release,
 # not LTS until Oct 2026, and lacks better-sqlite3 prebuilds for slim images.
-FROM node:24-bookworm-slim
+FROM node:24-trixie-slim
 
 # Set working directory
 WORKDIR /app
@@ -14,7 +14,6 @@ WORKDIR /app
 # releases (perl-base was behind), so patches are applied on top of it.
 RUN apt-get update && apt-get upgrade -y && apt-get install -y \
     dumb-init \
-    curl \
     sqlite3 \
     gosu \
     fonts-dejavu-core \
@@ -26,6 +25,11 @@ COPY package*.json ./
 # Install dependencies - no compilation needed with native SQLite!
 RUN npm ci --omit=dev && \
     npm cache clean --force
+
+# npm is only needed to install dependencies. Its bundled modules (tar,
+# brace-expansion, undici...) are the remaining scanner findings and the app
+# never runs them, so drop npm/npx from the final image.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 # Create non-root user for security
 RUN groupadd --gid 1001 nodejs && \
@@ -58,9 +62,9 @@ if ! gosu botuser node src/database/migrate.js; then
     echo "Warning: Database migration failed" >&2
 fi
 
-# If first arg starts with '-' assume it's flags for npm start
+# If first arg starts with '-' assume it's flags for the app
 if [ "${1#-}" != "$1" ]; then
-  set -- npm start "$@"
+  set -- node src/index.js "$@"
 fi
 
 # Exec the given command as botuser
@@ -74,10 +78,10 @@ EXPOSE 3000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:${PORT:-3000}/health || exit 1
+    CMD node -e "fetch('http://localhost:'+(process.env.PORT||3000)+'/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
 
 # Use dumb-init to handle signals properly
 ENTRYPOINT ["dumb-init", "--", "/usr/local/bin/entrypoint.sh"]
 
 # Start the application
-CMD ["npm", "start"]
+CMD ["node", "src/index.js"]
