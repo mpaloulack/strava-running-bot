@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.3](https://github.com/mpaloulack/strava-running-bot/compare/v1.1.2...v1.1.3) (2026-10-10)
+
+
+### Bug Fixes
+
+* **docker:** move to Debian 13 and drop npm from the final image ([#98](https://github.com/mpaloulack/strava-running-bot/issues/98)) ([d502707](https://github.com/mpaloulack/strava-running-bot/commit/d502707693d9c06efa44df6da0acbc227e243102))
+
 ## [1.1.2](https://github.com/mpaloulack/strava-running-bot/compare/v1.1.1...v1.1.2) (2026-10-09)
 
 
